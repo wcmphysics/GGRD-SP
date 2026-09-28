@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 
-from models import format_predicted_measurement_id, run_baseline_pipeline
+from models import (
+    format_predicted_measurement_id,
+    run_baseline_pipeline,
+    run_sliding_window_pipeline,
+)
 from utility import (
     calculate_atomic_percentages,
     calculate_prediction_metrics,
@@ -14,6 +18,7 @@ from utility import (
     plot_prediction_comparison,
     plot_regional_spectra,
     plot_shirley_background,
+    plot_sliding_window_slices,
     plot_tool_comparison,
     plot_training_history,
 )
@@ -24,6 +29,11 @@ def main() -> None:
     # =========================================================================
     # GLOBAL SETUP & CONFIGURATION (Easily tune all parameters here)
     # =========================================================================
+    # Choose which neural network model architecture to train and evaluate:
+    # "baseline": Full regional spectrum ResNet
+    # "sliding_window": Local sequence patch-to-patch ResNet with overlap reconstruction
+    model_type = "sliding_window"  # Options: "baseline" or "sliding_window"
+
     source_tool = "J4"
     target_tool = "H1"
     example_region = "Ti2p"
@@ -85,6 +95,39 @@ def main() -> None:
         "predict_source": True,
     }
 
+    # Part 3: Sliding Window Neural Network & Ax Bayesian Optimization configuration
+    sliding_window_config = {
+        "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+        "source_tool": source_tool,
+        "target_tool": target_tool,
+        "val_ratio": 0.2,
+        "seed": None,
+        "window_size_ev": 2.0,  # Local window length in eV
+        "sliding_stride_ev": 1.0,  # Sliding stride step in eV
+        "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
+        "bayesian_opt_config": {
+            "num_trials": 5,
+            "epochs_per_trial": 15,
+            "window_size_choices": [11, 15, 21],
+            "kernel_sizes": [3, 5],
+            "hidden_channels": [16, 32],
+            "lr_bounds": (1e-4, 1e-2),
+            "l2_bounds": (1e-6, 1e-2),
+            "verbose": True,
+        },
+        "train_config": {
+            "epochs": 100,
+            "batch_size": 16,
+            "learning_rate": 1e-3,
+            "hidden_channels": 32,
+            "kernel_size": 5,
+            "l2_weight": 1e-4,
+            "early_stopping_patience": 10,
+            "verbose": False,
+        },
+        "predict_source": True,
+    }
+
     # =========================================================================
     # PART 1: GENERATE PSEUDO-MEASUREMENTS
     # =========================================================================
@@ -130,22 +173,35 @@ def main() -> None:
     print(paired_src[cols_to_show].head(5))
 
     # =========================================================================
-    # PART 3: BASELINE NEURAL NETWORK TRAINING & PREDICTION
+    # PART 3: NEURAL NETWORK TRAINING & PREDICTION
     # =========================================================================
-    print("\n=== Part 3: Baseline Neural Network Training & Prediction ===")
-    baseline_results = run_baseline_pipeline(
-        meta_df,
-        ary_intensity,
-        ary_energy,
-        config=baseline_config,
-    )
+    if model_type == "sliding_window":
+        print("\n=== Part 3: Sliding Window Neural Network Training & Prediction ===")
+        model_results = run_sliding_window_pipeline(
+            meta_df,
+            ary_intensity,
+            ary_energy,
+            config=sliding_window_config,
+        )
+    elif model_type == "baseline":
+        print("\n=== Part 3: Baseline Neural Network Training & Prediction ===")
+        model_results = run_baseline_pipeline(
+            meta_df,
+            ary_intensity,
+            ary_energy,
+            config=baseline_config,
+        )
+    else:
+        raise ValueError(
+            f"Unknown model_type '{model_type}'. Choose 'baseline' or 'sliding_window'."
+        )
 
-    val_evaluation = baseline_results["evaluation"]
+    val_evaluation = model_results["evaluation"]
     print("\nValidation Normalized MSE Loss per region:")
     for reg, loss_val in val_evaluation.items():
         print(f"  {reg:6s}: {loss_val:.6f}")
 
-    ary_intensity_predicted, ary_energy_predicted, meta_df_predicted = baseline_results["predictions"]
+    ary_intensity_predicted, ary_energy_predicted, meta_df_predicted = model_results["predictions"]
     print(f"\nPredicted intensity array shape: {ary_intensity_predicted.shape}")
     print(f"Total predicted spectra:         {len(meta_df_predicted)}")
 
@@ -220,12 +276,37 @@ def main() -> None:
     )
 
     # 4. Training loss history curves across all regions (Part 4)
+    model_name_label = "Sliding Window" if model_type == "sliding_window" else "Baseline"
     plot_training_history(
-        baseline_results["histories"],
-        plot_config={"title": "Part 4: Baseline Neural Network Training & Validation Loss"},
+        model_results["histories"],
+        plot_config={"title": f"Part 4: {model_name_label} Neural Network Training & Validation Loss"},
     )
 
-    # 5. Spectral transfer comparison: Source vs. True Target vs. Predicted Target with Residual (Part 4)
+    # 5. Sliding window decomposition (Original vs Sliced Spectra) if sliding window chosen
+    if model_type == "sliding_window":
+        example_subset = meta_df[
+            (meta_df["measurement_id"] == sample_meas_id)
+            & (meta_df["region"] == example_region)
+            & (meta_df["die"] == 0)
+        ]
+        if not example_subset.empty:
+            ex_idx = int(example_subset.iloc[0]["spectrum_index"])
+            plot_sliding_window_slices(
+                ary_intensity[ex_idx],
+                ary_energy[ex_idx],
+                plot_config={
+                    "region": example_region,
+                    "window_size_ev": sliding_window_config.get("window_size_ev", 2.0),
+                    "sliding_stride_ev": sliding_window_config.get("sliding_stride_ev", 1.0),
+                    "offset_patches": True,
+                    "title": (
+                        f"Sliding Window Decomposition - {example_region} "
+                        f"(Session {sample_meas_id}, Die 0)"
+                    ),
+                },
+            )
+
+    # 6. Spectral transfer comparison: Source vs. True Target vs. Predicted Target with Residual (Part 4)
     plot_prediction_comparison(
         data_orig,
         data_pred,
