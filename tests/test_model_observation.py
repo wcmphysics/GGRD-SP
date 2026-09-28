@@ -18,6 +18,7 @@ from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.visualization import (
     calculate_prediction_metrics,
     plot_prediction_comparison,
+    plot_sliding_window_slices,
     plot_training_history,
 )
 
@@ -169,6 +170,48 @@ class TestModelPerformanceObservation(unittest.TestCase):
         self.assertFalse(df_per_sample.empty)
         self.assertFalse(np.isnan(df_per_sample["normalized_mse"]).any())
         self.assertFalse(np.isinf(df_per_sample["normalized_mse"]).any())
+
+    def test_plot_sliding_window_slices_with_energy(self) -> None:
+        """Test plot_sliding_window_slices with binding energy and eV window."""
+        spectrum = self.ary_intensity[0]
+        energy = self.ary_energy[0]
+        fig, axes = plot_sliding_window_slices(
+            spectrum,
+            energy,
+            plot_config={"region": "Al2p", "window_size_ev": 2.0, "sliding_stride_ev": 1.0, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertEqual(len(axes), 2)
+        plt.close(fig)
+
+    def test_plot_sliding_window_slices_without_energy(self) -> None:
+        """Test plot_sliding_window_slices without energy grid (point index mode)."""
+        spectrum = self.ary_intensity[0]
+        fig, axes = plot_sliding_window_slices(
+            spectrum,
+            energy=None,
+            plot_config={"window_size": 15, "stride": 5, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertEqual(len(axes), 2)
+        plt.close(fig)
+
+    def test_plot_sliding_window_slices_offset_patches(self) -> None:
+        """Test plot_sliding_window_slices with waterfall vertical offset."""
+        spectrum = self.ary_intensity[0]
+        fig, axes = plot_sliding_window_slices(
+            spectrum,
+            plot_config={"window_size": 10, "stride": 5, "offset_patches": True, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        plt.close(fig)
+
+    def test_plot_sliding_window_slices_invalid_inputs(self) -> None:
+        """Test ValueError when spectrum is empty or energy length mismatches."""
+        with self.assertRaises(ValueError):
+            plot_sliding_window_slices(np.array([]))
+        with self.assertRaises(ValueError):
+            plot_sliding_window_slices(np.ones(20), energy=np.ones(15))
 
 
 if __name__ == "__main__":
