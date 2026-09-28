@@ -20,6 +20,7 @@ from utility.visualization import (
     plot_prediction_comparison,
     plot_regional_spectra,
     plot_shirley_background,
+    plot_sliding_window_slices,
     plot_tool_comparison,
     plot_training_history,
 )
@@ -40,4 +41,5 @@ __all__ = [
     "plot_training_history",
     "plot_prediction_comparison",
     "calculate_prediction_metrics",
+    "plot_sliding_window_slices",
 ]
