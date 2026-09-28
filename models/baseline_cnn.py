@@ -137,6 +137,7 @@ class NormalizedMSELoss(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         model: Residual1DCNN | None = None,
+        max_val: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute the normalized MSE loss.
 
@@ -151,6 +152,8 @@ class NormalizedMSELoss(nn.Module):
             Target intensity of shape (batch_size, n_points) or (batch_size, 1, n_points).
         model : Residual1DCNN | None, optional
             The model instance, needed to compute L2 regularization if l2_weight > 0.
+        max_val : torch.Tensor | None, optional
+            Precomputed normalization maximum tensor. If None, computes max(|y_true|) per sample.
 
         Returns
         -------
@@ -164,7 +167,8 @@ class NormalizedMSELoss(nn.Module):
             y_true = y_true.squeeze(1)
 
         # Compute maximum of absolute true target spectrum per sample along sequence dimension
-        max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
+        if max_val is None:
+            max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
         max_val = torch.clamp(max_val, min=self.eps)
 
         norm_pred = y_pred / max_val
