@@ -1,7 +1,7 @@
 """Visualization module for XPS spectra in GGRD-SP.
 
-Provides utility functions to plot spectra and pairing relationships directly
-from ary_energy, ary_intensity, and meta_df according to standard XPS conventions.
+Provides utility functions to plot spectra, pairing relationships, and Shirley
+background subtraction directly from ary_energy, ary_intensity, and meta_df.
 """
 
 from __future__ import annotations
@@ -11,6 +11,11 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from utility.quantification import (
+    DEFAULT_SCOFIELD_RSF,
+    calculate_shirley_background,
+)
 
 
 def plot_regional_spectra(
@@ -426,3 +431,151 @@ def plot_pairing_timeline(
         plt.show()
 
     return fig, ax
+
+
+def plot_shirley_background(
+    ary_energy: np.ndarray,
+    ary_intensity: np.ndarray,
+    meta_df: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, Any]:
+    """Plot regional spectrum with Shirley background overlay and shaded net peak area.
+
+    Parameters
+    ----------
+    ary_energy : np.ndarray
+        2D array of binding energies.
+    ary_intensity : np.ndarray
+        2D array of measured intensities.
+    meta_df : pd.DataFrame
+        Metadata DataFrame.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary bundling plotting options:
+        - 'measurement_id' (str | None): Measurement session to display.
+        - 'die' (int): Die index (default 0).
+        - 'region' (str | None): Specific region to plot (e.g. 'Ti2p').
+          If None, all regions for the measurement session and die are plotted in subplots.
+        - 'ti2p_auto_endpoints' (bool): Auto-endpoints for Ti2p (default True).
+        - 'ti2p_smooth_endpoints_search' (bool): Smooth search for Ti2p minima (default False).
+        - 'invert_x' (bool): Invert x-axis per standard XPS convention (default True).
+        - 'ax' (plt.Axes | None): Matplotlib Axes (only if single region specified).
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, Any]
+        The Figure and Axes (or array of Axes for multi-panel).
+
+    Raises
+    ------
+    ValueError
+        If no matching spectra are found.
+    """
+    cfg = plot_config or {}
+    meas_id: str | None = cfg.get("measurement_id")
+    die: int = int(cfg.get("die", 0))
+    target_region: str | None = cfg.get("region")
+    ti2p_auto: bool = cfg.get("ti2p_auto_endpoints", True)
+    ti2p_smooth: bool = cfg.get("ti2p_smooth_endpoints_search", False)
+    invert_x: bool = cfg.get("invert_x", True)
+    custom_ax: plt.Axes | None = cfg.get("ax")
+    show: bool = cfg.get("show", False)
+
+    subset = meta_df[meta_df["die"] == die]
+    if meas_id is not None:
+        subset = subset[subset["measurement_id"] == meas_id]
+    elif not subset.empty:
+        meas_id = str(subset["measurement_id"].iloc[0])
+        subset = subset[subset["measurement_id"] == meas_id]
+
+    if target_region is not None:
+        subset = subset[subset["region"] == target_region]
+
+    if subset.empty:
+        raise ValueError(
+            f"No matching spectra found for measurement_id='{meas_id}', die={die}, "
+            f"region='{target_region}'"
+        )
+
+    # Single-region plot
+    if target_region is not None or len(subset) == 1:
+        row = subset.iloc[0]
+        region_name = str(row["region"])
+        spec_idx = int(row["spectrum_index"])
+        e_arr = ary_energy[spec_idx]
+        i_arr = ary_intensity[spec_idx]
+
+        shirley_cfg = {
+            "region": region_name,
+            "ti2p_auto_endpoints": ti2p_auto,
+            "ti2p_smooth_endpoints_search": ti2p_smooth,
+        }
+        b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
+
+        if custom_ax is None:
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+        else:
+            fig = custom_ax.get_figure()
+            ax = custom_ax
+
+        ax.plot(e_arr, i_arr, label="Raw Spectrum", color="navy", linewidth=1.8)
+        ax.plot(e_arr, b_arr, label="Shirley Background", color="crimson", linestyle="--", linewidth=1.6)
+        ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Net Area: {net_area:.1f}")
+
+        ax.set_xlabel("Binding Energy (eV)")
+        ax.set_ylabel("Intensity (counts / a.u.)")
+        ax.set_title(f"{meas_id} | Region: {region_name} (Die {die})")
+        if invert_x and not ax.xaxis_inverted():
+            ax.invert_xaxis()
+
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.legend(loc="best")
+        if show:
+            plt.show()
+        return fig, ax
+
+    # Multi-region subplot grid
+    regions = list(subset["region"].unique())
+    n_regs = len(regions)
+    n_cols = min(n_regs, 3)
+    n_rows = (n_regs + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3.8 * n_rows), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for idx, reg in enumerate(regions):
+        ax = axes_flat[idx]
+        reg_row = subset[subset["region"] == reg].iloc[0]
+        spec_idx = int(reg_row["spectrum_index"])
+        e_arr = ary_energy[spec_idx]
+        i_arr = ary_intensity[spec_idx]
+
+        shirley_cfg = {
+            "region": reg,
+            "ti2p_auto_endpoints": ti2p_auto,
+            "ti2p_smooth_endpoints_search": ti2p_smooth,
+        }
+        b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
+
+        ax.plot(e_arr, i_arr, label="Raw", color="navy", linewidth=1.5)
+        ax.plot(e_arr, b_arr, label="Shirley", color="crimson", linestyle="--", linewidth=1.4)
+        ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Area: {net_area:.1f}")
+
+        ax.set_title(f"Region: {reg}")
+        ax.set_xlabel("Binding Energy (eV)")
+        ax.set_ylabel("Intensity")
+        if invert_x and not ax.xaxis_inverted():
+            ax.invert_xaxis()
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.legend(loc="best", fontsize="x-small")
+
+    # Hide unused subplot panels
+    for empty_idx in range(n_regs, len(axes_flat)):
+        axes_flat[empty_idx].set_visible(False)
+
+    fig.suptitle(f"Shirley Background Subtraction | {meas_id} (Die {die})", fontsize=13)
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    return fig, axes
