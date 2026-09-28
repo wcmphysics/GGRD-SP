@@ -1,6 +1,19 @@
 # GGRD-SP Project Context
 This is a sequence-to-sequence Machine Learning project that try to find how to transform a spectrum meassured at a tool to another spectrum as if the specimen were measured at another tool. Namely, we want to use machine learning model to capture tool difference in spectra so we can transfer spectra between tools. This project relies heavily on PyTorch for neural networks and Pandas/SciPy for data processing.
 
+## Program Structure
+The codes will be composed of mainly 5 parts
+1. Spectrum data reading or generation
+   - 1 XSP measurement gives many (specified by `N_die` and defaulted to `9`) spectra
+   - 1 spectra contains many (specified by `N_region`) regions 
+   - store the spectrum data (arrays of intensity and binding energy) and meta data separately
+   - spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
+   - binding energy   
+2. Pairing source and target spectra
+3. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
+4. Model performance observation
+5. Calculation of atomic percentage for elements by area integration
+
 ## Tech Stack
 - Python 3
 - Scikit-learn, PyTorch, Pandas, NumPy, SciPy
