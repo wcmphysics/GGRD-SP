@@ -35,7 +35,9 @@ The codes will be composed of mainly 5 parts
    - Main python body: `main.py`
    - Core ML models and utilities belong in the `models/` and `utility/` folders.
 3. **Code Style:** Use strict PEP-8 formatting. Include type hints and concise docstrings for all new functions.
-4. **Git Commits and Pushing:** When making commits and push, you MUST ALWAYS show me the commit message before any commit and push. Only after I approve will you do the commits and push.
+4. **Autonomous Commits and Pushing:**
+   - Once a feature request, plan, or review iteration is approved, autonomously commit and push the changes without asking for separate micro-permissions on commit messages.
+   - Follow standard Conventional Commits format (e.g. `feat:`, `fix:`, `test:`, `docs:`) and always display the created commit hashes and messages in your final summary for transparency.
 5. **Commit Size:** When the change is more than 50 lines, try to separate the commits and so one commit is readable and will not be flooded with changes.
 6. **Modular Functionality:** 
    - Implement new features in a strictly modular fashion inside dedicated modules within `models/` or `utility/`.
@@ -43,8 +45,8 @@ The codes will be composed of mainly 5 parts
 7. **Clean Function Interfaces (Parameter Packaging):**
    - If a function requires 5 or more parameters (>= 5), bundle them into a readable configuration dictionary (e.g., `config: dict[str, Any]`).
    - Dictionaries are strongly preferred by default for readability and simplicity. A dedicated dataclass should only be used when there is a clear, tangible advantage over a dictionary (such as complex nested hierarchies or strict validation requirements).
-8. **Existing Code Modifications & Prior Approval:**
-   - If modifying existing code is unavoidable, always inform the user of what will be changed and why *before* touching the files.
+8. **Existing Code Modifications & Safeguards:**
+   - When modifying existing code is required, briefly state what will change in your explanation. Once given the go-ahead, proceed through implementation, testing, and commits without redundant confirmation rounds.
    - Verify and guarantee that the modifications do not break existing functionality or workflows.
 9. **Multi-Agent Review and Test Loop:**
    - When writing new code or significant components, launch a separate reviewer subagent to critique the code, probe for edge cases, inspect error handling, and run verification tests.
