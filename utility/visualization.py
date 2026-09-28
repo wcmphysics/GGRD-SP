@@ -579,3 +579,321 @@ def plot_shirley_background(
         plt.show()
 
     return fig, axes
+
+
+def plot_training_history(
+    histories: dict[str, dict[str, list[float]]],
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, np.ndarray | plt.Axes]:
+    """Plot training and validation loss curves over epochs for each trained spectral region.
+
+    Parameters
+    ----------
+    histories : dict[str, dict[str, list[float]]]
+        Dictionary mapping region name to its history dict containing 'train_loss' and 'val_loss'.
+    plot_config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'log_scale' (bool): Whether to plot loss on a logarithmic scale (default True).
+        - 'title' (str | None): Overall figure supertitle.
+        - 'show' (bool): Whether to call plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, np.ndarray | plt.Axes]
+        Figure and axes array.
+    """
+    cfg = plot_config or {}
+    log_scale: bool = bool(cfg.get("log_scale", True))
+    title: str | None = cfg.get("title", "Baseline Neural Network Training History")
+    show: bool = bool(cfg.get("show", False))
+
+    regions = list(histories.keys())
+    n_regs = len(regions)
+    if n_regs == 0:
+        raise ValueError("Histories dictionary is empty; no training curves to plot.")
+
+    n_cols = min(n_regs, 3)
+    n_rows = (n_regs + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 3.8 * n_rows), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for idx, reg in enumerate(regions):
+        ax = axes_flat[idx]
+        h = histories[reg]
+        train_loss = h.get("train_loss", [])
+        val_loss = h.get("val_loss", [])
+        epochs = range(1, len(train_loss) + 1)
+
+        ax.plot(epochs, train_loss, label="Train Loss", color="royalblue", linewidth=1.8)
+        if val_loss:
+            ax.plot(epochs, val_loss, label="Val Loss", color="darkorange", linestyle="--", linewidth=1.8)
+
+        if log_scale:
+            ax.set_yscale("log")
+
+        ax.set_title(f"Region: {reg}", fontsize=11)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss (Normalized MSE)" if not log_scale else "Loss (log scale)")
+        ax.grid(True, linestyle="--", alpha=0.6)
+        ax.legend(loc="upper right", fontsize="small")
+
+    # Hide unused panels
+    for empty_idx in range(n_regs, len(axes_flat)):
+        axes_flat[empty_idx].set_visible(False)
+
+    if title:
+        fig.suptitle(title, fontsize=13)
+    plt.tight_layout()
+
+    if show:
+        plt.show()
+
+    return fig, axes
+
+
+def plot_prediction_comparison(
+    data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, np.ndarray]:
+    """Plot an overlay comparison of Source, True Target, and Model Predicted Target spectra.
+
+    Parameters
+    ----------
+    data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity, ary_energy, meta_df) for measured data.
+    data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'measurement_id' (str | None): Source measurement session ID (default first paired session).
+        - 'region' (str | None): Target region (default 'Al2p' or first available).
+        - 'die' (int): Die index (default 0).
+        - 'show_residual' (bool): Whether to include a residual subplot below (default True).
+        - 'invert_x' (bool): Whether to invert binding energy axis (default True).
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, np.ndarray]
+        Figure and axes array.
+    """
+    ary_intensity_orig, ary_energy_orig, meta_df_orig = data_original
+    ary_intensity_pred, ary_energy_pred, meta_df_pred = data_predicted
+
+    cfg = config or {}
+    meas_id: str | None = cfg.get("measurement_id")
+    region: str | None = cfg.get("region")
+    die: int = int(cfg.get("die", 0))
+    show_residual: bool = bool(cfg.get("show_residual", True))
+    invert_x: bool = bool(cfg.get("invert_x", True))
+    show: bool = bool(cfg.get("show", False))
+
+    # Auto-detect paired source measurement if not provided
+    if meas_id is None:
+        paired_sources = meta_df_orig[meta_df_orig["measurement_id_target"].notna()]
+        if paired_sources.empty:
+            raise ValueError("No paired source measurements found in meta_df_orig.")
+        meas_id = str(paired_sources["measurement_id"].iloc[0])
+
+    # Filter source row
+    src_rows = meta_df_orig[
+        (meta_df_orig["measurement_id"] == meas_id)
+        & (meta_df_orig["die"] == die)
+    ]
+    if region is not None:
+        src_rows = src_rows[src_rows["region"] == region]
+
+    if src_rows.empty:
+        raise ValueError(f"No source spectrum matching meas_id='{meas_id}', die={die}, region='{region}'.")
+
+    src_row = src_rows.iloc[0]
+    actual_region = str(src_row["region"])
+    if pd.isna(src_row.get("measurement_id_target")):
+        raise ValueError(f"Source measurement '{meas_id}' is not paired with a target measurement.")
+    tgt_meas_id = str(src_row.get("measurement_id_target"))
+    src_tool = str(src_row.get("tool"))
+    tgt_tool = str(src_row.get("tool_target"))
+
+    # Filter target row
+    tgt_rows = meta_df_orig[
+        (meta_df_orig["measurement_id"] == tgt_meas_id)
+        & (meta_df_orig["die"] == die)
+        & (meta_df_orig["region"] == actual_region)
+    ]
+    if tgt_rows.empty:
+        raise ValueError(f"Target spectrum matching meas_id='{tgt_meas_id}' not found.")
+    tgt_row = tgt_rows.iloc[0]
+
+    # Filter predicted row
+    pred_rows = meta_df_pred[
+        (meta_df_pred["source_measurement_id"] == meas_id)
+        & (meta_df_pred["die"] == die)
+        & (meta_df_pred["region"] == actual_region)
+    ]
+    if pred_rows.empty:
+        raise ValueError(f"Predicted spectrum for source meas_id='{meas_id}', die={die}, region='{actual_region}' not found.")
+    pred_row = pred_rows.iloc[0]
+
+    # Extract vectors
+    energy = ary_energy_orig[int(src_row["spectrum_index"])]
+    i_src = ary_intensity_orig[int(src_row["spectrum_index"])]
+    i_tgt = ary_intensity_orig[int(tgt_row["spectrum_index"])]
+    i_pred = ary_intensity_pred[int(pred_row["spectrum_index"])]
+    residual = i_tgt - i_pred
+
+    if show_residual:
+        fig, axes = plt.subplots(
+            2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+        )
+        ax_main, ax_res = axes[0], axes[1]
+    else:
+        fig, ax_main = plt.subplots(1, 1, figsize=(8, 4.5))
+        axes = np.array([ax_main])
+        ax_res = None
+
+    # Main spectral plot
+    ax_main.plot(energy, i_src, label=f"Source Measured ({src_tool})", color="slategray", linestyle="--", linewidth=1.5)
+    ax_main.plot(energy, i_tgt, label=f"True Target ({tgt_tool})", color="forestgreen", linewidth=1.8)
+    ax_main.plot(energy, i_pred, label=f"Predicted Target ({src_tool} -> {tgt_tool})", color="crimson", linewidth=1.8)
+
+    ax_main.set_ylabel("Intensity (counts)")
+    ax_main.set_title(
+        f"Spectral Transfer Comparison | Region: {actual_region} | Die {die}\n"
+        f"Source: {meas_id} ({src_tool}) -> Target: {tgt_meas_id} ({tgt_tool})",
+        fontsize=11,
+    )
+    ax_main.legend(loc="best", fontsize="small")
+    ax_main.grid(True, linestyle="--", alpha=0.6)
+
+    # Residual plot
+    if ax_res is not None:
+        ax_res.plot(energy, residual, color="purple", linewidth=1.4, label="Target - Predicted")
+        ax_res.axhline(0, color="black", linestyle=":", linewidth=1.0, alpha=0.7)
+        ax_res.set_xlabel("Binding Energy (eV)")
+        ax_res.set_ylabel("Residual")
+        ax_res.grid(True, linestyle="--", alpha=0.6)
+        ax_res.legend(loc="best", fontsize="x-small")
+    else:
+        ax_main.set_xlabel("Binding Energy (eV)")
+
+    if invert_x and not ax_main.xaxis_inverted():
+        ax_main.invert_xaxis()
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    return fig, axes
+
+
+def calculate_prediction_metrics(
+    data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    config: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Calculate quantitative evaluation metrics comparing predicted spectra with ground truth target spectra.
+
+    Computes Normalized MSE, Raw RMSE, and Peak Relative Error % per paired sample.
+
+    Parameters
+    ----------
+    data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Original measured data (ary_intensity, ary_energy, meta_df).
+    data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Predicted data (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'regions' (list[str] | None): Specific regions to evaluate (default all).
+        - 'eps' (float): Epsilon floor for maximum normalization (default 1e-4).
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (df_per_sample, df_summary_by_region)
+    """
+    ary_intensity_orig, _, meta_df_orig = data_original
+    ary_intensity_pred, _, meta_df_pred = data_predicted
+
+    cfg = config or {}
+    regions_filter = cfg.get("regions")
+    eps: float = float(cfg.get("eps", 1e-4))
+
+    records: list[dict[str, Any]] = []
+
+    # Iterate over predicted spectra records
+    for _, pred_row in meta_df_pred.iterrows():
+        region = str(pred_row["region"])
+        if regions_filter is not None and region not in regions_filter:
+            continue
+
+        src_meas_id = str(pred_row["source_measurement_id"])
+        die = int(pred_row["die"])
+        pred_idx = int(pred_row["spectrum_index"])
+
+        # Find matching source row in meta_df_orig to obtain paired target measurement ID
+        src_match = meta_df_orig[
+            (meta_df_orig["measurement_id"] == src_meas_id)
+            & (meta_df_orig["region"] == region)
+            & (meta_df_orig["die"] == die)
+        ]
+        if src_match.empty or pd.isna(src_match["measurement_id_target"].iloc[0]):
+            continue
+
+        tgt_meas_id = str(src_match["measurement_id_target"].iloc[0])
+        tgt_match = meta_df_orig[
+            (meta_df_orig["measurement_id"] == tgt_meas_id)
+            & (meta_df_orig["region"] == region)
+            & (meta_df_orig["die"] == die)
+        ]
+        if tgt_match.empty:
+            continue
+
+        tgt_idx = int(tgt_match["spectrum_index"].iloc[0])
+
+        y_true = ary_intensity_orig[tgt_idx]
+        y_pred = ary_intensity_pred[pred_idx]
+
+        max_true = max(float(np.max(np.abs(y_true))), eps)
+        max_pred = float(np.max(np.abs(y_pred)))
+
+        norm_mse = float(np.mean(((y_pred - y_true) / max_true) ** 2))
+        raw_rmse = float(np.sqrt(np.mean((y_pred - y_true) ** 2)))
+        peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
+
+        records.append({
+            "source_measurement_id": src_meas_id,
+            "target_measurement_id": tgt_meas_id,
+            "region": region,
+            "die": die,
+            "normalized_mse": norm_mse,
+            "rmse": raw_rmse,
+            "peak_err_pct": peak_err_pct,
+        })
+
+    df_per_sample = pd.DataFrame(records)
+    if df_per_sample.empty:
+        df_summary = pd.DataFrame(
+            columns=[
+                "region",
+                "normalized_mse_mean",
+                "normalized_mse_std",
+                "rmse_mean",
+                "rmse_std",
+                "peak_err_pct_mean",
+                "peak_err_pct_std",
+            ]
+        )
+    else:
+        df_summary = (
+            df_per_sample.groupby("region")[["normalized_mse", "rmse", "peak_err_pct"]]
+            .agg(["mean", "std"])
+            .reset_index()
+        )
+        # Flatten column multi-index
+        df_summary.columns = [
+            "_".join(col).strip("_") for col in df_summary.columns.values
+        ]
+
+    return df_per_sample, df_summary

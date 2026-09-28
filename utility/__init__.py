@@ -15,10 +15,13 @@ from utility.quantification import (
     get_default_quantification_config,
 )
 from utility.visualization import (
+    calculate_prediction_metrics,
     plot_pairing_timeline,
+    plot_prediction_comparison,
     plot_regional_spectra,
     plot_shirley_background,
     plot_tool_comparison,
+    plot_training_history,
 )
 
 __all__ = [
@@ -34,4 +37,7 @@ __all__ = [
     "plot_tool_comparison",
     "plot_pairing_timeline",
     "plot_shirley_background",
+    "plot_training_history",
+    "plot_prediction_comparison",
+    "calculate_prediction_metrics",
 ]
