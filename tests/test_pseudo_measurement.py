@@ -45,6 +45,7 @@ class TestPseudoMeasurement(unittest.TestCase):
         }
         self.assertTrue(expected_cols.issubset(set(meta_df.columns)))
         self.assertFalse(meta_df.isnull().values.any())
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(meta_df["time"]))
 
     def test_binding_energy_identical_per_region_and_ascending(self) -> None:
         """Verify binding energy arrays for the same region are identical and ascending."""

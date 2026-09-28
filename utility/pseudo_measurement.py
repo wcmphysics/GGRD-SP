@@ -372,7 +372,7 @@ def generate_pseudo_measurements(
                             "material": material,
                             "tool": tool,
                             "measurement_id": meas_id,
-                            "time": meas_time.isoformat(),
+                            "time": pd.Timestamp(meas_time),
                             "die": die_idx,
                             "region": region_name,
                             "n_points": n_points,
