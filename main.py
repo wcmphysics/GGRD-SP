@@ -5,16 +5,18 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from utility import (
+    calculate_atomic_percentages,
     generate_pseudo_measurements,
     pair_source_target_spectra,
     plot_pairing_timeline,
     plot_regional_spectra,
+    plot_shirley_background,
     plot_tool_comparison,
 )
 
 
 def main() -> None:
-    """Execute pseudo-measurement generation, pairing, and visualization workflow."""
+    """Execute pseudo-measurement generation, pairing, quantification, and visualization."""
     print("=== Part 1: Generating Pseudo-Measurements ===")
     ary_intensity, ary_energy, meta_df = generate_pseudo_measurements()
 
@@ -53,6 +55,20 @@ def main() -> None:
     ]
     print(paired_src[cols_to_show].head(5))
 
+    print("\n=== Part 5: Calculating Atomic Percentage (Shirley Integration) ===")
+    sample_meas_id = "M_J4_000"
+    df_per_die, df_summary = calculate_atomic_percentages(
+        ary_energy,
+        ary_intensity,
+        meta_df,
+        config={"measurement_id": sample_meas_id},
+    )
+
+    print(f"Atomic percentage per die for session '{sample_meas_id}' (first 3 dies):")
+    print(df_per_die.head(3).to_string(index=False))
+    print(f"\nSummary statistics across all 9 dies for session '{sample_meas_id}':")
+    print(df_summary.to_string(index=False))
+
     print("\nGenerating demonstration plots...")
     # 1. Regional spectra for the first measurement session
     plot_regional_spectra(
@@ -72,6 +88,14 @@ def main() -> None:
 
     # 3. 1-to-1 Measurement pairing timeline
     plot_pairing_timeline(meta_df)
+
+    # 4. Shirley background subtraction in multi-region grid mode (all 5 regions for Die 0)
+    plot_shirley_background(
+        ary_energy,
+        ary_intensity,
+        meta_df,
+        plot_config={"measurement_id": sample_meas_id, "die": 0},
+    )
 
     print("Showing plots (close plot windows to finish execution)...")
     plt.show()
