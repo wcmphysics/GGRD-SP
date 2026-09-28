@@ -21,8 +21,23 @@ The codes will be composed of mainly 5 parts
    - the time difference between source and target measurement should be lower than a user-specified threshold (default to 12 hours) 
    - store this pairing information in the meta data dataframe (add columns like tool_target, measurement_id_target, spectrum_index_target)
 3. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
+   - we want to train a model such that it can find the mapping of spectra from source tool to the target tool, that is, the transformation such that the measurement performed on source tool can be transformed into the measurement performed on the target tool.
+   - the transformation info lies in the paired source and target measurement compiled in the previous step
+   - we will have many NN models and each of them should be called independently via a root function
+   - the root function contains model definition, training, cost function definition, dataset loader definition, and hyper-paramter search (Bayesian optimization)
+   - train and test split is based on measurement. 
+   1. baseline model:
+      - the input is the intensity for each regional spectra, the output is spectra for each region (sequence-to-sequence)
+      - the model is many ResNet (each for one regional spectrum) and the extracted features are combined at the end by MLP 
+      - the ResNet is composed of 3 CNN and one shortcut (kernel size and step size are hyper-parameters)
+      - cost function is mainly calculated by averaged error among all regions
+      - the error in each region is calculated by first normalize intensity of true and predicted spectrum by the maximun intensity of true spectrum, and then calculate mean-squared error (MSE). This MSE is the error of this region  
+      - cost function has a regularization term (with user-tunable relative weight), which is the sum of squares of model weights (L2 regularization)
 4. Model performance observation
 5. Calculation of atomic percentage for elements by area integration
+   - to get atomic percentage for elements you need to remove background, integrate area, and corrected with sensitivity factors
+   - you do not need to deconvolute peaks, you only need to remove background signal (like using Shirley or other common functions)
+   - there should be a build-in table for relative sensitivity factor (RSF) so user can modify
 
 ## Tech Stack
 - Python 3
