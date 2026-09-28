@@ -15,6 +15,11 @@ The codes will be composed of mainly 5 parts
    - meta data is a pandas dataframe containing all meta data of the spectra recorded
    - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array
 2. Pairing source and target spectra
+   - allow users to specify source tool and target tool
+   - for every measurement in source tool, we find/map a measurement from the target tool
+   - this source to target mapping must be 1-to-1 (no multiple source measurement is linked to the same target measurement)
+   - the time difference between source and target measurement should be lower than a user-specified threshold (default to 12 hours) 
+   - store this pairing information in the meta data dataframe (add columns like tool_target, measurement_id_target, spectrum_index_target)
 3. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
 4. Model performance observation
 5. Calculation of atomic percentage for elements by area integration
