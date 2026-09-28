@@ -4,11 +4,16 @@ This is a sequence-to-sequence Machine Learning project that try to find how to 
 ## Program Structure
 The codes will be composed of mainly 5 parts
 1. Spectrum data reading or generation
-   - 1 XSP measurement gives many (specified by `N_die` and defaulted to `9`) spectra
-   - 1 spectra contains many (specified by `N_region`) regions 
-   - store the spectrum data (arrays of intensity and binding energy) and meta data separately
-   - spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
-   - binding energy   
+   - there are many kinds of materials for the specimen under XPS measurement
+   - 1 XSP measurement gives many (specified by `N_die` and defaulted to `9`) full spectra
+   - 1 full spectrum contains many (specified by `N_region` depending on material) regions (or called regional spectra)
+   - one region has `N_points` data points
+   - store the regional spectrum data (arrays of intensity and binding energy) and meta data separately
+   - store regional spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
+   - store regional bidning energy as 2d numpy array `ary_energy` where the nth row is the nth binding energy array
+   - Note that one array in the `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` will be (`N_measurement`*`N_die`*`N_region`, `N_points`).
+   - meta data is a pandas dataframe containing all meta data of the spectra recorded
+   - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array
 2. Pairing source and target spectra
 3. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
 4. Model performance observation
