@@ -28,11 +28,20 @@ The codes will be composed of mainly 5 parts
    - train and test split is based on measurement. 
    1. baseline model:
       - the input is the intensity for each regional spectra, the output is spectra for each region (sequence-to-sequence)
-      - the model is many ResNet (each for one regional spectrum) and the extracted features are combined at the end by MLP 
+      - the model is many ResNet (each for one regional spectrum) 
       - the ResNet is composed of 3 CNN and one shortcut (kernel size and step size are hyper-parameters)
       - cost function is mainly calculated by averaged error among all regions
       - the error in each region is calculated by first normalize intensity of true and predicted spectrum by the maximun intensity of true spectrum, and then calculate mean-squared error (MSE). This MSE is the error of this region  
       - cost function has a regularization term (with user-tunable relative weight), which is the sum of squares of model weights (L2 regularization)
+   2. sliding window model:
+      - the same model structure as the baseline model (1D CNN with shortcut) but with local sequence transformation using sliding windows (patches)
+      - window size and sliding stride can be specified in eV (default window size: 2.0 eV, default stride: 1.0 eV) or in data points
+      - pure unpadded sliding window slices a regional spectrum into overlapping patches to capture local spectral features and augment training samples
+      - right-edge anchoring guarantees 100% spectral coverage using only real physical measurements without artificial boundary padding
+      - patch-to-patch mapping: predicts a target patch of length W for each input window
+      - the predicted regional spectrum is reconstructed by accumulating and averaging all overlapping predicted slices across that region
+      - validation loss and early stopping are evaluated directly on the reconstructed full spectrum
+      - root function provides dataset preparation, training, Ax Bayesian optimization (searching window size, kernel size, learning rate, L2 regularization), and standardized prediction output
 4. Model performance observation
 5. Calculation of atomic percentage for elements by area integration
    - to get atomic percentage for elements you need to remove background, integrate area, and corrected with sensitivity factors
