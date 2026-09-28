@@ -27,7 +27,7 @@ def main() -> None:
     source_tool = "J4"
     target_tool = "H1"
     example_region = "Ti2p"
-    sample_meas_id = "M_J4_003"  # session for at% calculation and comparison
+    sample_meas_id = "M_J4_000"  # session for at% calculation and comparison
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
@@ -60,12 +60,12 @@ def main() -> None:
         "source_tool": source_tool,
         "target_tool": target_tool,
         "val_ratio": 0.2,
-        "seed": 42,
+        "seed": None,
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
             "num_trials": 5,
             "epochs_per_trial": 15,
-            "kernel_sizes": [3, 5, 7],
+            "kernel_sizes": [3, 5, 13],
             "hidden_channels": [16, 32, 64],
             "lr_bounds": (1e-4, 1e-2),
             "l2_bounds": (1e-6, 1e-2),
@@ -73,7 +73,7 @@ def main() -> None:
             "verbose": True,
         },
         "train_config": {
-            "epochs": 35,
+            "epochs": 100,
             "batch_size": 16,
             "learning_rate": 1e-3,
             "hidden_channels": 32,
