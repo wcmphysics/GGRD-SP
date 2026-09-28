@@ -897,3 +897,177 @@ def calculate_prediction_metrics(
         ]
 
     return df_per_sample, df_summary
+
+
+def plot_sliding_window_slices(
+    spectrum: np.ndarray,
+    energy: np.ndarray | None = None,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
+    """Plot an original regional spectrum alongside its extracted sliding window patches.
+
+    Visualizes how a continuous 1D regional spectrum is decomposed into overlapping
+    sequence windows (patches) for localized sequence-to-sequence neural network training.
+    The top panel displays the full continuous spectrum with transparent shaded bands
+    marking the location and span of each window slice. The bottom panel displays each
+    extracted patch plotted across the exact same binding energy scale, illustrating
+    the local spatial extent, overlap depth, and edge anchoring.
+
+    Parameters
+    ----------
+    spectrum : np.ndarray
+        1D array of spectral intensities of length N.
+    energy : np.ndarray | None, optional
+        1D array of binding energies of length N. If None, data point indices are used.
+    plot_config : dict[str, Any] | None, optional
+        Configuration dictionary containing:
+        - 'window_size_ev' (float): Window size in eV (default 2.0).
+        - 'sliding_stride_ev' (float): Sliding stride in eV (default 1.0).
+        - 'window_size' (int | None): Explicit window size in points (overrides eV).
+        - 'stride' (int | None): Explicit stride in points (overrides eV).
+        - 'region' (str | None): Spectral region name (e.g. 'Ti2p').
+        - 'title' (str | None): Custom suptitle for the figure.
+        - 'invert_x' (bool): Invert x-axis per standard XPS convention (default True if energy is given).
+        - 'offset_patches' (bool): If True, offset patches vertically in waterfall style (default False).
+        - 'axes' (tuple[plt.Axes, plt.Axes] | None): Existing matplotlib axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]
+        Matplotlib figure and a tuple containing (ax_top, ax_bottom).
+
+    Raises
+    ------
+    ValueError
+        If spectrum is empty, or if energy is provided but does not match spectrum length.
+    """
+    from models.sliding_window import calculate_window_points, extract_sliding_windows
+
+    cfg = plot_config or {}
+    region = cfg.get("region")
+    custom_title = cfg.get("title")
+    invert_x: bool = cfg.get("invert_x", energy is not None)
+    offset_patches: bool = bool(cfg.get("offset_patches", False))
+    show: bool = bool(cfg.get("show", False))
+    axes = cfg.get("axes")
+
+    spectrum_1d = np.asarray(spectrum).ravel()
+    n_points = len(spectrum_1d)
+    if n_points == 0:
+        raise ValueError("Cannot plot sliding window slices for an empty spectrum.")
+
+    if energy is not None:
+        energy_1d = np.asarray(energy).ravel()
+        if len(energy_1d) != n_points:
+            raise ValueError(
+                f"Length mismatch: spectrum has {n_points} points but energy has {len(energy_1d)} points."
+            )
+        w_size, s_step = calculate_window_points(energy_1d, config=cfg)
+        x_vals = energy_1d
+        x_label = "Binding Energy (eV)"
+    else:
+        energy_1d = None
+        x_vals = np.arange(n_points)
+        x_label = "Data Point Index"
+        w_size = int(cfg.get("window_size", cfg.get("window_size_points", 15)))
+        s_step = int(cfg.get("stride", cfg.get("sliding_stride_points", max(1, w_size // 2))))
+
+    windows, start_indices = extract_sliding_windows(spectrum_1d, window_size=w_size, stride=s_step)
+    n_windows = len(windows)
+
+    if axes is None:
+        fig, (ax_top, ax_bottom) = plt.subplots(
+            2, 1, figsize=(10, 7), sharex=True, gridspec_kw={"height_ratios": [1, 1.2]}
+        )
+    else:
+        ax_top, ax_bottom = axes
+        fig = ax_top.get_figure()
+
+    # Generate distinct colors for windows
+    cmap = plt.get_cmap("tab10" if n_windows <= 10 else "plasma")
+    colors = [
+        cmap(i % 10 if n_windows <= 10 else (i / max(1, n_windows - 1)))
+        for i in range(n_windows)
+    ]
+
+    has_anchored = (
+        (n_points - w_size) % s_step != 0
+        and n_windows > 1
+        and start_indices[-1] == n_points - w_size
+    )
+
+    # Top plot: Original spectrum with window spans
+    ax_top.plot(x_vals, spectrum_1d, color="#1a252f", linewidth=2.2, label="Original Spectrum", zorder=3)
+
+    for i, start_idx in enumerate(start_indices):
+        x_win = x_vals[start_idx : start_idx + w_size]
+        x_min, x_max = min(x_win[0], x_win[-1]), max(x_win[0], x_win[-1])
+        is_last_anchored = has_anchored and (i == n_windows - 1)
+        ax_top.axvspan(
+            x_min,
+            x_max,
+            facecolor=colors[i],
+            alpha=0.25 if is_last_anchored else 0.15,
+            linestyle="--" if is_last_anchored else "-",
+            edgecolor=colors[i] if is_last_anchored else "none",
+            zorder=1,
+        )
+
+    delta_e_str = f", $\\Delta E$={abs(energy_1d[-1] - energy_1d[0]):.2f} eV" if energy_1d is not None else ""
+    top_title = f"Original Spectrum {f'({region}) ' if region else ''}[N={n_points} pts{delta_e_str}]"
+    ax_top.set_title(top_title, fontsize=11, fontweight="bold")
+    ax_top.set_ylabel("Intensity (counts / a.u.)")
+    ax_top.grid(True, linestyle="--", alpha=0.5)
+    ax_top.legend(loc="upper right", framealpha=0.9)
+
+    # Bottom plot: Extracted individual window patches
+    spec_range = float(np.ptp(spectrum_1d)) or 1.0
+    offset_step = (spec_range * 0.15) if offset_patches else 0.0
+
+    for i, (win, start_idx) in enumerate(zip(windows, start_indices)):
+        x_win = x_vals[start_idx : start_idx + w_size]
+        y_win = win + (i * offset_step)
+        is_anchored = has_anchored and (i == n_windows - 1)
+        tag = "anchored" if is_anchored else f"pts {start_idx}:{start_idx+w_size}"
+        lbl = f"Patch {i+1} ({tag})" if (n_windows <= 8 or is_anchored) else None
+        ls = "--" if is_anchored else "-"
+        ax_bottom.plot(
+            x_win,
+            y_win,
+            color=colors[i],
+            linewidth=2.0 if is_anchored else 1.8,
+            linestyle=ls,
+            marker=".",
+            markersize=3,
+            alpha=0.9 if is_anchored else 0.85,
+            label=lbl,
+        )
+
+    anchor_badge = " [Right-Edge Anchored]" if has_anchored else ""
+    bottom_title = (
+        f"Extracted Sliding Windows (W={w_size} pts, S={s_step} pts, "
+        f"Total Patches={n_windows}{anchor_badge})"
+    )
+    ax_bottom.set_title(bottom_title, fontsize=11, fontweight="bold")
+    ax_bottom.set_xlabel(x_label)
+    ax_bottom.set_ylabel("Patch Intensity" + (" (Waterfall Offset)" if offset_patches else ""))
+    ax_bottom.grid(True, linestyle="--", alpha=0.5)
+
+    if n_windows <= 8 or has_anchored:
+        ax_bottom.legend(loc="upper right", fontsize=8, framealpha=0.9)
+
+    if invert_x:
+        if not ax_bottom.xaxis_inverted():
+            ax_bottom.invert_xaxis()
+        if not ax_top.xaxis_inverted():
+            ax_top.invert_xaxis()
+
+    suptitle = custom_title or f"Sliding Window Spectral Decomposition {f'({region})' if region else ''}"
+    fig.suptitle(suptitle, fontsize=13, fontweight="bold", y=0.98)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+
+    return fig, (ax_top, ax_bottom)
