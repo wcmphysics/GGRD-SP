@@ -24,6 +24,12 @@ from models.sliding_window import (
     train_sliding_window_region,
 )
 from models.trainer import evaluate, train_baseline_region, train_one_epoch
+from models.unet import (
+    UNet1D,
+    optimize_unet_hyperparameters,
+    run_unet_pipeline,
+    train_unet_region,
+)
 
 __all__ = [
     "Residual1DCNN",
@@ -48,4 +54,8 @@ __all__ = [
     "optimize_sliding_window_hyperparameters",
     "predict_sliding_window_spectra",
     "run_sliding_window_pipeline",
+    "UNet1D",
+    "train_unet_region",
+    "optimize_unet_hyperparameters",
+    "run_unet_pipeline",
 ]

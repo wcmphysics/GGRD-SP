@@ -8,6 +8,7 @@ from models import (
     format_predicted_measurement_id,
     run_baseline_pipeline,
     run_sliding_window_pipeline,
+    run_unet_pipeline,
 )
 from utility import (
     calculate_atomic_percentages,
@@ -32,7 +33,8 @@ def main() -> None:
     # Choose which neural network model architecture to train and evaluate:
     # "baseline": Full regional spectrum ResNet
     # "sliding_window": Local sequence patch-to-patch ResNet with overlap reconstruction
-    model_type = "sliding_window"  # Options: "baseline" or "sliding_window"
+    # "unet": Multi-scale 1D U-Net (supports both full spectrum and sliding window modes)
+    model_type = "sliding_window"  # Options: "baseline", "sliding_window", or "unet"
 
     source_tool = "J4"
     target_tool = "H1"
@@ -129,6 +131,42 @@ def main() -> None:
         "predict_source": True,
     }
 
+    # Part 3: 1D U-Net Neural Network & Ax Bayesian Optimization configuration
+    unet_config = {
+        "use_sliding_window": False,  # True for patch-to-patch mode, False for full regional spectrum mode
+        "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+        "source_tool": source_tool,
+        "target_tool": target_tool,
+        "val_ratio": 0.2,
+        "seed": None,
+        "window_size_ev": 2.0,  # used if use_sliding_window=True
+        "sliding_stride_ev": 1.0,  # used if use_sliding_window=True
+        "use_bayesian_opt": False,
+        "bayesian_opt_config": {
+            "num_trials": 5,
+            "epochs_per_trial": 15,
+            "base_channels": [16, 32],
+            "depths": [2, 3],
+            "kernel_sizes": [3, 5],
+            "lr_bounds": (1e-4, 1e-2),
+            "l2_bounds": (1e-6, 1e-2),
+            "verbose": True,
+        },
+        "train_config": {
+            "epochs": 100,
+            "batch_size": 16,
+            "learning_rate": 1e-3,
+            "base_channels": 16,
+            "depth": 3,
+            "kernel_size": 5,
+            "residual": True,  # y = x + UNet(x) for stable inter-tool delta transfer
+            "l2_weight": 1e-4,
+            "early_stopping_patience": 10,
+            "verbose": False,
+        },
+        "predict_source": True,
+    }
+
     # =========================================================================
     # PART 1: GENERATE PSEUDO-MEASUREMENTS
     # =========================================================================
@@ -192,9 +230,17 @@ def main() -> None:
             ary_energy,
             config=baseline_config,
         )
+    elif model_type == "unet":
+        print("\n=== Part 3: 1D U-Net Neural Network Training & Prediction ===")
+        model_results = run_unet_pipeline(
+            meta_df,
+            ary_intensity,
+            ary_energy,
+            config=unet_config,
+        )
     else:
         raise ValueError(
-            f"Unknown model_type '{model_type}'. Choose 'baseline' or 'sliding_window'."
+            f"Unknown model_type '{model_type}'. Choose 'baseline', 'sliding_window', or 'unet'."
         )
 
     val_evaluation = model_results["evaluation"]
@@ -277,14 +323,24 @@ def main() -> None:
     )
 
     # 4. Training loss history curves across all regions (Part 4)
-    model_name_label = "Sliding Window" if model_type == "sliding_window" else "Baseline"
+    if model_type == "sliding_window":
+        model_name_label = "Sliding Window ResNet"
+    elif model_type == "unet":
+        mode_str = "Sliding Window" if unet_config.get("use_sliding_window") else "Full Spectrum"
+        model_name_label = f"1D U-Net ({mode_str})"
+    else:
+        model_name_label = "Baseline ResNet"
+
     plot_training_history(
         model_results["histories"],
         plot_config={"title": f"Part 4: {model_name_label} Neural Network Training & Validation Loss"},
     )
 
     # 5. Sliding window decomposition (Original vs Sliced Spectra) if sliding window chosen
-    if model_type == "sliding_window":
+    has_sw_decomp = (model_type == "sliding_window") or (
+        model_type == "unet" and unet_config.get("use_sliding_window", False)
+    )
+    if has_sw_decomp:
         example_subset = meta_df[
             (meta_df["measurement_id"] == sample_meas_id)
             & (meta_df["region"] == example_region)
@@ -292,13 +348,14 @@ def main() -> None:
         ]
         if not example_subset.empty:
             ex_idx = int(example_subset.iloc[0]["spectrum_index"])
+            active_sw_cfg = sliding_window_config if model_type == "sliding_window" else unet_config
             plot_sliding_window_slices(
                 ary_intensity[ex_idx],
                 ary_energy[ex_idx],
                 plot_config={
                     "region": example_region,
-                    "window_size_ev": sliding_window_config.get("window_size_ev", 2.0),
-                    "sliding_stride_ev": sliding_window_config.get("sliding_stride_ev", 1.0),
+                    "window_size_ev": active_sw_cfg.get("window_size_ev", 2.0),
+                    "sliding_stride_ev": active_sw_cfg.get("sliding_stride_ev", 1.0),
                     "offset_patches": True,
                     "title": (
                         f"Sliding Window Decomposition - {example_region} "
