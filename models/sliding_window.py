@@ -803,6 +803,8 @@ def predict_sliding_window_spectra(
             "source_spectrum_index": orig_idx,
             "is_predicted": True,
         }
+        if "t7_code" in row:
+            meta_rec["t7_code"] = row["t7_code"]
         predicted_meta_records.append(meta_rec)
 
     meta_df_predicted = pd.DataFrame(predicted_meta_records)

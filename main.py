@@ -45,6 +45,7 @@ def main() -> None:
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "n_points": 100,
         "measurements_per_tool": {source_tool: 15, target_tool: 20},
+        "measurements_per_t7_code": 10,
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
             source_tool: {"shift_ev": 0.0, "scale": 1.0},

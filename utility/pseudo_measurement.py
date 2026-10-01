@@ -136,6 +136,7 @@ def get_default_measurement_config() -> dict[str, Any]:
         "n_die": 9,
         "n_points": 100,
         "measurements_per_tool": {"J4": 10, "J5": 10},
+        "measurements_per_t7_code": 10,
         "start_time": "2026-01-01 00:00:00",
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
@@ -179,6 +180,12 @@ def _validate_config(config: dict[str, Any]) -> None:
 
     if any(v < 0 for v in measurements_per_tool.values()):
         raise ValueError(f"measurements_per_tool counts cannot be negative: {measurements_per_tool}")
+
+    meas_per_t7 = config.get("measurements_per_t7_code", 10)
+    if not isinstance(meas_per_t7, int) or meas_per_t7 <= 0:
+        raise ValueError(
+            f"measurements_per_t7_code must be a positive integer, got {meas_per_t7}"
+        )
 
     interval_range = config.get("interval_hours_range", (4.0, 24.0))
     if not (isinstance(interval_range, (tuple, list)) and len(interval_range) == 2):
@@ -273,6 +280,7 @@ def generate_pseudo_measurements(
     n_die: int = merged_config["n_die"]
     n_points: int = merged_config["n_points"]
     meas_per_tool: dict[str, int] = merged_config["measurements_per_tool"]
+    meas_per_t7: int = int(merged_config.get("measurements_per_t7_code", 10))
     tool_offsets: dict[str, dict[str, float]] = merged_config["tool_offsets"]
     die_variation_std: float = merged_config["die_variation_std"]
     noise_relative_std: float = merged_config["noise_relative_std"]
@@ -325,6 +333,8 @@ def generate_pseudo_measurements(
 
         for meas_num, meas_time in enumerate(meas_times):
             meas_id = f"{material}_M_{tool}_{meas_num:05d}"
+            t7_idx = (meas_num // meas_per_t7) + 1
+            t7_code = f"T7_{t7_idx:03d}"
 
             # Die-to-die spatial variation across the wafer
             die_factors = rng.normal(1.0, die_variation_std, size=n_die)
@@ -372,6 +382,7 @@ def generate_pseudo_measurements(
                             "material": material,
                             "tool": tool,
                             "measurement_id": meas_id,
+                            "t7_code": t7_code,
                             "time": pd.Timestamp(meas_time),
                             "die": die_idx,
                             "region": region_name,
