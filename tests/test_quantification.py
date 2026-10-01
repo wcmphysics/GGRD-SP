@@ -88,7 +88,7 @@ class TestQuantification(unittest.TestCase):
 
     def test_atomic_percentage_normalization_and_schema(self) -> None:
         """Verify atomic percentages sum to 100% and output adheres to wide format."""
-        meas_id = "M_J4_000"
+        meas_id = "NMG_M_J4_00000"
         df_per_die, df_summary = calculate_atomic_percentages(
             self.ary_ene,
             self.ary_int,
@@ -116,7 +116,7 @@ class TestQuantification(unittest.TestCase):
     def test_predicted_spectrum_compatibility(self) -> None:
         """Verify compatibility with artificially wrapped predicted metadata and arrays."""
         # Wrap predicted data
-        pred_meas_id = "P_J4J5_001"
+        pred_meas_id = "NMG_P_J4J5_00001"
         ary_energy_predicted = self.ary_ene.copy()
         ary_intensity_predicted = self.ary_int.copy()
 
@@ -147,13 +147,13 @@ class TestQuantification(unittest.TestCase):
             self.ary_ene,
             self.ary_int,
             self.meta_df,
-            config={"measurement_id": "M_J4_000"},
+            config={"measurement_id": "NMG_M_J4_00000"},
         )
         df_custom, _ = calculate_atomic_percentages(
             self.ary_ene,
             self.ary_int,
             self.meta_df,
-            config={"measurement_id": "M_J4_000", "rsf_dict": custom_rsf},
+            config={"measurement_id": "NMG_M_J4_00000", "rsf_dict": custom_rsf},
         )
 
         al_default = df_default["Al2p_at%"].iloc[0]
@@ -192,7 +192,7 @@ class TestQuantification(unittest.TestCase):
             self.ary_ene,
             flat_int,
             self.meta_df,
-            config={"measurement_id": "M_J4_000"},
+            config={"measurement_id": "NMG_M_J4_00000"},
         )
         at_cols = [c for c in df_per_die.columns if c.endswith("_at%")]
         self.assertTrue((df_per_die[at_cols] == 0.0).all().all())

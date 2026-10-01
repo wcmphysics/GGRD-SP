@@ -47,6 +47,15 @@ class TestPseudoMeasurement(unittest.TestCase):
         self.assertFalse(meta_df.isnull().values.any())
         self.assertTrue(pd.api.types.is_datetime64_any_dtype(meta_df["time"]))
 
+        # Verify measurement_id naming convention: {material}_M_{tool}_{meas_num:05d}
+        sample_id = str(meta_df["measurement_id"].iloc[0])
+        self.assertEqual(sample_id, "NMG_M_J4_00000")
+        parts = sample_id.split("_")
+        self.assertEqual(len(parts), 4)
+        self.assertEqual(parts[0], "NMG")
+        self.assertEqual(parts[1], "M")
+        self.assertEqual(len(parts[3]), 5)
+
     def test_binding_energy_identical_per_region_and_ascending(self) -> None:
         """Verify binding energy arrays for the same region are identical and ascending."""
         ary_intensity, ary_energy, meta_df = generate_pseudo_measurements()

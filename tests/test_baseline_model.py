@@ -248,10 +248,12 @@ class TestTrainingAndInference(unittest.TestCase):
         id_1 = format_predicted_measurement_id("M_J4_003", "J4", "H1")
         id_2 = format_predicted_measurement_id("SESSION_A_003", "J4", "H1")
         id_3 = format_predicted_measurement_id("SESSION_B_003", "J4", "H1")
+        id_new = format_predicted_measurement_id("NMG_M_J4_00001", "J4", "H1")
 
         self.assertEqual(id_1, "P_J4H1_003")
         self.assertEqual(id_2, "P_J4H1_SESSION_A_003")
         self.assertEqual(id_3, "P_J4H1_SESSION_B_003")
+        self.assertEqual(id_new, "NMG_P_J4H1_00001")
         self.assertNotEqual(id_2, id_3)
 
     def test_predict_spectra_bundled_data(self) -> None:
