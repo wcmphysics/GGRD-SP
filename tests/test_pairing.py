@@ -72,6 +72,14 @@ class TestPairing(unittest.TestCase):
             "Violation: time difference exceeds threshold!",
         )
 
+        # Verify t7_code_target matches t7_code for all paired source sessions
+        if "t7_code" in paired_df.columns and "t7_code_target" in paired_df.columns:
+            paired_src = paired_df[src_mask & paired_df["measurement_id_target"].notna()]
+            self.assertTrue(
+                (paired_src["t7_code"] == paired_src["t7_code_target"]).all(),
+                "Violation: paired source and target measurements have different t7_code!",
+            )
+
     def test_die_and_region_consistency(self) -> None:
         """Verify paired spectrum_index_target preserves exact die and region correspondence."""
         paired_df = pair_source_target_spectra(self.meta_df)
@@ -247,6 +255,62 @@ class TestPairing(unittest.TestCase):
         src_row = paired[paired["measurement_id"] == "M_J4_A"].iloc[0]
         self.assertEqual(src_row["measurement_id_target"], "M_J5_A")
         self.assertEqual(src_row["spectrum_index_target"], 2)
+
+    def test_t7_code_isolation(self) -> None:
+        """Verify measurements are only paired with target sessions sharing the same t7_code."""
+        t0 = datetime(2026, 1, 1, 10, 0, 0)
+        data = [
+            # T7_001 on J4
+            {
+                "spectrum_index": 0,
+                "material": "MaterialA",
+                "t7_code": "T7_001",
+                "tool": "J4",
+                "measurement_id": "M_J4_1",
+                "time": t0,
+                "die": 0,
+                "region": "Reg1",
+            },
+            # T7_002 on J5 (closer in time to M_J4_1 with diff = 1h, but different t7_code)
+            {
+                "spectrum_index": 1,
+                "material": "MaterialA",
+                "t7_code": "T7_002",
+                "tool": "J5",
+                "measurement_id": "M_J5_2",
+                "time": t0 + timedelta(hours=1),
+                "die": 0,
+                "region": "Reg1",
+            },
+            # T7_001 on J5 (further in time with diff = 3h, but matching t7_code)
+            {
+                "spectrum_index": 2,
+                "material": "MaterialA",
+                "t7_code": "T7_001",
+                "tool": "J5",
+                "measurement_id": "M_J5_1",
+                "time": t0 + timedelta(hours=3),
+                "die": 0,
+                "region": "Reg1",
+            },
+        ]
+        df = pd.DataFrame(data)
+        paired = pair_source_target_spectra(df, config={"time_threshold_hours": 10.0})
+
+        # M_J4_1 must pair with M_J5_1 (same t7_code), NOT M_J5_2 (different t7_code despite closer time)
+        src_row = paired[paired["measurement_id"] == "M_J4_1"].iloc[0]
+        self.assertEqual(src_row["measurement_id_target"], "M_J5_1")
+        self.assertEqual(src_row["spectrum_index_target"], 2)
+        self.assertEqual(src_row["t7_code_target"], "T7_001")
+
+        # When match_t7_code is disabled, closer session M_J5_2 is selected
+        paired_unconstrained = pair_source_target_spectra(
+            df, config={"time_threshold_hours": 10.0, "match_t7_code": False}
+        )
+        src_unconstrained = paired_unconstrained[
+            paired_unconstrained["measurement_id"] == "M_J4_1"
+        ].iloc[0]
+        self.assertEqual(src_unconstrained["measurement_id_target"], "M_J5_2")
 
     def test_timezone_aware_timestamps(self) -> None:
         """Verify pairing and timeline visualization handle timezone-aware timestamps."""
