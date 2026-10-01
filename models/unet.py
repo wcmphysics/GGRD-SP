@@ -451,6 +451,7 @@ def optimize_unet_hyperparameters(
             objectives={"val_loss": ObjectiveProperties(minimize=True)},
         )
 
+        trial_records: list[tuple[float, dict[str, Any]]] = []
         for trial_idx in range(num_trials):
             params, trial_index = ax_client.get_next_trial()
             trial_train_cfg = dict(cfg)
@@ -468,10 +469,27 @@ def optimize_unet_hyperparameters(
             )
 
             res = train_unet_region(train_dataset, val_dataset, config=trial_train_cfg)
-            ax_client.complete_trial(trial_index=trial_index, raw_data={"val_loss": res["best_val_loss"]})
+            v_loss = float(res["best_val_loss"])
+            ax_client.complete_trial(trial_index=trial_index, raw_data={"val_loss": v_loss})
+            trial_records.append((v_loss, params))
 
-        best_params, metrics = ax_client.get_best_parameters()
-        best_val_loss = float(metrics[0]["val_loss"])
+        best_params: dict[str, Any] = {}
+        best_val_loss = float("inf")
+        try:
+            best_p, metrics = ax_client.get_best_parameters()
+            if best_p is not None:
+                best_params = best_p
+            if metrics is not None and isinstance(metrics, (tuple, list)) and len(metrics) > 0:
+                first = metrics[0]
+                if isinstance(first, dict) and "val_loss" in first:
+                    best_val_loss = float(first["val_loss"])
+        except Exception:
+            pass
+
+        if np.isinf(best_val_loss) or np.isnan(best_val_loss):
+            if trial_records:
+                trial_records.sort(key=lambda t: t[0])
+                best_val_loss, best_params = trial_records[0]
 
         return {
             "best_parameters": best_params,
@@ -576,7 +594,11 @@ def run_unet_pipeline(
 
         if use_sw:
             # Sliding window mode
-            e_grid = ary_energy[train_full_ds.source_indices[0]]
+            sample_energy = train_full_ds[0].get("energy")
+            if sample_energy is not None:
+                e_grid = sample_energy.cpu().numpy()
+            else:
+                e_grid = np.linspace(0.0, 10.0, train_full_ds[0]["x"].shape[-1])
             sw_calc_cfg = {
                 "window_size_ev": cfg.get("window_size_ev", 2.0),
                 "sliding_stride_ev": cfg.get("sliding_stride_ev", 1.0),
@@ -585,16 +607,14 @@ def run_unet_pipeline(
             }
             w_size, s_step = calculate_window_points(e_grid, config=sw_calc_cfg)
 
+            train_ds: Dataset = SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
+            val_ds: Dataset = SpectrumPatchDataset(val_full_ds, window_size=w_size, stride=s_step)
+
             if use_bo:
-                bo_res = optimize_unet_hyperparameters(train_full_ds, val_full_ds, config=bo_cfg)
+                bo_res = optimize_unet_hyperparameters(train_ds, val_ds, config=bo_cfg)
                 bo_results[region] = bo_res
                 if bo_res.get("best_parameters"):
                     region_train_cfg.update(bo_res["best_parameters"])
-
-            train_patches = extract_sliding_windows(train_full_ds, config={"window_size": w_size, "stride": s_step})
-            val_patches = extract_sliding_windows(val_full_ds, config={"window_size": w_size, "stride": s_step})
-            train_ds: Dataset = SpectrumPatchDataset(train_patches["x_patches"], train_patches["y_patches"])
-            val_ds: Dataset = SpectrumPatchDataset(val_patches["x_patches"], val_patches["y_patches"])
 
             train_res = train_unet_region(train_ds, val_ds, config=region_train_cfg)
             models[region] = (train_res["model"], w_size, s_step)
@@ -626,8 +646,6 @@ def run_unet_pipeline(
         pred_energies = np.empty((n_pred, n_points), dtype=np.float64)
         pred_meta_records: list[dict[str, Any]] = []
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
         for new_idx, (_, row) in enumerate(source_df.iterrows()):
             reg = str(row["region"])
             orig_idx = int(row["spectrum_index"])
@@ -640,17 +658,19 @@ def run_unet_pipeline(
             if reg in models:
                 if use_sw:
                     model, w_size, s_step = models[reg]
+                    model_device = next(model.parameters()).device
                     reconstructed = predict_sliding_window_spectrum(
                         model=model,
                         spectrum=x_raw,
-                        config={"window_size": w_size, "stride": s_step},
+                        config={"window_size": w_size, "stride": s_step, "device": model_device},
                     )
                     pred_intensities[new_idx] = reconstructed
                 else:
                     model = models[reg]
                     model.eval()
+                    model_device = next(model.parameters()).device
                     with torch.no_grad():
-                        x_tensor = torch.from_numpy(x_raw.astype(np.float32)).unsqueeze(0).to(device)
+                        x_tensor = torch.from_numpy(x_raw.astype(np.float32)).unsqueeze(0).to(model_device)
                         y_pred = model(x_tensor).squeeze(0).cpu().numpy()
                     pred_intensities[new_idx] = y_pred
             else:
