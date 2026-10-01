@@ -38,6 +38,7 @@ class TestPseudoMeasurement(unittest.TestCase):
             "material",
             "tool",
             "measurement_id",
+            "t7_code",
             "time",
             "die",
             "region",
@@ -55,6 +56,10 @@ class TestPseudoMeasurement(unittest.TestCase):
         self.assertEqual(parts[0], "NMG")
         self.assertEqual(parts[1], "M")
         self.assertEqual(len(parts[3]), 5)
+
+        # Verify t7_code format: T7_{wafer_idx:03d}
+        sample_t7 = str(meta_df["t7_code"].iloc[0])
+        self.assertEqual(sample_t7, "T7_001")
 
     def test_binding_energy_identical_per_region_and_ascending(self) -> None:
         """Verify binding energy arrays for the same region are identical and ascending."""
@@ -174,6 +179,37 @@ class TestPseudoMeasurement(unittest.TestCase):
             generate_pseudo_measurements({"interval_hours_range": (24.0, 4.0)})
         with self.assertRaises(ValueError):
             generate_pseudo_measurements({"interval_hours_range": (-1.0, 5.0)})
+
+    def test_t7_code_distribution_and_cross_tool_sharing(self) -> None:
+        """Verify t7_code is shared across roughly 10 measurements and across tools."""
+        config = {
+            "measurements_per_tool": {"J4": 25, "J5": 25},
+            "measurements_per_t7_code": 10,
+            "n_die": 1,
+            "regions": ["Al2p"],
+        }
+        _, _, meta_df = generate_pseudo_measurements(config)
+
+        # For tool J4: meas 0-9 should have T7_001, 10-19 T7_002, 20-24 T7_003
+        j4_df = meta_df[meta_df["tool"] == "J4"]
+        j4_t7_by_meas = j4_df.drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
+        expected_t7 = ["T7_001"] * 10 + ["T7_002"] * 10 + ["T7_003"] * 5
+        self.assertEqual(j4_t7_by_meas, expected_t7)
+
+        # For tool J5: same pattern
+        j5_df = meta_df[meta_df["tool"] == "J5"]
+        j5_t7_by_meas = j5_df.drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
+        self.assertEqual(j5_t7_by_meas, expected_t7)
+
+        # Unique t7 codes total = 3
+        self.assertEqual(set(meta_df["t7_code"].unique()), {"T7_001", "T7_002", "T7_003"})
+
+    def test_invalid_measurements_per_t7_code_raises(self) -> None:
+        """Verify non-positive measurements_per_t7_code raises ValueError."""
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements({"measurements_per_t7_code": 0})
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements({"measurements_per_t7_code": -3})
 
 
 class TestVisualization(unittest.TestCase):
