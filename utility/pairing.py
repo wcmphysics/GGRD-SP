@@ -282,12 +282,16 @@ def pair_source_target_spectra(
         if has_t7:
             # Enforce that only measurements with the same t7_code can pair together
             t7_groups = list(df_mat["t7_code"].dropna().unique())
+            if df_mat["t7_code"].isna().any():
+                t7_groups.append(None)
         else:
             t7_groups = [None]
 
         for t7_val in t7_groups:
             if t7_val is not None:
                 df_pool = df_mat[df_mat["t7_code"] == t7_val]
+            elif has_t7:
+                df_pool = df_mat[df_mat["t7_code"].isna()]
             else:
                 df_pool = df_mat
 

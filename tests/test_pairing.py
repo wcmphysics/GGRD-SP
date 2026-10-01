@@ -312,6 +312,34 @@ class TestPairing(unittest.TestCase):
         ].iloc[0]
         self.assertEqual(src_unconstrained["measurement_id_target"], "M_J5_2")
 
+    def test_t7_code_null_handling(self) -> None:
+        """Verify measurements with null/unassigned t7_code can pair together."""
+        t0 = datetime(2026, 1, 1, 10, 0, 0)
+        data = [
+            {
+                "spectrum_index": 0,
+                "tool": "J4",
+                "measurement_id": "M_J4_null",
+                "time": t0,
+                "die": 0,
+                "region": "Al2p",
+                "t7_code": None,
+            },
+            {
+                "spectrum_index": 1,
+                "tool": "J5",
+                "measurement_id": "M_J5_null",
+                "time": t0 + timedelta(hours=1),
+                "die": 0,
+                "region": "Al2p",
+                "t7_code": None,
+            },
+        ]
+        df = pd.DataFrame(data)
+        paired = pair_source_target_spectra(df)
+        src_row = paired[paired["measurement_id"] == "M_J4_null"].iloc[0]
+        self.assertEqual(src_row["measurement_id_target"], "M_J5_null")
+
     def test_timezone_aware_timestamps(self) -> None:
         """Verify pairing and timeline visualization handle timezone-aware timestamps."""
         data = [
