@@ -12,6 +12,7 @@ from models.baseline_cnn import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
 from models.unet import (
     UNet1D,
+    UNetConvBlock1D,
     run_unet_pipeline,
     train_unet_region,
 )
@@ -58,21 +59,37 @@ class TestUNet1DArchitecture(unittest.TestCase):
         self.assertEqual(y_dir.shape, (2, 40))
 
     def test_l2_regularization_scalar(self) -> None:
-        """Verify L2 penalty calculates positive scalar on conv weights."""
-        model = UNet1D(n_points=50, config={"base_channels": 8, "depth": 2})
+        """Verify L2 penalty calculates positive scalar on conv weights and excludes BatchNorm."""
+        model = UNet1D(n_points=50, config={"base_channels": 8, "depth": 2, "use_batch_norm": True})
         l2_val = model.get_l2_regularization()
         self.assertIsInstance(l2_val, torch.Tensor)
         self.assertEqual(l2_val.dim(), 0)
         self.assertGreater(float(l2_val.item()), 0.0)
 
+        expected_l2 = sum(
+            torch.sum(m.weight**2).item()
+            for m in model.modules()
+            if isinstance(m, torch.nn.Conv1d)
+        )
+        self.assertAlmostEqual(float(l2_val.item()), expected_l2, places=3)
+
+    def test_conv_block_config_interface(self) -> None:
+        """Verify UNetConvBlock1D accepts config dictionary with bundled parameters."""
+        block = UNetConvBlock1D(4, 8, config={"kernel_size": 3, "dropout": 0.1, "use_batch_norm": True})
+        x = torch.randn(2, 4, 30)
+        y = block(x)
+        self.assertEqual(y.shape, (2, 8, 30))
+
     def test_invalid_parameters_raise(self) -> None:
-        """Verify invalid kernel_size and depth raise ValueError."""
+        """Verify invalid kernel_size, depth, and sequence length raise ValueError."""
         with self.assertRaises(ValueError):
             UNet1D(n_points=50, config={"kernel_size": 4})  # even
         with self.assertRaises(ValueError):
             UNet1D(n_points=50, config={"kernel_size": 0})  # non-positive
         with self.assertRaises(ValueError):
             UNet1D(n_points=50, config={"depth": 0})  # depth < 1
+        with self.assertRaises(ValueError):
+            UNet1D(n_points=7, config={"depth": 3})  # 7 < 2**3
 
 
 class TestUNetTrainingAndPipeline(unittest.TestCase):

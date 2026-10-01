@@ -44,12 +44,17 @@ class UNetConvBlock1D(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int = 5,
-        dropout: float = 0.0,
-        use_batch_norm: bool = True,
-        activation: str = "relu",
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
+        cfg = dict(config or {})
+        cfg.update(kwargs)
+        kernel_size: int = int(cfg.get("kernel_size", 5))
+        dropout: float = float(cfg.get("dropout", 0.0))
+        use_batch_norm: bool = bool(cfg.get("use_batch_norm", True))
+        activation: str = str(cfg.get("activation", "relu"))
+
         if kernel_size <= 0 or kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
 
@@ -116,8 +121,21 @@ class UNet1D(nn.Module):
 
         if self.depth < 1:
             raise ValueError(f"depth must be >= 1, got {self.depth}")
+        min_points = 2**self.depth
+        if self.n_points < min_points:
+            raise ValueError(
+                f"n_points ({self.n_points}) is too small for depth {self.depth}. "
+                f"Requires at least {min_points} points (2**depth)."
+            )
         if self.kernel_size <= 0 or self.kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be a positive odd integer, got {self.kernel_size}")
+
+        block_cfg = {
+            "kernel_size": self.kernel_size,
+            "dropout": self.dropout,
+            "use_batch_norm": self.use_batch_norm,
+            "activation": self.activation,
+        }
 
         # Encoder stages
         self.encoders = nn.ModuleList()
@@ -131,10 +149,7 @@ class UNet1D(nn.Module):
                 UNetConvBlock1D(
                     in_channels=current_ch,
                     out_channels=out_ch,
-                    kernel_size=self.kernel_size,
-                    dropout=self.dropout,
-                    use_batch_norm=self.use_batch_norm,
-                    activation=self.activation,
+                    config=block_cfg,
                 )
             )
             self.pools.append(nn.MaxPool1d(kernel_size=2, stride=2))
@@ -146,10 +161,7 @@ class UNet1D(nn.Module):
         self.bottleneck = UNetConvBlock1D(
             in_channels=current_ch,
             out_channels=bottleneck_ch,
-            kernel_size=self.kernel_size,
-            dropout=self.dropout,
-            use_batch_norm=self.use_batch_norm,
-            activation=self.activation,
+            config=block_cfg,
         )
 
         # Decoder stages
@@ -165,10 +177,7 @@ class UNet1D(nn.Module):
                 UNetConvBlock1D(
                     in_channels=skip_ch * 2,
                     out_channels=skip_ch,
-                    kernel_size=self.kernel_size,
-                    dropout=self.dropout,
-                    use_batch_norm=self.use_batch_norm,
-                    activation=self.activation,
+                    config=block_cfg,
                 )
             )
             dec_current = skip_ch
@@ -212,13 +221,9 @@ class UNet1D(nn.Module):
         # Expanding path
         for i in range(self.depth):
             skip = skips[-(i + 1)]
-            # Linear interpolation upsampling (scale_factor=2)
-            feat = F.interpolate(feat, scale_factor=2, mode="linear", align_corners=False)
+            # Direct linear interpolation to target skip sequence length
+            feat = F.interpolate(feat, size=skip.shape[-1], mode="linear", align_corners=False)
             feat = self.up_convs[i](feat)
-
-            # Robust length matching in case integer division of odd length produced length mismatch
-            if feat.shape[-1] != skip.shape[-1]:
-                feat = F.interpolate(feat, size=skip.shape[-1], mode="linear", align_corners=False)
 
             cat = torch.cat([feat, skip], dim=1)
             feat = self.decoders[i](cat)
@@ -235,9 +240,9 @@ class UNet1D(nn.Module):
         """Compute the sum of squared weights of convolutional layers."""
         device = next(self.parameters()).device
         l2_sum = torch.tensor(0.0, device=device)
-        for name, param in self.named_parameters():
-            if param.requires_grad and name.endswith(".weight") and "bn" not in name:
-                l2_sum = l2_sum + torch.sum(param**2)
+        for module in self.modules():
+            if isinstance(module, nn.Conv1d) and module.weight.requires_grad:
+                l2_sum = l2_sum + torch.sum(module.weight**2)
         return l2_sum
 
 
