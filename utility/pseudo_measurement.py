@@ -324,7 +324,7 @@ def generate_pseudo_measurements(
         meas_times = timelines.get(tool, [])
 
         for meas_num, meas_time in enumerate(meas_times):
-            meas_id = f"M_{tool}_{meas_num:03d}"
+            meas_id = f"{material}_M_{tool}_{meas_num:05d}"
 
             # Die-to-die spatial variation across the wafer
             die_factors = rng.normal(1.0, die_variation_std, size=n_die)

@@ -37,7 +37,7 @@ def main() -> None:
     source_tool = "J4"
     target_tool = "H1"
     example_region = "Ti2p"
-    sample_meas_id = "M_J4_000"  # session for at% calculation and comparison
+    sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {

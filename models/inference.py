@@ -15,6 +15,7 @@ def format_predicted_measurement_id(source_measurement_id: str, source_tool: str
     """Format a predicted measurement session ID uniquely and deterministically.
 
     Examples:
+        'NMG_M_J4_00001', source_tool='J4', target_tool='H1' -> 'NMG_P_J4H1_00001'
         'M_J4_001', source_tool='J4', target_tool='H1' -> 'P_J4H1_001'
         'BATCH_A_001', source_tool='J4', target_tool='H1' -> 'P_J4H1_BATCH_A_001'
 
@@ -32,6 +33,18 @@ def format_predicted_measurement_id(source_measurement_id: str, source_tool: str
     str
         Formatted prediction measurement ID.
     """
+    tool_marker = f"_M_{source_tool}_"
+    if tool_marker in source_measurement_id:
+        mat_prefix, rest = source_measurement_id.rsplit(tool_marker, 1)
+        return f"{mat_prefix}_P_{source_tool}{target_tool}_{rest}"
+
+    if "_M_" in source_measurement_id:
+        mat_prefix, rest = source_measurement_id.rsplit("_M_", 1)
+        prefix_to_strip = f"{source_tool}_"
+        if rest.startswith(prefix_to_strip):
+            rest = rest[len(prefix_to_strip):]
+        return f"{mat_prefix}_P_{source_tool}{target_tool}_{rest}"
+
     if source_measurement_id.startswith("M_"):
         clean_suffix = source_measurement_id[2:]
         prefix_to_strip = f"{source_tool}_"
