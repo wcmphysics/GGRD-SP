@@ -457,8 +457,9 @@ def plot_shirley_background(
         - 'die' (int): Die index (default 0).
         - 'region' (str | None): Specific region to plot (e.g. 'Ti2p').
           If None, all regions for the measurement session and die are plotted in subplots.
-        - 'ti2p_auto_endpoints' (bool): Auto-endpoints for Ti2p (default True).
-        - 'ti2p_smooth_endpoints_search' (bool): Smooth search for Ti2p minima (default False).
+        - 'strategy' (str): Default endpoint strategy ('minima', 'edge', or 'direct').
+        - 'average_width_ev' (float | None): Boundary averaging window in eV (default 1.0).
+        - 'region_endpoint_config' (dict | None): Per-region endpoint strategy overrides.
         - 'invert_x' (bool): Invert x-axis per standard XPS convention (default True).
         - 'ax' (plt.Axes | None): Matplotlib Axes (only if single region specified).
         - 'show' (bool): Whether to invoke plt.show() (default False).
