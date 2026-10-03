@@ -6,9 +6,16 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
-from models.dataset import split_session_datasets
+from models.baseline_cnn import NormalizedMSELoss
+from models.dataset import (
+    create_dataloaders,
+    partition_measurement_sessions,
+    split_session_datasets,
+)
+from models.trainer import evaluate
 
 
 def run_model_pipeline(
@@ -76,7 +83,9 @@ def run_model_pipeline(
     cfg = config or {}
     source_tool: str = cfg.get("source_tool", "J4")
     target_tool: str = cfg.get("target_tool", "H1")
+    train_ratio: float = float(cfg.get("train_ratio", 0.5))
     val_ratio: float = float(cfg.get("val_ratio", 0.2))
+    test_ratio: float = float(cfg.get("test_ratio", 0.3))
     seed: int | None = cfg.get("seed", 42)
     use_bo: bool = bool(cfg.get("use_bayesian_opt", False))
     bo_cfg: dict[str, Any] = dict(cfg.get("bayesian_opt_config", {}))
@@ -100,8 +109,28 @@ def run_model_pipeline(
             f"No valid spectral regions found to train for source_tool='{source_tool}', target_tool='{target_tool}'"
         )
 
+    # Unified global session partitioning across all spectral regions
+    session_splits: dict[str, set[str]] | None = cfg.get("session_splits")
+    if session_splits is None:
+        partition_cfg = {
+            "source_tool": source_tool,
+            "target_tool": target_tool,
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "seed": seed,
+        }
+        session_splits = partition_measurement_sessions(meta_df, config=partition_cfg)
+
+    if verbose:
+        n_tr = len(session_splits.get("train", set()))
+        n_va = len(session_splits.get("val", set()))
+        n_te = len(session_splits.get("test", set()))
+        print(f"Unified session partition: {n_tr} train, {n_va} val, {n_te} test sessions.")
+
     models: dict[str, Any] = {}
     eval_results: dict[str, float] = {}
+    test_eval_results: dict[str, float] = {}
     histories: dict[str, dict[str, list[float]]] = {}
     bo_results: dict[str, dict[str, Any]] = {}
 
@@ -113,10 +142,10 @@ def run_model_pipeline(
             "region": region,
             "source_tool": source_tool,
             "target_tool": target_tool,
-            "val_ratio": val_ratio,
-            "seed": seed,
+            "session_splits": session_splits,
+            "return_test": True,
         }
-        train_ds, val_ds = split_session_datasets(
+        train_ds, val_ds, test_ds = split_session_datasets(
             meta_df, ary_intensity, ary_energy, config=split_cfg
         )
 
@@ -148,6 +177,26 @@ def run_model_pipeline(
         eval_results[region] = float(train_result["best_val_loss"])
         histories[region] = train_result["history"]
 
+        # Evaluate model generalization on held-out test dataset
+        if len(test_ds) > 0:
+            trained_model_entry = models[region]
+            if isinstance(trained_model_entry, (tuple, list)):
+                from models.sliding_window import evaluate_sliding_window
+
+                sw_model, sw_w, sw_s = trained_model_entry[0], trained_model_entry[1], trained_model_entry[2]
+                t_loss = evaluate_sliding_window(
+                    sw_model, test_ds, criterion=NormalizedMSELoss(), window_size=sw_w, stride=sw_s
+                )
+            else:
+                raw_m = trained_model_entry if isinstance(trained_model_entry, torch.nn.Module) else train_result["model"]
+                _, test_loader = create_dataloaders(
+                    test_ds, test_ds, config={"batch_size": region_train_cfg.get("batch_size", 16), "shuffle_train": False}
+                )
+                t_loss = evaluate(raw_m, test_loader, NormalizedMSELoss())
+            test_eval_results[region] = float(t_loss)
+            if verbose:
+                print(f"Region {region} test loss: {t_loss:.6f}")
+
         if verbose:
             print(f"Region {region} training complete. Best Val Loss: {train_result['best_val_loss']:.6f}")
 
@@ -157,6 +206,7 @@ def run_model_pipeline(
         pred_cfg = {
             "source_tool": source_tool,
             "target_tool": target_tool,
+            "session_splits": session_splits,
         }
         predictions = predict_fn(
             models=models,
@@ -167,6 +217,8 @@ def run_model_pipeline(
     return {
         "models": models,
         "evaluation": eval_results,
+        "test_evaluation": test_eval_results,
+        "session_splits": session_splits,
         "histories": histories,
         "bayesian_opt_results": bo_results,
         "predictions": predictions,

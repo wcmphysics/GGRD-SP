@@ -505,7 +505,15 @@ def predict_unet_spectra(
             warnings.warn(f"No trained model found for region '{reg}'. Copying source intensity.")
             pred_intensities[new_idx] = x_raw.copy()
 
-    pred_meta_df = assemble_prediction_metadata(source_df, source_tool, target_tool, n_points)
+    pred_meta_df = assemble_prediction_metadata(
+        source_df,
+        config={
+            "source_tool": source_tool,
+            "target_tool": target_tool,
+            "n_points": n_points,
+            "session_splits": cfg.get("session_splits"),
+        },
+    )
     return pred_intensities, pred_energies, pred_meta_df
 
 

@@ -149,7 +149,7 @@ def predict_sliding_window_spectrum(
 def evaluate_sliding_window(
     model: nn.Module,
     full_val_dataset: SpectrumPairDataset,
-    criterion: NormalizedMSELoss,
+    criterion: NormalizedMSELoss | None = None,
     config: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> float:
@@ -161,8 +161,8 @@ def evaluate_sliding_window(
         Trained patch model.
     full_val_dataset : SpectrumPairDataset
         Validation dataset containing full paired spectra.
-    criterion : NormalizedMSELoss
-        Loss function instance.
+    criterion : NormalizedMSELoss | None, optional
+        Loss function instance. If None, NormalizedMSELoss() is used.
     config : dict[str, Any] | None, optional
         Configuration dictionary containing 'window_size', 'stride', and 'device'.
     **kwargs : Any
@@ -173,6 +173,8 @@ def evaluate_sliding_window(
     float
         Average normalized MSE across all reconstructed validation spectra.
     """
+    if criterion is None:
+        criterion = NormalizedMSELoss()
     cfg = dict(config or {})
     cfg.update(kwargs)
     w_size = int(cfg.get("window_size", 15))
@@ -578,10 +580,13 @@ def predict_sliding_window_spectra(
             predicted_intensities[new_idx] = x_raw.copy()
 
     meta_df_predicted = assemble_prediction_metadata(
-        source_df=source_df,
-        source_tool=source_tool,
-        target_tool=target_tool,
-        n_points=n_points,
+        source_df,
+        config={
+            "source_tool": source_tool,
+            "target_tool": target_tool,
+            "n_points": n_points,
+            "session_splits": cfg.get("session_splits"),
+        },
     )
     return predicted_intensities, predicted_energies, meta_df_predicted
 

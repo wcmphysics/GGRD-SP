@@ -56,9 +56,9 @@ def format_predicted_measurement_id(source_measurement_id: str, source_tool: str
 
 def assemble_prediction_metadata(
     source_df: pd.DataFrame,
-    source_tool: str,
-    target_tool: str,
-    n_points: int,
+    *args: Any,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> pd.DataFrame:
     """Build standardized prediction metadata DataFrame for transferred spectra.
 
@@ -66,22 +66,53 @@ def assemble_prediction_metadata(
     ----------
     source_df : pd.DataFrame
         DataFrame of source rows being predicted.
-    source_tool : str
-        Source tool identifier.
-    target_tool : str
-        Target tool identifier.
-    n_points : int
-        Number of spectral data points per region.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing:
+        - 'source_tool' (str): Source tool identifier.
+        - 'target_tool' (str): Target tool identifier.
+        - 'n_points' (int): Number of spectral data points per region.
+        - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
+    *args : Any
+        Positional parameters for backward compatibility: (source_tool, target_tool, n_points).
+    **kwargs : Any
+        Keyword arguments for backward compatibility (e.g. session_splits).
 
     Returns
     -------
     pd.DataFrame
         DataFrame containing standardized prediction metadata.
     """
+    cfg = dict(config or {})
+    cfg.update(kwargs)
+    if len(args) >= 1:
+        cfg["source_tool"] = args[0]
+    if len(args) >= 2:
+        cfg["target_tool"] = args[1]
+    if len(args) >= 3:
+        cfg["n_points"] = args[2]
+
+    source_tool = str(cfg.get("source_tool", ""))
+    target_tool = str(cfg.get("target_tool", ""))
+    n_points = int(cfg.get("n_points", 0))
+    session_splits = cfg.get("session_splits")
+
     records: list[dict[str, Any]] = []
     for new_idx, (_, row) in enumerate(source_df.iterrows()):
         orig_meas_id = str(row["measurement_id"])
         pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
+
+        split_label = "unassigned"
+        if session_splits:
+            if orig_meas_id in session_splits.get("train", set()):
+                split_label = "train"
+            elif orig_meas_id in session_splits.get("val", set()):
+                split_label = "val"
+            elif orig_meas_id in session_splits.get("test", set()):
+                split_label = "test"
+            else:
+                split_label = "unpaired"
+        elif "split" in row and pd.notna(row["split"]):
+            split_label = str(row["split"])
 
         meta_rec: dict[str, Any] = {
             "spectrum_index": new_idx,
@@ -95,6 +126,7 @@ def assemble_prediction_metadata(
             "source_tool": source_tool,
             "source_measurement_id": orig_meas_id,
             "source_spectrum_index": int(row["spectrum_index"]),
+            "split": split_label,
             "is_predicted": True,
         }
         if "t7_code" in row:
@@ -216,10 +248,13 @@ def predict_spectra(
             predicted_intensities[group_new_indices] = ary_intensity[orig_indices]
 
     meta_df_predicted = assemble_prediction_metadata(
-        source_df=source_df,
-        source_tool=source_tool,
-        target_tool=target_tool,
-        n_points=n_points,
+        source_df,
+        config={
+            "source_tool": source_tool,
+            "target_tool": target_tool,
+            "n_points": n_points,
+            "session_splits": cfg.get("session_splits"),
+        },
     )
 
     return predicted_intensities, predicted_energies, meta_df_predicted
