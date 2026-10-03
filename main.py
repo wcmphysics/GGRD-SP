@@ -13,6 +13,7 @@ from models import (
 from utility import (
     calculate_atomic_percentages,
     calculate_prediction_metrics,
+    format_side_by_side_metrics,
     generate_pseudo_measurements,
     pair_source_target_spectra,
     plot_pairing_timeline,
@@ -72,7 +73,9 @@ def main() -> None:
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "source_tool": source_tool,
         "target_tool": target_tool,
+        "train_ratio": 0.5,
         "val_ratio": 0.2,
+        "test_ratio": 0.3,
         "seed": None,
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
@@ -103,7 +106,9 @@ def main() -> None:
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "source_tool": source_tool,
         "target_tool": target_tool,
+        "train_ratio": 0.5,
         "val_ratio": 0.2,
+        "test_ratio": 0.3,
         "seed": None,
         "window_size_ev": 2.0,  # Local window length in eV
         "sliding_stride_ev": 1.0,  # Sliding stride step in eV
@@ -137,7 +142,9 @@ def main() -> None:
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "source_tool": source_tool,
         "target_tool": target_tool,
+        "train_ratio": 0.5,
         "val_ratio": 0.2,
+        "test_ratio": 0.3,
         "seed": None,
         "window_size_ev": 2.0,  # used if use_sliding_window=True
         "sliding_stride_ev": 1.0,  # used if use_sliding_window=True
@@ -244,9 +251,14 @@ def main() -> None:
         )
 
     val_evaluation = model_results["evaluation"]
-    print("\nValidation Normalized MSE Loss per region:")
-    for reg, loss_val in val_evaluation.items():
-        print(f"  {reg:6s}: {loss_val:.6f}")
+    test_evaluation = model_results.get("test_evaluation", {})
+    print("\nRegional Evaluation Losses:")
+    print("  Region | Val Normalized MSE | Test Normalized MSE")
+    print("  -------+--------------------+--------------------")
+    for reg in sorted(val_evaluation.keys()):
+        val_l = val_evaluation.get(reg, float("nan"))
+        test_l = test_evaluation.get(reg, float("nan"))
+        print(f"  {reg:6s} | {val_l:18.6f} | {test_l:19.6f}")
 
     ary_intensity_predicted, ary_energy_predicted, meta_df_predicted = model_results["predictions"]
     print(f"\nPredicted intensity array shape: {ary_intensity_predicted.shape}")
@@ -263,8 +275,13 @@ def main() -> None:
         data_orig,
         data_pred,
     )
-    print("\nQuantitative prediction metrics summary by region (Ground Truth Target vs. Predicted Target):")
+    print("\nDetailed quantitative prediction metrics by region and split:")
     print(df_metrics_summary.to_string(index=False))
+
+    df_side_by_side = format_side_by_side_metrics(df_metrics_samples)
+    if not df_side_by_side.empty:
+        print("\nSide-by-side performance comparison across splits (Train vs. Val vs. Test):")
+        print(df_side_by_side.to_string(index=False))
 
     # =========================================================================
     # PART 5: CALCULATE ATOMIC PERCENTAGES (Shirley Integration)
