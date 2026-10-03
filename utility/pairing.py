@@ -7,6 +7,7 @@ within a user-defined time threshold, fulfilling Part 2 of GEMINI.md.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -133,6 +134,11 @@ def _match_sessions_optimal(
         return {}
 
     if linear_sum_assignment is None:
+        warnings.warn(
+            "scipy.optimize.linear_sum_assignment is unavailable; falling back to greedy pairing algorithm.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return _match_sessions_greedy(src_ids, tgt_ids, cost_matrix, threshold)
 
     # Assign prohibitive penalty cost to pairs exceeding threshold

@@ -7,6 +7,7 @@ percentage calculation fulfilling Part 5 of GEMINI.md.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -105,6 +106,10 @@ def _find_ti2p_endpoints(
 
     if idx_e1 >= idx_e2:
         # Fallback to endpoints if indices degenerate
+        warnings.warn(
+            f"Degenerate minima for Ti2p endpoints detected (idx_e1={idx_e1} >= idx_e2={idx_e2}). "
+            f"Falling back to full spectrum bounds [0, {n_pts - 1}]."
+        )
         return 0, n_pts - 1
 
     return idx_e1, idx_e2
@@ -337,6 +342,11 @@ def calculate_atomic_percentages(
                 }
                 _, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
+                if region not in rsf_dict:
+                    warnings.warn(
+                        f"Region '{region}' not found in rsf_dict. Defaulting RSF to 1.0. "
+                        "Atomic percentages may be uncalibrated without specific sensitivity factors."
+                    )
                 rsf = float(rsf_dict.get(region, 1.0))
                 if rsf <= 0.0:
                     raise ValueError(f"RSF for region '{region}' must be positive, got {rsf}")
