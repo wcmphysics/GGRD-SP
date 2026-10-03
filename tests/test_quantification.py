@@ -9,7 +9,7 @@ import pandas as pd
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
-    _find_ti2p_endpoints,
+    _find_minima_endpoints,
     calculate_atomic_percentages,
     calculate_shirley_background,
     determine_shirley_endpoints,
@@ -55,18 +55,18 @@ class TestQuantification(unittest.TestCase):
         # Background should be <= intensity everywhere
         self.assertTrue(np.all(bg <= intensity + 1e-6))
 
-    def test_ti2p_auto_endpoints(self) -> None:
-        """Verify Ti2p auto-endpoints logic and B(E) == I(E) outside active [E1, E2]."""
+    def test_minima_endpoints_and_inactive_bounds(self) -> None:
+        """Verify minima endpoints logic and B(E) == I(E) outside active [E1, E2]."""
         # Find a Ti2p spectrum in dataset
         ti2p_row = self.meta_df[self.meta_df["region"] == "Ti2p"].iloc[0]
         idx = int(ti2p_row["spectrum_index"])
         energy = self.ary_ene[idx]
         intensity = self.ary_int[idx]
 
-        idx_1, idx_2 = _find_ti2p_endpoints(energy, intensity, smooth_search=False)
+        idx_1, idx_2 = _find_minima_endpoints(energy, intensity, smooth_search=False)
         self.assertTrue(0 <= idx_1 < idx_2 < len(energy))
 
-        cfg = {"region": "Ti2p", "ti2p_auto_endpoints": True}
+        cfg = {"region": "Ti2p", "strategy": "minima"}
         bg, net_area = calculate_shirley_background(energy, intensity, cfg)
 
         self.assertGreater(net_area, 0.0)
@@ -77,14 +77,14 @@ class TestQuantification(unittest.TestCase):
         if idx_2 < len(energy) - 1:
             np.testing.assert_array_equal(bg[idx_2 + 1 :], intensity[idx_2 + 1 :])
 
-    def test_ti2p_smooth_endpoints_search(self) -> None:
+    def test_smooth_endpoints_search(self) -> None:
         """Verify smoothed minima search flag executes without error."""
         ti2p_row = self.meta_df[self.meta_df["region"] == "Ti2p"].iloc[0]
         idx = int(ti2p_row["spectrum_index"])
         energy = self.ary_ene[idx]
         intensity = self.ary_int[idx]
 
-        idx_1, idx_2 = _find_ti2p_endpoints(energy, intensity, smooth_search=True)
+        idx_1, idx_2 = _find_minima_endpoints(energy, intensity, smooth_search=True)
         self.assertTrue(0 <= idx_1 < idx_2 < len(energy))
 
     def test_atomic_percentage_normalization_and_schema(self) -> None:
@@ -343,7 +343,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
             determine_shirley_endpoints(
                 self.energy, self.intensity, config={"strategy": "INVALID_STRATEGY"}
             )
-        self.assertIn("Supported strategies are: 'minima', 'edge'", str(ctx.exception))
+        self.assertIn("Supported strategies are: 'minima', 'edge', 'direct'", str(ctx.exception))
 
     def test_shirley_background_with_edge_and_minima_strategies(self) -> None:
         """Calculate Shirley background using both strategies produces valid outputs with B(E) <= I(E)."""
@@ -359,13 +359,98 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         self.assertTrue(np.all(bg_min <= self.intensity + 1e-6))
         self.assertGreater(area_min, 0.0)
 
-    def test_legacy_ti2p_auto_endpoints_false_respected(self) -> None:
-        """Verify legacy ti2p_auto_endpoints=False overrides default minima strategy to edge."""
-        cfg = get_default_quantification_config()
-        cfg.update({"region": "Ti2p", "ti2p_auto_endpoints": False})
-        idx_1, idx_2, _, _ = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
+    def test_strategy_direct_resolves_points_and_averages(self) -> None:
+        """Strategy 'direct' resolves user-specified energy points to nearest indices."""
+        cfg = {"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 0.0}
+        idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
+        expected_idx_1 = int(np.argmin(np.abs(self.energy - 72.0)))
+        expected_idx_2 = int(np.argmin(np.abs(self.energy - 78.0)))
+        self.assertEqual(idx_1, expected_idx_1)
+        self.assertEqual(idx_2, expected_idx_2)
+        self.assertAlmostEqual(i_1, self.intensity[expected_idx_1], places=5)
+        self.assertAlmostEqual(i_2, self.intensity[expected_idx_2], places=5)
+
+    def test_strategy_direct_with_mirror_padding_averaging(self) -> None:
+        """Strategy 'direct' with averaging applies mirror reflection padding correctly."""
+        cfg = {"strategy": "direct", "points": (70.0, 80.0), "average_width_ev": 1.0}
+        idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
         self.assertEqual(idx_1, 0)
         self.assertEqual(idx_2, len(self.intensity) - 1)
+        self.assertAlmostEqual(i_1, 20.0, places=2)
+        self.assertAlmostEqual(i_2, 20.0, places=2)
+
+    def test_strategy_direct_per_region_override(self) -> None:
+        """Strategy 'direct' can be configured per-region in region_endpoint_config."""
+        cfg = {
+            "region": "Ti2p",
+            "region_endpoint_config": {
+                "Ti2p": {"strategy": "direct", "points": (73.0, 77.0), "average_ev": 0.5},
+            },
+        }
+        idx_1, idx_2, _, _ = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
+        self.assertEqual(idx_1, int(np.argmin(np.abs(self.energy - 73.0))))
+        self.assertEqual(idx_2, int(np.argmin(np.abs(self.energy - 77.0))))
+
+    def test_strategy_direct_missing_points_raises(self) -> None:
+        """Strategy 'direct' without points parameter must raise informative ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(self.energy, self.intensity, config={"strategy": "direct"})
+        self.assertIn("no endpoint coordinates", str(ctx.exception))
+
+    def test_strategy_direct_invalid_points_format_raises(self) -> None:
+        """Strategy 'direct' with malformed points parameter must raise informative ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(
+                self.energy, self.intensity, config={"strategy": "direct", "points": (72.0,)}
+            )
+        self.assertIn("expected tuple or list of 2 numbers", str(ctx.exception))
+
+    def test_strategy_direct_degenerate_points_raises(self) -> None:
+        """Strategy 'direct' with identical energy points resolving to same index must raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(
+                self.energy, self.intensity, config={"strategy": "direct", "points": (75.0, 75.0)}
+            )
+        self.assertIn("degenerate index range", str(ctx.exception))
+
+    def test_strategy_direct_out_of_bounds_points_raises(self) -> None:
+        """Strategy 'direct' with points outside spectral range must raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(
+                self.energy, self.intensity, config={"strategy": "direct", "points": (10.0, 20.0)}
+            )
+        self.assertIn("outside spectral energy range", str(ctx.exception))
+
+    def test_strategy_direct_non_finite_points_raises(self) -> None:
+        """Strategy 'direct' with NaN or Inf coordinates must raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(
+                self.energy, self.intensity, config={"strategy": "direct", "points": (float("nan"), 75.0)}
+            )
+        self.assertIn("non-finite points coordinates", str(ctx.exception))
+
+    def test_strategy_direct_reversed_order_supported(self) -> None:
+        """Strategy 'direct' handles descending or ascending coordinate order consistently."""
+        idx_1a, idx_2a, i_1a, i_2a = determine_shirley_endpoints(
+            self.energy, self.intensity, config={"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 0.0}
+        )
+        idx_1b, idx_2b, i_1b, i_2b = determine_shirley_endpoints(
+            self.energy, self.intensity, config={"strategy": "direct", "points": (78.0, 72.0), "average_width_ev": 0.0}
+        )
+        self.assertEqual(idx_1a, idx_1b)
+        self.assertEqual(idx_2a, idx_2b)
+        self.assertEqual(i_1a, i_1b)
+        self.assertEqual(i_2a, i_2b)
+
+    def test_shirley_background_with_direct_strategy(self) -> None:
+        """Calculate Shirley background using direct strategy produces valid outputs with B(E) <= I(E)."""
+        bg_dir, area_dir = calculate_shirley_background(
+            self.energy,
+            self.intensity,
+            config={"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 1.0},
+        )
+        self.assertTrue(np.all(bg_dir <= self.intensity + 1e-6))
+        self.assertGreater(area_dir, 0.0)
 
     def test_per_region_average_width_none_disables_averaging(self) -> None:
         """Explicit average_width_ev=None in region_endpoint_config must disable averaging."""
