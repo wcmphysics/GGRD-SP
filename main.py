@@ -47,7 +47,7 @@ def main() -> None:
         "material": "NMG",
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "n_points": 100,
-        "measurements_per_tool": {source_tool: 15, target_tool: 20},
+        "measurements_per_tool": {source_tool: 25, target_tool: 30},
         "measurements_per_t7_code": 10,
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
@@ -169,7 +169,7 @@ def main() -> None:
             "residual": True,  # y = x + UNet(x) for stable inter-tool delta transfer
             "l2_weight": 1e-4,
             "early_stopping_patience": 10,
-            "verbose": False,
+            "verbose": True,
         },
         "predict_source": True,
     }
