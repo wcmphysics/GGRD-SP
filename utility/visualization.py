@@ -477,8 +477,6 @@ def plot_shirley_background(
     meas_id: str | None = cfg.get("measurement_id")
     die: int = int(cfg.get("die", 0))
     target_region: str | None = cfg.get("region")
-    ti2p_auto: bool = cfg.get("ti2p_auto_endpoints", True)
-    ti2p_smooth: bool = cfg.get("ti2p_smooth_endpoints_search", False)
     invert_x: bool = cfg.get("invert_x", True)
     custom_ax: plt.Axes | None = cfg.get("ax")
     show: bool = cfg.get("show", False)
@@ -507,11 +505,8 @@ def plot_shirley_background(
         e_arr = ary_energy[spec_idx]
         i_arr = ary_intensity[spec_idx]
 
-        shirley_cfg = {
-            "region": region_name,
-            "ti2p_auto_endpoints": ti2p_auto,
-            "ti2p_smooth_endpoints_search": ti2p_smooth,
-        }
+        shirley_cfg = dict(cfg)
+        shirley_cfg["region"] = region_name
         b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
         if custom_ax is None:
@@ -552,11 +547,8 @@ def plot_shirley_background(
         e_arr = ary_energy[spec_idx]
         i_arr = ary_intensity[spec_idx]
 
-        shirley_cfg = {
-            "region": reg,
-            "ti2p_auto_endpoints": ti2p_auto,
-            "ti2p_smooth_endpoints_search": ti2p_smooth,
-        }
+        shirley_cfg = dict(cfg)
+        shirley_cfg["region"] = reg
         b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
         ax.plot(e_arr, i_arr, label="Raw", color="navy", linewidth=1.5)

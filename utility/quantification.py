@@ -39,8 +39,12 @@ def get_default_quantification_config() -> dict[str, Any]:
         - 'material': 'NMG'
         - 'measurement_id': None (if None, calculates for all sessions in meta_df)
         - 'rsf_dict': dict mapping region name to relative sensitivity factor
-        - 'ti2p_auto_endpoints': True (search for low/high BE minima around Ti2p peak)
-        - 'ti2p_smooth_endpoints_search': False (optional smoothing for minima search)
+        - 'default_endpoint_strategy': 'minima' (directional minima search around peak)
+        - 'default_endpoint_average_ev': 1.0 (average intensity over 1.0 eV window with mirror padding)
+        - 'region_endpoint_config': None (optional dict mapping region to strategy/average overrides)
+        - 'smooth_endpoints_search': False (optional smoothing for minima search)
+        - 'ti2p_auto_endpoints': True (backward-compatible alias)
+        - 'ti2p_smooth_endpoints_search': False (backward-compatible alias)
         - 'energy_limits': None (optional dict[str, tuple[float, float]])
         - 'max_iter': 50
         - 'tol': 1e-5
@@ -49,6 +53,10 @@ def get_default_quantification_config() -> dict[str, Any]:
         "material": "NMG",
         "measurement_id": None,
         "rsf_dict": dict(DEFAULT_SCOFIELD_RSF),
+        "default_endpoint_strategy": "minima",
+        "default_endpoint_average_ev": 1.0,
+        "region_endpoint_config": None,
+        "smooth_endpoints_search": False,
         "ti2p_auto_endpoints": True,
         "ti2p_smooth_endpoints_search": False,
         "energy_limits": None,
@@ -57,62 +65,257 @@ def get_default_quantification_config() -> dict[str, Any]:
     }
 
 
-def _find_ti2p_endpoints(
+def _calculate_endpoint_intensity(
+    energy: np.ndarray,
+    intensity: np.ndarray,
+    idx: int,
+    average_width_ev: float | None = 1.0,
+) -> float:
+    """Calculate boundary intensity averaged over an energy window centered at idx with mirror padding.
+
+    If the averaging window extends outside available spectral data, reflection padding
+    without edge repetition (matching CNN ReflectionPad1d / np.pad mode='reflect') is used.
+
+    Parameters
+    ----------
+    energy : np.ndarray
+        Binding energy array (ascending order).
+    intensity : np.ndarray
+        Measured intensity array.
+    idx : int
+        Index of the endpoint (0 <= idx < len(intensity)).
+    average_width_ev : float | None, optional
+        Averaging window width in eV. If None or <= 0.0, raw intensity at idx is returned.
+        Default is 1.0 eV.
+
+    Returns
+    -------
+    float
+        Averaged intensity value.
+    """
+    if average_width_ev is None or average_width_ev <= 0.0 or len(intensity) < 2:
+        return float(intensity[idx])
+
+    half_w = float(average_width_ev) / 2.0
+    de = float(np.mean(np.abs(np.diff(energy))))
+    if de <= 0.0:
+        return float(intensity[idx])
+
+    n_half = max(1, int(round(half_w / de)))
+    # Mirror reflection padding without edge repetition (CNN ReflectionPad1d)
+    pad_len = min(n_half, len(intensity) - 1)
+    if pad_len < 1:
+        return float(intensity[idx])
+
+    padded_i = np.pad(intensity, pad_len, mode="reflect")
+    e_left = energy[0] - np.arange(pad_len, 0, -1) * de
+    e_right = energy[-1] + np.arange(1, pad_len + 1) * de
+    padded_e = np.concatenate([e_left, energy, e_right])
+
+    target_e = float(energy[idx])
+    mask = (padded_e >= target_e - half_w - 1e-9) & (padded_e <= target_e + half_w + 1e-9)
+    if not np.any(mask):
+        return float(intensity[idx])
+    return float(np.mean(padded_i[mask]))
+
+
+def _find_minima_endpoints(
     energy: np.ndarray,
     intensity: np.ndarray,
     smooth_search: bool = False,
+    region: str = "",
 ) -> tuple[int, int]:
-    """Determine low and high BE endpoints for Ti2p via directional minima search.
+    """Determine low and high BE endpoints via directional minima search from peak maximum.
 
     Procedure:
     1. Locate maximum intensity index in the regional spectrum.
     2. Search in the high BE direction for the lowest intensity -> E2 index.
     3. Search in the low BE direction for the lowest intensity -> E1 index.
+    If E1 >= E2:
+        Fallback to full spectrum bounds [0, n_pts - 1] with an informative warning.
 
     Parameters
     ----------
     energy : np.ndarray
-        Binding energy array (assumed ascending).
+        Binding energy array (ascending order).
     intensity : np.ndarray
         Intensity array.
     smooth_search : bool, optional
-        Whether to apply a 3-point moving average filter with edge-padding.
-        Default is False.
+        Whether to apply a 3-point moving average filter before minima search.
+    region : str, optional
+        Region identifier for warning messages.
 
     Returns
     -------
     tuple[int, int]
-        (idx_e1, idx_e2) where idx_e1 <= idx_e2.
+        (idx_1, idx_2) where idx_1 < idx_2.
     """
     n_pts = len(intensity)
     if n_pts < 2:
-        return 0, n_pts - 1
+        return 0, max(0, n_pts - 1)
 
     if smooth_search and n_pts >= 3:
-        # Use edge padding to prevent artificial boundary drop-off from zero-padding
         kernel = np.array([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
         padded = np.pad(intensity, 1, mode="edge")
         i_search = np.convolve(padded, kernel, mode="valid")
     else:
         i_search = intensity
 
+    # Flat spectrum edge case
+    if np.max(i_search) == np.min(i_search):
+        return 0, n_pts - 1
+
     idx_max = int(np.argmax(i_search))
+    idx_1 = int(np.argmin(i_search[: idx_max + 1]))
+    idx_2 = idx_max + int(np.argmin(i_search[idx_max:]))
 
-    # Low BE direction: indices 0 to idx_max (lower energies)
-    idx_e1 = int(np.argmin(i_search[: idx_max + 1]))
-
-    # High BE direction: indices idx_max to n_pts - 1 (higher energies)
-    idx_e2 = idx_max + int(np.argmin(i_search[idx_max:]))
-
-    if idx_e1 >= idx_e2:
-        # Fallback to endpoints if indices degenerate
+    if idx_1 >= idx_2:
+        region_label = f" for '{region}'" if region else ""
         warnings.warn(
-            f"Degenerate minima for Ti2p endpoints detected (idx_e1={idx_e1} >= idx_e2={idx_e2}). "
+            f"Degenerate minima{region_label} endpoints detected (idx_1={idx_1} >= idx_2={idx_2}). "
             f"Falling back to full spectrum bounds [0, {n_pts - 1}]."
         )
         return 0, n_pts - 1
 
-    return idx_e1, idx_e2
+    return idx_1, idx_2
+
+
+def _find_ti2p_endpoints(
+    energy: np.ndarray,
+    intensity: np.ndarray,
+    smooth_search: bool = False,
+) -> tuple[int, int]:
+    """Backward-compatible wrapper for _find_minima_endpoints with region='Ti2p'."""
+    return _find_minima_endpoints(energy, intensity, smooth_search=smooth_search, region="Ti2p")
+
+
+def determine_shirley_endpoints(
+    energy: np.ndarray,
+    intensity: np.ndarray,
+    config: dict[str, Any] | None = None,
+) -> tuple[int, int, float, float]:
+    """Determine start and end index and boundary baseline intensities for Shirley background.
+
+    Supports two strategies:
+    1. 'edge' (or 'bounds'): Use the boundary points of the spectral region [0, N-1].
+    2. 'minima' (or 'special'): Directional minima search on both sides of peak maximum.
+
+    In addition, applies optional intensity averaging over a window of width W eV centered
+    at each endpoint, with mirror reflection padding if the window extends outside available data.
+
+    Parameters
+    ----------
+    energy : np.ndarray
+        Binding energy array (ascending order).
+    intensity : np.ndarray
+        Measured intensity array.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'region' (str): Name of spectral region (e.g. 'Ti2p', 'Al2p').
+        - 'strategy' | 'endpoint_strategy' (str): Endpoint determination strategy ('minima' or 'edge').
+          Default is 'minima'.
+        - 'average_width_ev' | 'average_ev' (float | None): Window width in eV for intensity averaging (default 1.0).
+        - 'smooth_search' (bool): Smooth search curve before minima search (default False).
+        - 'energy_limits' (tuple[float, float] | None): Explicit (e_min, e_max) energy limits.
+        - 'region_endpoint_config' (dict[str, dict[str, Any]] | None): Per-region overrides, e.g.:
+          {'Al2p': {'strategy': 'edge', 'average_ev': 0.5}}.
+        - 'ti2p_auto_endpoints' (bool): Backward compatibility flag for Ti2p.
+        - 'ti2p_smooth_endpoints_search' (bool): Backward compatibility flag.
+
+    Returns
+    -------
+    tuple[int, int, float, float]
+        (idx_1, idx_2, i_1, i_2) where:
+        - idx_1, idx_2: Start and end indices (idx_1 < idx_2).
+        - i_1, i_2: Baseline intensities at idx_1 and idx_2 after optional averaging.
+    """
+    cfg = dict(config or {})
+    region = str(cfg.get("region", ""))
+    n_pts = len(intensity)
+    if n_pts < 2:
+        val = float(intensity[0]) if n_pts == 1 else 0.0
+        return 0, max(0, n_pts - 1), val, val
+
+    # Per-region configuration override
+    per_region_map = cfg.get("region_endpoint_config") or {}
+    region_cfg = per_region_map.get(region, {}) if isinstance(per_region_map, dict) else {}
+
+    # 1. Strategy resolution: Per-region > Specific user strategy > Legacy Ti2p flag > Default strategy
+    strategy = None
+    if "strategy" in region_cfg:
+        strategy = region_cfg["strategy"]
+    elif "endpoint_strategy" in region_cfg:
+        strategy = region_cfg["endpoint_strategy"]
+
+    if strategy is None:
+        strat_dict = cfg.get("endpoint_strategies") or cfg.get("strategies")
+        if isinstance(strat_dict, dict) and region in strat_dict:
+            strategy = strat_dict[region]
+
+    if strategy is None:
+        strategy = cfg.get("strategy", cfg.get("endpoint_strategy"))
+
+    if strategy is None and region == "Ti2p" and "ti2p_auto_endpoints" in cfg:
+        strategy = "minima" if cfg["ti2p_auto_endpoints"] else "edge"
+
+    if strategy is None:
+        strategy = cfg.get("default_endpoint_strategy", "minima")
+
+    # 2. Averaging width resolution: Per-region (including None/0.0) > Top-level mappings > Defaults
+    if "average_width_ev" in region_cfg:
+        avg_ev = region_cfg["average_width_ev"]
+    elif "average_ev" in region_cfg:
+        avg_ev = region_cfg["average_ev"]
+    else:
+        avg_dict = cfg.get("endpoint_averages") or cfg.get("average_evs")
+        if isinstance(avg_dict, dict) and region in avg_dict:
+            avg_ev = avg_dict[region]
+        else:
+            avg_ev = cfg.get(
+                "average_width_ev",
+                cfg.get("average_ev", cfg.get("endpoint_average_ev", cfg.get("default_endpoint_average_ev", 1.0))),
+            )
+
+    # 3. Smoothing flag resolution: Per-region > General smoothing > Region-specific legacy flag
+    if "smooth_search" in region_cfg:
+        smooth_search = bool(region_cfg["smooth_search"])
+    elif "smooth_search" in cfg:
+        smooth_search = bool(cfg["smooth_search"])
+    elif "smooth_endpoints_search" in cfg:
+        smooth_search = bool(cfg["smooth_endpoints_search"])
+    elif region == "Ti2p" and "ti2p_smooth_endpoints_search" in cfg:
+        smooth_search = bool(cfg["ti2p_smooth_endpoints_search"])
+    else:
+        smooth_search = False
+
+    # Check custom energy limits
+    custom_limits = cfg.get("energy_limits")
+    if isinstance(custom_limits, dict):
+        custom_limits = custom_limits.get(region)
+
+    if custom_limits is not None:
+        e_min, e_max = min(custom_limits), max(custom_limits)
+        valid_indices = np.where((energy >= e_min) & (energy <= e_max))[0]
+        if len(valid_indices) >= 2:
+            idx_1, idx_2 = int(valid_indices[0]), int(valid_indices[-1])
+        else:
+            idx_1, idx_2 = 0, n_pts - 1
+    else:
+        norm_strategy = str(strategy).lower().strip()
+        if norm_strategy in ("minima", "directional_minima", "special", "ti2p"):
+            idx_1, idx_2 = _find_minima_endpoints(energy, intensity, smooth_search=smooth_search, region=region)
+        elif norm_strategy in ("edge", "bounds", "edge_points", "full"):
+            idx_1, idx_2 = 0, n_pts - 1
+        else:
+            raise ValueError(
+                f"Unknown endpoint strategy '{strategy}' for region '{region}'. "
+                f"Supported strategies are: 'minima', 'edge'."
+            )
+
+    i_1 = _calculate_endpoint_intensity(energy, intensity, idx_1, average_width_ev=avg_ev)
+    i_2 = _calculate_endpoint_intensity(energy, intensity, idx_2, average_width_ev=avg_ev)
+
+    return idx_1, idx_2, i_1, i_2
 
 
 def calculate_shirley_background(
@@ -130,9 +333,12 @@ def calculate_shirley_background(
         1D array of measured intensities.
     config : dict[str, Any] | None, optional
         Dictionary bundling options:
-        - 'region' (str): Name of the spectral region (e.g. 'Ti2p').
-        - 'ti2p_auto_endpoints' (bool): Whether to auto-detect Ti2p endpoints (default True).
-        - 'ti2p_smooth_endpoints_search' (bool): Smooth search array (default False).
+        - 'region' (str): Name of the spectral region (e.g. 'Ti2p', 'Al2p').
+        - 'strategy' | 'endpoint_strategy' (str): 'minima' or 'edge' (default 'minima').
+        - 'average_width_ev' (float | None): Averaging width in eV (default 1.0).
+        - 'region_endpoint_config' (dict | None): Per-region overrides.
+        - 'ti2p_auto_endpoints' (bool): Backward compatibility flag.
+        - 'ti2p_smooth_endpoints_search' (bool): Backward compatibility flag.
         - 'energy_limits' (tuple[float, float] | None): Custom (e_min, e_max) limits.
         - 'max_iter' (int): Maximum Shirley iterations (default 50).
         - 'tol' (float): Convergence threshold (default 1e-5).
@@ -155,10 +361,6 @@ def calculate_shirley_background(
         )
 
     cfg = config or {}
-    region: str = cfg.get("region", "")
-    ti2p_auto: bool = cfg.get("ti2p_auto_endpoints", True)
-    ti2p_smooth: bool = cfg.get("ti2p_smooth_endpoints_search", False)
-    custom_limits: tuple[float, float] | None = cfg.get("energy_limits")
     max_iter: int = int(cfg.get("max_iter", 50))
     tol: float = float(cfg.get("tol", 1e-5))
 
@@ -175,34 +377,21 @@ def calculate_shirley_background(
         e_work = energy
         i_work = intensity
 
-    # Determine endpoint indices [idx_1, idx_2]
-    # Priority: explicit custom_limits take precedence over auto-detection
-    if custom_limits is not None:
-        e_min, e_max = min(custom_limits), max(custom_limits)
-        valid_indices = np.where((e_work >= e_min) & (e_work <= e_max))[0]
-        if len(valid_indices) >= 2:
-            idx_1, idx_2 = int(valid_indices[0]), int(valid_indices[-1])
-        else:
-            idx_1, idx_2 = 0, n_pts - 1
-    elif region == "Ti2p" and ti2p_auto:
-        idx_1, idx_2 = _find_ti2p_endpoints(e_work, i_work, smooth_search=ti2p_smooth)
-    else:
-        idx_1, idx_2 = 0, n_pts - 1
+    # Determine endpoints and boundary intensities via unified strategy resolver
+    idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(e_work, i_work, config=cfg)
 
     # Extract sub-interval
     e_sub = e_work[idx_1 : idx_2 + 1]
     i_sub = i_work[idx_1 : idx_2 + 1]
 
     # Initial linear background connecting endpoints
-    i_1 = float(i_sub[0])
-    i_2 = float(i_sub[-1])
     e_span = float(e_sub[-1] - e_sub[0])
 
     if e_span == 0.0 or len(e_sub) < 2:
         b_sub = i_sub.copy()
         net_area = 0.0
     else:
-        # Linear initialization
+        # Linear initialization using effective boundary intensities
         b_sub = i_1 + (i_2 - i_1) * (e_sub - e_sub[0]) / e_span
 
         # Iterative Shirley background calculation
@@ -225,6 +414,8 @@ def calculate_shirley_background(
             if max_change < tol:
                 break
 
+        # Physical safeguard: background cannot exceed measured spectrum intensity
+        b_sub = np.minimum(b_sub, i_sub)
         net_area = float(np.trapz(np.maximum(0.0, i_sub - b_sub), e_sub))  # type: ignore[attr-defined]
 
     # Construct full background array: B(E) = I(E) outside [E1, E2]
@@ -332,14 +523,10 @@ def calculate_atomic_percentages(
                 e_arr = ary_energy[spec_idx]
                 i_arr = ary_intensity[spec_idx]
 
-                shirley_cfg = {
-                    "region": region,
-                    "ti2p_auto_endpoints": ti2p_auto,
-                    "ti2p_smooth_endpoints_search": ti2p_smooth,
-                    "energy_limits": energy_limits.get(region) if energy_limits else None,
-                    "max_iter": max_iter,
-                    "tol": tol,
-                }
+                shirley_cfg = dict(cfg)
+                shirley_cfg["region"] = region
+                if energy_limits and region in energy_limits:
+                    shirley_cfg["energy_limits"] = energy_limits[region]
                 _, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
                 if region not in rsf_dict:

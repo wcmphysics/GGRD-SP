@@ -18,6 +18,7 @@ from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
     calculate_atomic_percentages,
     calculate_shirley_background,
+    determine_shirley_endpoints,
     get_default_quantification_config,
 )
 from utility.visualization import (
@@ -36,6 +37,7 @@ __all__ = [
     "pair_source_target_spectra",
     "get_default_pairing_config",
     "calculate_shirley_background",
+    "determine_shirley_endpoints",
     "calculate_atomic_percentages",
     "get_default_quantification_config",
     "DEFAULT_SCOFIELD_RSF",
