@@ -7,6 +7,7 @@ from models.bayesian_opt import optimize_baseline_hyperparameters, run_ax_search
 from models.dataset import (
     SpectrumPairDataset,
     create_dataloaders,
+    partition_measurement_sessions,
     split_session_datasets,
 )
 from models.inference import (
@@ -40,6 +41,7 @@ __all__ = [
     "Residual1DCNN",
     "NormalizedMSELoss",
     "SpectrumPairDataset",
+    "partition_measurement_sessions",
     "split_session_datasets",
     "create_dataloaders",
     "train_one_epoch",

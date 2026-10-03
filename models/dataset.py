@@ -77,16 +77,163 @@ class SpectrumPairDataset(Dataset):
         return item
 
 
+def partition_measurement_sessions(
+    meta_df: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> dict[str, set[str]]:
+    """Partition unique measurement sessions globally across all spectral regions.
+
+    Guarantees that a physical measurement session is assigned to one and only one
+    split ('train', 'val', 'test') across all regions, completely eliminating
+    cross-region data leakage.
+
+    Parameters
+    ----------
+    meta_df : pd.DataFrame
+        Metadata DataFrame containing source-to-target pairing columns.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'train_ratio' (float): Fraction of sessions for training (default 0.5).
+        - 'val_ratio' (float): Fraction of sessions for validation (default 0.2).
+        - 'test_ratio' (float): Fraction of sessions for test (default 0.3).
+        - 'source_tool' (str | None): Source tool filter (default auto-detect).
+        - 'target_tool' (str | None): Target tool filter (default auto-detect).
+        - 'seed' (int | None): Random seed for permutation (default 42).
+
+    Returns
+    -------
+    dict[str, set[str]]
+        Dictionary with keys 'train', 'val', 'test', each mapping to a set of measurement IDs.
+
+    Raises
+    ------
+    ValueError
+        If no paired sessions exist, if insufficient sessions exist, or if target leakage occurs.
+    """
+    cfg = config or {}
+    source_tool: str | None = cfg.get("source_tool")
+    target_tool: str | None = cfg.get("target_tool")
+    seed: int | None = cfg.get("seed", 42)
+
+    # Filter paired rows
+    condition = meta_df["measurement_id_target"].notna()
+    if source_tool:
+        condition = condition & (meta_df["tool"] == source_tool)
+    if target_tool:
+        condition = condition & (meta_df["tool_target"] == target_tool)
+
+    paired_df = meta_df[condition].copy()
+    if paired_df.empty:
+        raise ValueError(
+            f"No paired records found for source_tool='{source_tool}', target_tool='{target_tool}'"
+        )
+
+    sessions = np.array(sorted(paired_df["measurement_id"].unique()))
+    n_sessions = len(sessions)
+
+    train_ratio = float(cfg.get("train_ratio", 0.5))
+    val_ratio = float(cfg.get("val_ratio", 0.2))
+    test_ratio = float(cfg.get("test_ratio", 0.3))
+
+    if train_ratio < 0.0 or val_ratio < 0.0 or test_ratio < 0.0:
+        raise ValueError(
+            f"Split ratios must be non-negative: train_ratio={train_ratio}, "
+            f"val_ratio={val_ratio}, test_ratio={test_ratio}"
+        )
+
+    total_ratio = train_ratio + val_ratio + test_ratio
+    if total_ratio <= 0.0:
+        raise ValueError("Sum of train_ratio, val_ratio, and test_ratio must be positive.")
+
+    train_ratio /= total_ratio
+    val_ratio /= total_ratio
+    test_ratio /= total_ratio
+
+    rng = np.random.default_rng(seed)
+    shuffled_sessions = rng.permutation(sessions)
+
+    if test_ratio > 0.0 and val_ratio > 0.0:
+        if n_sessions < 3:
+            raise ValueError(
+                f"Need at least 3 distinct measurement sessions to split into train, val, and test, but found only {n_sessions}"
+            )
+        n_train = max(1, int(round(n_sessions * train_ratio)))
+        n_val = max(1, int(round(n_sessions * val_ratio)))
+        n_test = n_sessions - n_train - n_val
+
+        while n_test < 1:
+            if n_train > 1 and (n_train >= n_val or n_val == 1):
+                n_train -= 1
+                n_test += 1
+            elif n_val > 1:
+                n_val -= 1
+                n_test += 1
+            else:
+                break
+        while n_val < 1:
+            if n_train > 1:
+                n_train -= 1
+                n_val += 1
+            elif n_test > 1:
+                n_test -= 1
+                n_val += 1
+            else:
+                break
+        while n_train < 1:
+            if n_val > 1:
+                n_val -= 1
+                n_train += 1
+            elif n_test > 1:
+                n_test -= 1
+                n_train += 1
+            else:
+                break
+
+        train_sessions = {str(s) for s in shuffled_sessions[:n_train]}
+        val_sessions = {str(s) for s in shuffled_sessions[n_train : n_train + n_val]}
+        test_sessions = {str(s) for s in shuffled_sessions[n_train + n_val :]}
+    else:
+        if n_sessions < 2:
+            raise ValueError(
+                f"Need at least 2 distinct measurement sessions to split, but found only {n_sessions}"
+            )
+        eval_ratio = val_ratio if val_ratio > 0.0 else test_ratio
+        n_eval = max(1, min(n_sessions - 1, int(round(n_sessions * eval_ratio))))
+        n_train = n_sessions - n_eval
+
+        train_sessions = {str(s) for s in shuffled_sessions[:n_train]}
+        if val_ratio > 0.0:
+            val_sessions = {str(s) for s in shuffled_sessions[n_train:]}
+            test_sessions = set()
+        else:
+            val_sessions = set()
+            test_sessions = {str(s) for s in shuffled_sessions[n_train:]}
+
+    splits_dict = {"train": train_sessions, "val": val_sessions, "test": test_sessions}
+    target_sessions = {
+        k: set(paired_df[paired_df["measurement_id"].isin(s)]["measurement_id_target"].dropna())
+        for k, s in splits_dict.items()
+    }
+    for s1, s2 in [("train", "val"), ("train", "test"), ("val", "test")]:
+        leakage = target_sessions[s1].intersection(target_sessions[s2])
+        if leakage:
+            raise ValueError(
+                f"Target measurement sessions leak across {s1} and {s2} splits: {leakage}"
+            )
+
+    return splits_dict
+
+
 def split_session_datasets(
     meta_df: pd.DataFrame,
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray,
     config: dict[str, Any] | None = None,
-) -> tuple[SpectrumPairDataset, SpectrumPairDataset]:
-    """Split paired spectra into train and validation datasets grouped strictly by measurement session.
+) -> tuple[SpectrumPairDataset, ...]:
+    """Split paired spectra into train, validation, and optional test datasets grouped by session.
 
-    This ensures that all dies belonging to the same measurement session stay in either
-    train or validation, preventing inter-die data leakage across splits.
+    Guarantees that all dies belonging to the same measurement session stay in the same split,
+    preventing inter-die and inter-region data leakage.
 
     Parameters
     ----------
@@ -99,22 +246,26 @@ def split_session_datasets(
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'region' (str): Spectral region to extract (e.g., 'Al2p').
-        - 'source_tool' (str | None): Filter for source tool (default auto-detect).
-        - 'target_tool' (str | None): Filter for target tool (default auto-detect).
-        - 'val_ratio' (float): Fraction of measurement sessions for validation (default 0.2).
-        - 'seed' (int | None): Random seed for session partitioning (default 42).
+        - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
+        - 'return_test' (bool): Whether to return test_dataset as 3rd tuple element (default False).
+        - 'train_ratio' (float): Fraction of sessions for training (default 0.5).
+        - 'val_ratio' (float): Fraction of sessions for validation (default 0.2).
+        - 'test_ratio' (float): Fraction of sessions for test (default 0.3).
+        - 'source_tool' (str | None): Filter for source tool.
+        - 'target_tool' (str | None): Filter for target tool.
+        - 'seed' (int | None): Random seed for partitioning (default 42).
 
     Returns
     -------
-    tuple[SpectrumPairDataset, SpectrumPairDataset]
-        (train_dataset, val_dataset)
+    tuple[SpectrumPairDataset, ...]
+        (train_dataset, val_dataset) if return_test is False,
+        or (train_dataset, val_dataset, test_dataset) if return_test is True.
     """
     cfg = config or {}
     region: str = cfg.get("region", "Al2p")
     source_tool: str | None = cfg.get("source_tool")
     target_tool: str | None = cfg.get("target_tool")
-    val_ratio: float = float(cfg.get("val_ratio", 0.2))
-    seed: int | None = cfg.get("seed", 42)
+    return_test: bool = bool(cfg.get("return_test", False))
 
     if len(ary_intensity) != len(ary_energy):
         raise ValueError(
@@ -122,7 +273,7 @@ def split_session_datasets(
             f"got {len(ary_intensity)} vs {len(ary_energy)}"
         )
 
-    # Filter paired rows
+    # Filter paired rows for this region
     condition = meta_df["measurement_id_target"].notna() & (meta_df["region"] == region)
     if source_tool:
         condition = condition & (meta_df["tool"] == source_tool)
@@ -130,42 +281,28 @@ def split_session_datasets(
         condition = condition & (meta_df["tool_target"] == target_tool)
 
     paired_df = meta_df[condition].copy()
-
     if paired_df.empty:
         raise ValueError(
             f"No paired records found for region='{region}', source_tool='{source_tool}', target_tool='{target_tool}'"
         )
 
-    # Group sessions by unique source measurement_id
-    sessions = np.array(sorted(paired_df["measurement_id"].unique()))
-    n_sessions = len(sessions)
+    session_splits = cfg.get("session_splits")
+    if session_splits is None:
+        if "test_ratio" in cfg or return_test:
+            session_splits = partition_measurement_sessions(meta_df, config=cfg)
+        else:
+            p_cfg = dict(cfg)
+            p_cfg["val_ratio"] = float(cfg.get("val_ratio", 0.2))
+            p_cfg["test_ratio"] = 0.0
+            session_splits = partition_measurement_sessions(meta_df, config=p_cfg)
 
-    if n_sessions < 2:
-        raise ValueError(
-            f"Need at least 2 distinct measurement sessions to split into train and val, but found only {n_sessions}"
-        )
+    train_sessions = session_splits.get("train", set())
+    val_sessions = session_splits.get("val", set())
+    test_sessions = session_splits.get("test", set())
 
-    # Shuffle sessions
-    rng = np.random.default_rng(seed)
-    shuffled_sessions = rng.permutation(sessions)
-
-    # Clamp n_val_sessions to [1, n_sessions - 1] so neither train nor val is ever empty
-    n_val_sessions = max(1, min(n_sessions - 1, int(round(n_sessions * val_ratio))))
-    val_sessions = set(shuffled_sessions[:n_val_sessions])
-    train_sessions = set(shuffled_sessions[n_val_sessions:])
-
-    # Split rows
     train_df = paired_df[paired_df["measurement_id"].isin(train_sessions)]
     val_df = paired_df[paired_df["measurement_id"].isin(val_sessions)]
-
-    # Assert no target session leakage across splits
-    target_leakage = set(train_df["measurement_id_target"].dropna()).intersection(
-        set(val_df["measurement_id_target"].dropna())
-    )
-    if target_leakage:
-        raise ValueError(
-            f"Target measurement sessions leak across train and val splits: {target_leakage}"
-        )
+    test_df = paired_df[paired_df["measurement_id"].isin(test_sessions)]
 
     n_spectra = len(ary_intensity)
 
@@ -194,6 +331,10 @@ def split_session_datasets(
 
     train_ds = _build_dataset(train_df)
     val_ds = _build_dataset(val_df)
+
+    if return_test:
+        test_ds = _build_dataset(test_df)
+        return train_ds, val_ds, test_ds
 
     return train_ds, val_ds
 
