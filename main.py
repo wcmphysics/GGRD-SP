@@ -34,7 +34,7 @@ def main() -> None:
     # "baseline": Full regional spectrum ResNet
     # "sliding_window": Local sequence patch-to-patch ResNet with overlap reconstruction
     # "unet": Multi-scale 1D U-Net (supports both full spectrum and sliding window modes)
-    model_type = "sliding_window"  # Options: "baseline", "sliding_window", or "unet"
+    model_type = "unet"  # Options: "baseline", "sliding_window", or "unet"
 
     source_tool = "J4"
     target_tool = "J5"

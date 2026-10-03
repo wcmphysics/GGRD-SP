@@ -179,35 +179,42 @@ def split_session_datasets(
 
 
 def default_spectrum_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
-    """Custom collate function that safely keeps metadata as a list of dicts."""
-    x_batch = torch.stack([b["x"] for b in batch])
-    y_batch = torch.stack([b["y"] for b in batch])
-    result: dict[str, Any] = {"x": x_batch, "y": y_batch}
-    if "energy" in batch[0] and batch[0]["energy"] is not None:
-        result["energy"] = torch.stack([b["energy"] for b in batch])
-    if "meta" in batch[0]:
-        result["meta"] = [b["meta"] for b in batch]
+    """Custom collate function that stacks tensors and safely keeps non-tensor metadata as lists."""
+    if not batch:
+        return {}
+    first = batch[0]
+    result: dict[str, Any] = {}
+    for key, val in first.items():
+        if val is None:
+            result[key] = [b.get(key) for b in batch]
+        elif isinstance(val, torch.Tensor):
+            result[key] = torch.stack([b[key] for b in batch])
+        elif isinstance(val, np.ndarray):
+            result[key] = torch.from_numpy(np.stack([b[key] for b in batch]))
+        else:
+            result[key] = [b.get(key) for b in batch]
     return result
 
 
 def create_dataloaders(
-    train_dataset: SpectrumPairDataset,
-    val_dataset: SpectrumPairDataset,
+    train_dataset: Dataset,
+    val_dataset: Dataset,
     config: dict[str, Any] | None = None,
 ) -> tuple[DataLoader, DataLoader]:
     """Create PyTorch DataLoaders for training and validation datasets.
 
     Parameters
     ----------
-    train_dataset : SpectrumPairDataset
+    train_dataset : Dataset
         Training dataset.
-    val_dataset : SpectrumPairDataset
+    val_dataset : Dataset
         Validation dataset.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'batch_size' (int): Batch size (default 16).
         - 'shuffle_train' (bool): Whether to shuffle train set (default True).
         - 'num_workers' (int): Number of worker processes (default 0).
+        - 'collate_fn' (Callable | None): Custom collate function (default default_spectrum_collate).
 
     Returns
     -------
@@ -218,20 +225,21 @@ def create_dataloaders(
     batch_size: int = int(cfg.get("batch_size", 16))
     shuffle_train: bool = bool(cfg.get("shuffle_train", True))
     num_workers: int = int(cfg.get("num_workers", 0))
+    collate_fn = cfg.get("collate_fn", default_spectrum_collate)
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=shuffle_train,
         num_workers=num_workers,
-        collate_fn=default_spectrum_collate,
+        collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        collate_fn=default_spectrum_collate,
+        collate_fn=collate_fn,
     )
 
     return train_loader, val_loader

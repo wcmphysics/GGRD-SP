@@ -298,8 +298,12 @@ def train_unet_region(
     sample = train_dataset[0]
     n_points = int(sample["x"].shape[-1])
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    dl_cfg = {
+        "batch_size": batch_size,
+        "shuffle_train": True,
+        "num_workers": int(cfg.get("num_workers", 0)),
+    }
+    train_loader, val_loader = create_dataloaders(train_dataset, val_dataset, config=dl_cfg)
 
     model = UNet1D(n_points=n_points, config=cfg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
