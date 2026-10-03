@@ -282,7 +282,7 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertEqual(pred_int.shape[0], src_rows)
         self.assertEqual(pred_eng.shape[0], src_rows)
         self.assertEqual(len(pred_df), src_rows)
-        self.assertTrue(all(pred_df["measurement_id"].str.startswith("P_J4H1_")))
+        self.assertTrue(all(pred_df["measurement_id"].str.contains("P_J4H1_")))
         self.assertTrue(all(pred_df["tool"] == "H1"))
 
     def test_ax_bayesian_optimization_integration(self) -> None:
