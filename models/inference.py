@@ -54,6 +54,56 @@ def format_predicted_measurement_id(source_measurement_id: str, source_tool: str
     return f"P_{source_tool}{target_tool}_{source_measurement_id}"
 
 
+def assemble_prediction_metadata(
+    source_df: pd.DataFrame,
+    source_tool: str,
+    target_tool: str,
+    n_points: int,
+) -> pd.DataFrame:
+    """Build standardized prediction metadata DataFrame for transferred spectra.
+
+    Parameters
+    ----------
+    source_df : pd.DataFrame
+        DataFrame of source rows being predicted.
+    source_tool : str
+        Source tool identifier.
+    target_tool : str
+        Target tool identifier.
+    n_points : int
+        Number of spectral data points per region.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing standardized prediction metadata.
+    """
+    records: list[dict[str, Any]] = []
+    for new_idx, (_, row) in enumerate(source_df.iterrows()):
+        orig_meas_id = str(row["measurement_id"])
+        pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
+
+        meta_rec: dict[str, Any] = {
+            "spectrum_index": new_idx,
+            "material": row.get("material", "NMG"),
+            "tool": target_tool,
+            "measurement_id": pred_meas_id,
+            "die": row.get("die", 0),
+            "region": row.get("region"),
+            "n_points": n_points,
+            "time": row.get("time"),
+            "source_tool": source_tool,
+            "source_measurement_id": orig_meas_id,
+            "source_spectrum_index": int(row["spectrum_index"]),
+            "is_predicted": True,
+        }
+        if "t7_code" in row:
+            meta_rec["t7_code"] = row["t7_code"]
+        records.append(meta_rec)
+
+    return pd.DataFrame(records)
+
+
 def predict_spectra(
     models: dict[str, nn.Module],
     data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any],
@@ -135,7 +185,6 @@ def predict_spectra(
 
     predicted_intensities = np.zeros((n_samples, n_points), dtype=np.float32)
     predicted_energies = np.zeros((n_samples, n_points), dtype=np.float32)
-    predicted_meta_records: list[dict[str, Any]] = []
 
     # Map original rows to new index
     source_indices = source_df["spectrum_index"].astype(int).to_numpy()
@@ -143,7 +192,7 @@ def predict_spectra(
 
     # Process region-by-region in batches for vectorization speedup
     for region, group in source_df.groupby("region"):
-        group_new_indices = np.arange(len(source_df))[source_df["region"] == region]
+        group_new_indices = np.arange(len(source_df))[(source_df["region"] == region).to_numpy()]
         orig_indices = group["spectrum_index"].astype(int).to_numpy()
 
         if region in models:
@@ -166,29 +215,11 @@ def predict_spectra(
             )
             predicted_intensities[group_new_indices] = ary_intensity[orig_indices]
 
-    # Build standardized prediction metadata
-    for new_idx, (_, row) in enumerate(source_df.iterrows()):
-        orig_meas_id = str(row["measurement_id"])
-        pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
-
-        meta_rec = {
-            "spectrum_index": new_idx,
-            "material": row.get("material", "NMG"),
-            "tool": target_tool,
-            "measurement_id": pred_meas_id,
-            "die": row.get("die", 0),
-            "region": row.get("region"),
-            "n_points": n_points,
-            "time": row.get("time"),
-            "source_tool": source_tool,
-            "source_measurement_id": orig_meas_id,
-            "source_spectrum_index": int(row["spectrum_index"]),
-            "is_predicted": True,
-        }
-        if "t7_code" in row:
-            meta_rec["t7_code"] = row["t7_code"]
-        predicted_meta_records.append(meta_rec)
-
-    meta_df_predicted = pd.DataFrame(predicted_meta_records)
+    meta_df_predicted = assemble_prediction_metadata(
+        source_df=source_df,
+        source_tool=source_tool,
+        target_tool=target_tool,
+        n_points=n_points,
+    )
 
     return predicted_intensities, predicted_energies, meta_df_predicted
