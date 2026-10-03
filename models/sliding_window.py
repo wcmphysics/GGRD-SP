@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import logging
 import warnings
 from typing import Any
 
@@ -11,12 +10,13 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from ax.service.ax_client import AxClient, ObjectiveProperties
 from torch.utils.data import DataLoader, Dataset
 
 from models.baseline_cnn import NormalizedMSELoss, Residual1DCNN
-from models.dataset import SpectrumPairDataset, split_session_datasets
-from models.inference import format_predicted_measurement_id
+from models.bayesian_opt import run_ax_search
+from models.dataset import SpectrumPairDataset
+from models.inference import assemble_prediction_metadata
+from models.root import run_model_pipeline
 
 
 from utility.patching import (
@@ -434,108 +434,67 @@ def optimize_sliding_window_hyperparameters(
     if l2_bounds[0] <= 0 or l2_bounds[1] <= l2_bounds[0]:
         raise ValueError(f"Invalid l2_bounds: {l2_bounds}, both must be > 0 with min < max")
 
-    if not verbose:
-        logging.getLogger("ax").setLevel(logging.WARNING)
+    parameters: list[dict[str, Any]] = [
+        {
+            "name": "window_size",
+            "type": "choice",
+            "values": window_size_choices,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "kernel_size",
+            "type": "choice",
+            "values": kernel_sizes,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "hidden_channels",
+            "type": "choice",
+            "values": hidden_channels,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "learning_rate",
+            "type": "range",
+            "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
+            "value_type": "float",
+            "log_scale": True,
+        },
+        {
+            "name": "l2_weight",
+            "type": "range",
+            "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
+            "value_type": "float",
+            "log_scale": True,
+        },
+    ]
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
-        ax_client = AxClient(random_seed=seed)
-
-        parameters: list[dict[str, Any]] = [
-            {
-                "name": "window_size",
-                "type": "choice",
-                "values": window_size_choices,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "kernel_size",
-                "type": "choice",
-                "values": kernel_sizes,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "hidden_channels",
-                "type": "choice",
-                "values": hidden_channels,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "learning_rate",
-                "type": "range",
-                "bounds": [lr_bounds[0], lr_bounds[1]],
-                "value_type": "float",
-                "log_scale": True,
-            },
-            {
-                "name": "l2_weight",
-                "type": "range",
-                "bounds": [l2_bounds[0], l2_bounds[1]],
-                "value_type": "float",
-                "log_scale": True,
-            },
-        ]
-
-        ax_client.create_experiment(
-            name="sliding_window_optimization",
-            parameters=parameters,
-            objectives={"val_loss": ObjectiveProperties(minimize=True)},
-        )
-
-    trials_data: list[dict[str, Any]] = []
-
-    for trial_idx in range(num_trials):
-        if seed is not None:
-            torch.manual_seed(seed + trial_idx)
-
-        params, trial_id = ax_client.get_next_trial()
-        win_size = int(params["window_size"])
-        k_size = int(params["kernel_size"])
+    def _train_adapter(
+        train_ds: Any,
+        val_ds: Any,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        c = dict(config or {})
+        win_size = int(c["window_size"])
+        k_size = int(c["kernel_size"])
         if k_size > win_size:
-            k_size = win_size if win_size % 2 == 1 else win_size - 1
+            c["kernel_size"] = win_size if win_size % 2 == 1 else win_size - 1
+        c["stride"] = max(1, win_size // 2)
+        return train_sliding_window_region(train_ds, val_ds, config=c)
 
-        train_cfg = {
-            "window_size": win_size,
-            "stride": max(1, win_size // 2),
-            "kernel_size": k_size,
-            "hidden_channels": int(params["hidden_channels"]),
-            "learning_rate": float(params["learning_rate"]),
-            "l2_weight": float(params["l2_weight"]),
-            "epochs": epochs_per_trial,
-            "device": device,
-            "verbose": False,
-        }
+    opt_cfg = dict(cfg)
+    opt_cfg["experiment_name"] = cfg.get("experiment_name", "sliding_window_optimization")
 
-        train_res = train_sliding_window_region(train_full_ds, val_full_ds, config=train_cfg)
-        val_loss = float(train_res["best_val_loss"])
-
-        ax_client.complete_trial(trial_index=trial_id, raw_data={"val_loss": val_loss})
-
-        trials_data.append({
-            "trial_id": trial_id,
-            "parameters": params,
-            "val_loss": val_loss,
-            "best_epoch": train_res["best_epoch"],
-        })
-
-        if verbose:
-            print(
-                f"[Ax Sliding Window Trial {trial_idx + 1}/{num_trials}] "
-                f"Params: {params} => Val Loss: {val_loss:.6f}"
-            )
-
-    best_params, _ = ax_client.get_best_parameters()
-    best_val_loss = min(t["val_loss"] for t in trials_data)
-
-    return {
-        "best_parameters": best_params,
-        "best_val_loss": best_val_loss,
-        "trials_data": trials_data,
-        "ax_client": ax_client,
-    }
+    return run_ax_search(
+        train_fn=_train_adapter,
+        train_dataset=train_full_ds,
+        val_dataset=val_full_ds,
+        parameters=parameters,
+        config=opt_cfg,
+    )
 
 
 def predict_sliding_window_spectra(
@@ -598,7 +557,6 @@ def predict_sliding_window_spectra(
     for new_idx, (_, row) in enumerate(source_df.iterrows()):
         region = str(row["region"])
         orig_idx = int(row["spectrum_index"])
-        orig_meas_id = str(row["measurement_id"])
 
         x_raw = ary_intensity[orig_idx]
 
@@ -619,26 +577,12 @@ def predict_sliding_window_spectra(
             warnings.warn(f"Region '{region}' not in models; falling back to identity pass-through.")
             predicted_intensities[new_idx] = x_raw.copy()
 
-        pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
-        meta_rec = {
-            "spectrum_index": new_idx,
-            "material": row.get("material", "NMG"),
-            "tool": target_tool,
-            "measurement_id": pred_meas_id,
-            "die": row.get("die", 0),
-            "region": region,
-            "n_points": n_points,
-            "time": row.get("time"),
-            "source_tool": source_tool,
-            "source_measurement_id": orig_meas_id,
-            "source_spectrum_index": orig_idx,
-            "is_predicted": True,
-        }
-        if "t7_code" in row:
-            meta_rec["t7_code"] = row["t7_code"]
-        predicted_meta_records.append(meta_rec)
-
-    meta_df_predicted = pd.DataFrame(predicted_meta_records)
+    meta_df_predicted = assemble_prediction_metadata(
+        source_df=source_df,
+        source_tool=source_tool,
+        target_tool=target_tool,
+        n_points=n_points,
+    )
     return predicted_intensities, predicted_energies, meta_df_predicted
 
 
@@ -648,148 +592,32 @@ def run_sliding_window_pipeline(
     ary_energy: np.ndarray,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute the end-to-end sliding window modeling pipeline.
-
-    Orchestrates:
-    1. Session-level dataset splitting per spectral region.
-    2. Dynamic computation of window size and stride from binding energy resolution.
-    3. Optional Ax Bayesian hyperparameter optimization on reconstructed full spectra.
-    4. Model instantiation and training using sliding window patches.
-    5. Evaluation directly on the reconstructed full spectrum.
-    6. Prediction generation producing standardized output containers:
-       (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
-
-    Parameters
-    ----------
-    meta_df : pd.DataFrame
-        Metadata DataFrame containing source-to-target pairing information.
-    ary_intensity : np.ndarray
-        2D array of measured intensities.
-    ary_energy : np.ndarray
-        2D array of binding energies.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'regions' (list[str] | None): Regions to train (default auto-detected).
-        - 'source_tool' (str): Source tool identifier (default 'J4').
-        - 'target_tool' (str): Target tool identifier (default 'H1').
-        - 'val_ratio' (float): Fraction of sessions reserved for validation (default 0.2).
-        - 'seed' (int | None): Random seed for reproducibility (default 42).
-        - 'window_size_ev' (float): Desired window width in eV (default 2.0).
-        - 'sliding_stride_ev' (float): Desired sliding stride in eV (default 1.0).
-        - 'use_bayesian_opt' (bool): Whether to perform Ax Bayesian optimization (default False).
-        - 'bayesian_opt_config' (dict[str, Any] | None): Configuration for Ax optimization.
-        - 'train_config' (dict[str, Any] | None): Training hyperparameters.
-        - 'predict_source' (bool): Whether to run inference on source data (default True).
-        - 'verbose' (bool): Whether to print progress (default False).
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary containing:
-        - 'models': Dictionary mapping region -> (model, window_size, stride).
-        - 'evaluation': Dictionary of validation losses per region (evaluated on full spectra).
-        - 'histories': Training history per region.
-        - 'bayesian_opt_results': Results from Ax (if use_bayesian_opt=True).
-        - 'predictions': Tuple of (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
-    """
+    """Execute the end-to-end sliding window modeling pipeline."""
     cfg = config or {}
-    source_tool: str = cfg.get("source_tool", "J4")
-    target_tool: str = cfg.get("target_tool", "H1")
-    val_ratio: float = float(cfg.get("val_ratio", 0.2))
-    seed: int | None = cfg.get("seed", 42)
-    use_bo: bool = bool(cfg.get("use_bayesian_opt", False))
-    bo_cfg: dict[str, Any] = dict(cfg.get("bayesian_opt_config", {}))
-    train_cfg: dict[str, Any] = dict(cfg.get("train_config", {}))
-    predict_source: bool = bool(cfg.get("predict_source", True))
-    verbose: bool = bool(cfg.get("verbose", False))
 
-    if "seed" not in bo_cfg and seed is not None:
-        bo_cfg["seed"] = seed
+    def _prep_sw_cfg(train_ds: Any, val_ds: Any, region_cfg: dict[str, Any]) -> tuple[Any, Any, dict[str, Any]]:
+        c = dict(region_cfg)
+        for k in (
+            "window_size_ev",
+            "sliding_stride_ev",
+            "window_size",
+            "window_size_points",
+            "stride",
+            "sliding_stride_points",
+        ):
+            if k in cfg and k not in c:
+                c[k] = cfg[k]
+        return train_ds, val_ds, c
 
-    for k in (
-        "window_size_ev",
-        "sliding_stride_ev",
-        "window_size",
-        "window_size_points",
-        "stride",
-        "sliding_stride_points",
-    ):
-        if k in cfg and k not in train_cfg:
-            train_cfg[k] = cfg[k]
-
-    regions: list[str] | None = cfg.get("regions")
-    if regions is None:
-        paired_mask = meta_df["measurement_id_target"].notna()
-        if source_tool:
-            paired_mask = paired_mask & (meta_df["tool"] == source_tool)
-        regions = sorted(meta_df[paired_mask]["region"].unique().tolist())
-
-    if not regions:
-        raise ValueError(
-            f"No valid spectral regions found to train for "
-            f"source_tool='{source_tool}', target_tool='{target_tool}'"
-        )
-
-    models: dict[str, tuple[nn.Module, int, int]] = {}
-    eval_results: dict[str, float] = {}
-    histories: dict[str, dict[str, list[float]]] = {}
-    bo_results: dict[str, dict[str, Any]] = {}
-
-    for region in regions:
-        if verbose:
-            print(f"\n--- [Sliding Window] Processing Region: {region} ({source_tool} -> {target_tool}) ---")
-
-        split_cfg = {
-            "region": region,
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "val_ratio": val_ratio,
-            "seed": seed,
-        }
-        train_ds, val_ds = split_session_datasets(
-            meta_df, ary_intensity, ary_energy, config=split_cfg
-        )
-
-        region_train_cfg = dict(train_cfg)
-
-        if use_bo:
-            if verbose:
-                print(f"Running Ax Bayesian Optimization for {region}...")
-            bo_res = optimize_sliding_window_hyperparameters(train_ds, val_ds, config=bo_cfg)
-            bo_results[region] = bo_res
-            best_params = bo_res["best_parameters"]
-            region_train_cfg.update(best_params)
-            if verbose:
-                print(f"Ax optimal params for {region}: {best_params}")
-
-        # Train sliding window model
-        train_res = train_sliding_window_region(train_ds, val_ds, config=region_train_cfg)
-        models[region] = (train_res["model"], train_res["window_size"], train_res["stride"])
-        eval_results[region] = train_res["best_val_loss"]
-        histories[region] = train_res["history"]
-
-        if verbose:
-            print(
-                f"Region {region} training complete (W={train_res['window_size']}, S={train_res['stride']}). "
-                f"Best Reconstructed Val Loss: {train_res['best_val_loss']:.6f}"
-            )
-
-    predictions = None
-    if predict_source:
-        pred_cfg = {
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-        }
-        predictions = predict_sliding_window_spectra(
-            models=models,
-            data=(ary_intensity, ary_energy, meta_df),
-            config=pred_cfg,
-        )
-
-    return {
-        "models": models,
-        "evaluation": eval_results,
-        "histories": histories,
-        "bayesian_opt_results": bo_results,
-        "predictions": predictions,
+    hooks = {
+        "bo_fn": optimize_sliding_window_hyperparameters,
+        "dataset_prep_fn": _prep_sw_cfg,
+        "model_record_fn": lambda res, r_cfg: (res["model"], res["window_size"], res["stride"]),
     }
+    return run_model_pipeline(
+        data=(ary_intensity, ary_energy, meta_df),
+        train_region_fn=train_sliding_window_region,
+        predict_fn=predict_sliding_window_spectra,
+        config=config,
+        hooks=hooks,
+    )

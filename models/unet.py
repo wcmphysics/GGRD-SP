@@ -7,7 +7,6 @@ with global residual shortcut for stable inter-tool transfer.
 from __future__ import annotations
 
 import copy
-import logging
 import warnings
 from typing import Any
 
@@ -19,22 +18,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from models.baseline_cnn import NormalizedMSELoss
-from models.dataset import SpectrumPairDataset, create_dataloaders, split_session_datasets
-from models.inference import format_predicted_measurement_id, predict_spectra
+from models.bayesian_opt import run_ax_search
+from models.dataset import SpectrumPairDataset, create_dataloaders
+from models.inference import assemble_prediction_metadata
+from models.root import run_model_pipeline
 from models.sliding_window import (
     SpectrumPatchDataset,
-    calculate_window_points,
     evaluate_sliding_window,
-    extract_sliding_windows,
     predict_sliding_window_spectrum,
 )
-
-try:
-    from ax.service.ax_client import AxClient, ObjectiveProperties
-
-    AX_AVAILABLE = True
-except (ImportError, OSError):
-    AX_AVAILABLE = False
+from utility.patching import calculate_window_points
 
 
 class UNetConvBlock1D(nn.Module):
@@ -326,10 +319,11 @@ def train_unet_region(
         for batch in train_loader:
             x = batch["x"].to(device)
             y = batch["y"].to(device)
+            max_v = batch["max_val"].to(device) if "max_val" in batch and batch["max_val"] is not None else None
 
             optimizer.zero_grad()
             y_pred = model(x)
-            loss = criterion(y_pred, y, model=model)
+            loss = criterion(y_pred, y, model=model, max_val=max_v)
             loss.backward()
             optimizer.step()
 
@@ -338,20 +332,30 @@ def train_unet_region(
 
         avg_train_loss = total_train_loss / max(1, n_batches)
 
-        # Validation phase
-        model.eval()
-        total_val_loss = 0.0
-        val_batches = 0
-        with torch.no_grad():
-            for batch in val_loader:
-                x = batch["x"].to(device)
-                y = batch["y"].to(device)
-                y_pred = model(x)
-                val_loss = eval_criterion(y_pred, y)
-                total_val_loss += val_loss.item()
-                val_batches += 1
+        # Validation phase: evaluate on full reconstructed spectrum if val_full_dataset is supplied
+        if cfg.get("val_full_dataset") is not None:
+            w_size = int(cfg.get("window_size", n_points))
+            s_step = int(cfg.get("stride", max(1, w_size // 2)))
+            avg_val_loss = evaluate_sliding_window(
+                model=model,
+                full_val_dataset=cfg["val_full_dataset"],
+                criterion=eval_criterion,
+                config={"window_size": w_size, "stride": s_step, "device": device},
+            )
+        else:
+            model.eval()
+            total_val_loss = 0.0
+            val_batches = 0
+            with torch.no_grad():
+                for batch in val_loader:
+                    x = batch["x"].to(device)
+                    y = batch["y"].to(device)
+                    y_pred = model(x)
+                    val_loss = eval_criterion(y_pred, y)
+                    total_val_loss += val_loss.item()
+                    val_batches += 1
 
-        avg_val_loss = total_val_loss / max(1, val_batches)
+            avg_val_loss = total_val_loss / max(1, val_batches)
         history["train_loss"].append(avg_train_loss)
         history["val_loss"].append(avg_val_loss)
 
@@ -389,117 +393,120 @@ def optimize_unet_hyperparameters(
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Perform Bayesian optimization over 1D U-Net hyperparameters using Ax."""
-    if not AX_AVAILABLE:
-        warnings.warn("Ax platform not available. Skipping hyperparameter optimization.")
-        return {"best_parameters": {}, "best_val_loss": float("nan")}
-
     cfg = config or {}
-    num_trials: int = int(cfg.get("num_trials", 6))
-    epochs_per_trial: int = int(cfg.get("epochs_per_trial", 15))
     base_channel_choices: list[int] = list(cfg.get("base_channels", [16, 32]))
     depth_choices: list[int] = list(cfg.get("depths", [2, 3]))
     kernel_sizes: list[int] = list(cfg.get("kernel_sizes", [3, 5]))
     lr_bounds: tuple[float, float] = tuple(cfg.get("lr_bounds", (1e-4, 1e-2)))
     l2_bounds: tuple[float, float] = tuple(cfg.get("l2_bounds", (1e-6, 1e-2)))
-    seed: int | None = cfg.get("seed", 42)
-    verbose: bool = bool(cfg.get("verbose", False))
 
-    if not verbose:
-        logging.getLogger("ax").setLevel(logging.WARNING)
+    parameters: list[dict[str, Any]] = [
+        {
+            "name": "base_channels",
+            "type": "choice",
+            "values": base_channel_choices,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "depth",
+            "type": "choice",
+            "values": depth_choices,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "kernel_size",
+            "type": "choice",
+            "values": kernel_sizes,
+            "value_type": "int",
+            "is_ordered": True,
+        },
+        {
+            "name": "learning_rate",
+            "type": "range",
+            "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
+            "value_type": "float",
+            "log_scale": True,
+        },
+        {
+            "name": "l2_weight",
+            "type": "range",
+            "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
+            "value_type": "float",
+            "log_scale": True,
+        },
+    ]
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=DeprecationWarning)
-        ax_client = AxClient(random_seed=seed)
+    search_cfg = dict(cfg)
+    search_cfg.setdefault("experiment_name", "unet_spectral_transfer_optimization")
+    search_cfg.setdefault("num_trials", 6)
+    search_cfg.setdefault("epochs_per_trial", 15)
 
-        parameters: list[dict[str, Any]] = [
-            {
-                "name": "base_channels",
-                "type": "choice",
-                "values": base_channel_choices,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "depth",
-                "type": "choice",
-                "values": depth_choices,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "kernel_size",
-                "type": "choice",
-                "values": kernel_sizes,
-                "value_type": "int",
-                "is_ordered": True,
-            },
-            {
-                "name": "learning_rate",
-                "type": "range",
-                "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
-                "value_type": "float",
-                "log_scale": True,
-            },
-            {
-                "name": "l2_weight",
-                "type": "range",
-                "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
-                "value_type": "float",
-                "log_scale": True,
-            },
-        ]
+    return run_ax_search(
+        train_fn=train_unet_region,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        parameters=parameters,
+        config=search_cfg,
+    )
 
-        ax_client.create_experiment(
-            name="unet_spectral_transfer_optimization",
-            parameters=parameters,
-            objectives={"val_loss": ObjectiveProperties(minimize=True)},
-        )
 
-        trial_records: list[tuple[float, dict[str, Any]]] = []
-        for trial_idx in range(num_trials):
-            params, trial_index = ax_client.get_next_trial()
-            trial_train_cfg = dict(cfg)
-            trial_train_cfg.update(
-                {
-                    "base_channels": int(params["base_channels"]),
-                    "depth": int(params["depth"]),
-                    "kernel_size": int(params["kernel_size"]),
-                    "learning_rate": float(params["learning_rate"]),
-                    "l2_weight": float(params["l2_weight"]),
-                    "epochs": epochs_per_trial,
-                    "early_stopping_patience": epochs_per_trial,
-                    "verbose": False,
-                }
-            )
+def predict_unet_spectra(
+    models: dict[str, Any],
+    data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any],
+    config: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """Generate transformed predictions across source measurements using trained U-Net models."""
+    if isinstance(data, (tuple, list)):
+        ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
+    else:
+        ary_intensity, ary_energy, meta_df = data["ary_intensity"], data["ary_energy"], data["meta_df"]
 
-            res = train_unet_region(train_dataset, val_dataset, config=trial_train_cfg)
-            v_loss = float(res["best_val_loss"])
-            ax_client.complete_trial(trial_index=trial_index, raw_data={"val_loss": v_loss})
-            trial_records.append((v_loss, params))
+    cfg = config or {}
+    source_tool = str(cfg.get("source_tool", "J4"))
+    target_tool = str(cfg.get("target_tool", "H1"))
+    use_sw = bool(cfg.get("use_sliding_window", False))
 
-        best_params: dict[str, Any] = {}
-        best_val_loss = float("inf")
-        try:
-            best_p, metrics = ax_client.get_best_parameters()
-            if best_p is not None:
-                best_params = best_p
-            if metrics is not None and isinstance(metrics, (tuple, list)) and len(metrics) > 0:
-                first = metrics[0]
-                if isinstance(first, dict) and "val_loss" in first:
-                    best_val_loss = float(first["val_loss"])
-        except Exception:
-            pass
+    regions = list(models.keys())
+    source_mask = (meta_df["tool"] == source_tool) & (meta_df["region"].isin(regions))
+    source_df = meta_df[source_mask].copy()
 
-        if np.isinf(best_val_loss) or np.isnan(best_val_loss):
-            if trial_records:
-                trial_records.sort(key=lambda t: t[0])
-                best_val_loss, best_params = trial_records[0]
+    n_pred = len(source_df)
+    n_points = ary_intensity.shape[1]
+    pred_intensities = np.empty((n_pred, n_points), dtype=np.float64)
+    pred_energies = np.empty((n_pred, n_points), dtype=np.float64)
 
-        return {
-            "best_parameters": best_params,
-            "best_val_loss": best_val_loss,
-            "ax_client": ax_client,
-        }
+    for new_idx, (_, row) in enumerate(source_df.iterrows()):
+        reg = str(row["region"])
+        orig_idx = int(row["spectrum_index"])
+        pred_energies[new_idx] = ary_energy[orig_idx]
+        x_raw = ary_intensity[orig_idx]
+
+        if reg in models:
+            model_entry = models[reg]
+            if use_sw or isinstance(model_entry, (tuple, list)):
+                model, w_size, s_step = model_entry[0], model_entry[1], model_entry[2]
+                model_device = next(model.parameters()).device
+                pred_intensities[new_idx] = predict_sliding_window_spectrum(
+                    model=model,
+                    spectrum=x_raw,
+                    config={"window_size": w_size, "stride": s_step, "device": model_device},
+                )
+            else:
+                model = model_entry
+                model.eval()
+                model_device = next(model.parameters()).device
+                with torch.no_grad():
+                    x_tensor = torch.from_numpy(x_raw.astype(np.float32)).unsqueeze(0).to(model_device)
+                    y_pred = model(x_tensor).squeeze(0).cpu().numpy()
+                pred_intensities[new_idx] = y_pred
+        else:
+            warnings.warn(f"No trained model found for region '{reg}'. Copying source intensity.")
+            pred_intensities[new_idx] = x_raw.copy()
+
+    pred_meta_df = assemble_prediction_metadata(source_df, source_tool, target_tool, n_points)
+    return pred_intensities, pred_energies, pred_meta_df
 
 
 def run_unet_pipeline(
@@ -512,92 +519,20 @@ def run_unet_pipeline(
 
     Supports both full regional spectrum mode (default) and sliding window
     patch mode via the 'use_sliding_window' configuration flag.
-
-    Parameters
-    ----------
-    meta_df : pd.DataFrame
-        Metadata DataFrame containing source-to-target pairing information.
-    ary_intensity : np.ndarray
-        2D array of measured intensities.
-    ary_energy : np.ndarray
-        2D array of binding energies.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'use_sliding_window' (bool): Whether to use sliding window patch decomposition (default False).
-        - 'regions' (list[str] | None): Regions to train (default auto-detected).
-        - 'source_tool' (str): Source tool identifier (default 'J4').
-        - 'target_tool' (str): Target tool identifier (default 'H1').
-        - 'val_ratio' (float): Fraction of sessions reserved for validation (default 0.2).
-        - 'seed' (int | None): Random seed (default 42).
-        - 'window_size_ev' (float): Window size in eV for sliding window mode (default 2.0).
-        - 'sliding_stride_ev' (float): Stride in eV for sliding window mode (default 1.0).
-        - 'use_bayesian_opt' (bool): Whether to run Ax optimization (default False).
-        - 'bayesian_opt_config' (dict[str, Any] | None): Ax optimization settings.
-        - 'train_config' (dict[str, Any] | None): Hyperparameters for training.
-        - 'predict_source' (bool): Whether to run inference on source data (default True).
-        - 'verbose' (bool): Verbosity flag (default False).
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary containing:
-        - 'models': Dictionary mapping region -> trained UNet1D (or (model, w_size, stride)).
-        - 'evaluation': Validation normalized MSE loss per region.
-        - 'histories': Training loss histories per region.
-        - 'bayesian_opt_results': Results from Ax (if use_bayesian_opt=True).
-        - 'predictions': Tuple of (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
     """
     cfg = config or {}
     use_sw: bool = bool(cfg.get("use_sliding_window", False))
-    source_tool: str = cfg.get("source_tool", "J4")
-    target_tool: str = cfg.get("target_tool", "H1")
-    val_ratio: float = float(cfg.get("val_ratio", 0.2))
-    seed: int | None = cfg.get("seed", 42)
-    use_bo: bool = bool(cfg.get("use_bayesian_opt", False))
-    bo_cfg: dict[str, Any] = dict(cfg.get("bayesian_opt_config", {}))
-    train_cfg: dict[str, Any] = dict(cfg.get("train_config", {}))
-    predict_source: bool = bool(cfg.get("predict_source", True))
-    verbose: bool = bool(cfg.get("verbose", False))
 
-    if "seed" not in bo_cfg and seed is not None:
-        bo_cfg["seed"] = seed
+    hooks: dict[str, Any] = {
+        "bo_fn": optimize_unet_hyperparameters,
+    }
 
-    # Detect regions if not provided
-    regions: list[str] | None = cfg.get("regions")
-    if regions is None:
-        paired_mask = meta_df["measurement_id_target"].notna()
-        if source_tool:
-            paired_mask = paired_mask & (meta_df["tool"] == source_tool)
-        regions = sorted(meta_df[paired_mask]["region"].unique().tolist())
-
-    if not regions:
-        raise ValueError(f"No valid spectral regions found to train for source_tool='{source_tool}', target_tool='{target_tool}'")
-
-    models: dict[str, Any] = {}
-    eval_results: dict[str, float] = {}
-    histories: dict[str, dict[str, list[float]]] = {}
-    bo_results: dict[str, dict[str, Any]] = {}
-
-    for region in regions:
-        mode_label = "Sliding Window U-Net" if use_sw else "Full Spectrum U-Net"
-        if verbose:
-            print(f"\n--- [{mode_label}] Processing Region: {region} ({source_tool} -> {target_tool}) ---")
-
-        split_cfg = {
-            "region": region,
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "val_ratio": val_ratio,
-            "seed": seed,
-        }
-        train_full_ds, val_full_ds = split_session_datasets(
-            meta_df, ary_intensity, ary_energy, config=split_cfg
-        )
-
-        region_train_cfg = dict(train_cfg)
-
-        if use_sw:
-            # Sliding window mode
+    if use_sw:
+        def _dataset_prep_sw(
+            train_full_ds: Any,
+            val_full_ds: Any,
+            reg_cfg: dict[str, Any],
+        ) -> tuple[Any, Any, dict[str, Any]]:
             sample_energy = train_full_ds[0].get("energy")
             if sample_energy is not None:
                 e_grid = sample_energy.cpu().numpy()
@@ -611,100 +546,22 @@ def run_unet_pipeline(
             }
             w_size, s_step = calculate_window_points(e_grid, config=sw_calc_cfg)
 
-            train_ds: Dataset = SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
-            val_ds: Dataset = SpectrumPatchDataset(val_full_ds, window_size=w_size, stride=s_step)
+            train_ds = SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
+            val_ds = SpectrumPatchDataset(val_full_ds, window_size=w_size, stride=s_step)
 
-            if use_bo:
-                bo_res = optimize_unet_hyperparameters(train_ds, val_ds, config=bo_cfg)
-                bo_results[region] = bo_res
-                if bo_res.get("best_parameters"):
-                    region_train_cfg.update(bo_res["best_parameters"])
+            updated_cfg = dict(reg_cfg)
+            updated_cfg["val_full_dataset"] = val_full_ds
+            updated_cfg["window_size"] = w_size
+            updated_cfg["stride"] = s_step
+            return train_ds, val_ds, updated_cfg
 
-            train_res = train_unet_region(train_ds, val_ds, config=region_train_cfg)
-            models[region] = (train_res["model"], w_size, s_step)
-            eval_results[region] = train_res["best_val_loss"]
-            histories[region] = train_res["history"]
+        hooks["dataset_prep_fn"] = _dataset_prep_sw
+        hooks["model_record_fn"] = lambda res, r_cfg: (res["model"], r_cfg["window_size"], r_cfg["stride"])
 
-        else:
-            # Full regional spectrum mode
-            if use_bo:
-                bo_res = optimize_unet_hyperparameters(train_full_ds, val_full_ds, config=bo_cfg)
-                bo_results[region] = bo_res
-                if bo_res.get("best_parameters"):
-                    region_train_cfg.update(bo_res["best_parameters"])
-
-            train_res = train_unet_region(train_full_ds, val_full_ds, config=region_train_cfg)
-            models[region] = train_res["model"]
-            eval_results[region] = train_res["best_val_loss"]
-            histories[region] = train_res["history"]
-
-    # Generate predictions on source tool data
-    predictions = None
-    if predict_source:
-        source_mask = (meta_df["tool"] == source_tool) & (meta_df["region"].isin(regions))
-        source_df = meta_df[source_mask].copy()
-
-        n_pred = len(source_df)
-        n_points = ary_intensity.shape[1]
-        pred_intensities = np.empty((n_pred, n_points), dtype=np.float64)
-        pred_energies = np.empty((n_pred, n_points), dtype=np.float64)
-        pred_meta_records: list[dict[str, Any]] = []
-
-        for new_idx, (_, row) in enumerate(source_df.iterrows()):
-            reg = str(row["region"])
-            orig_idx = int(row["spectrum_index"])
-            orig_meas_id = str(row["measurement_id"])
-            pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
-
-            pred_energies[new_idx] = ary_energy[orig_idx]
-            x_raw = ary_intensity[orig_idx]
-
-            if reg in models:
-                if use_sw:
-                    model, w_size, s_step = models[reg]
-                    model_device = next(model.parameters()).device
-                    reconstructed = predict_sliding_window_spectrum(
-                        model=model,
-                        spectrum=x_raw,
-                        config={"window_size": w_size, "stride": s_step, "device": model_device},
-                    )
-                    pred_intensities[new_idx] = reconstructed
-                else:
-                    model = models[reg]
-                    model.eval()
-                    model_device = next(model.parameters()).device
-                    with torch.no_grad():
-                        x_tensor = torch.from_numpy(x_raw.astype(np.float32)).unsqueeze(0).to(model_device)
-                        y_pred = model(x_tensor).squeeze(0).cpu().numpy()
-                    pred_intensities[new_idx] = y_pred
-            else:
-                pred_intensities[new_idx] = x_raw.copy()
-
-            meta_rec = {
-                "spectrum_index": new_idx,
-                "material": row.get("material", "NMG"),
-                "tool": target_tool,
-                "measurement_id": pred_meas_id,
-                "die": row.get("die", 0),
-                "region": reg,
-                "n_points": n_points,
-                "time": row.get("time"),
-                "source_tool": source_tool,
-                "source_measurement_id": orig_meas_id,
-                "source_spectrum_index": orig_idx,
-                "is_predicted": True,
-            }
-            if "t7_code" in row:
-                meta_rec["t7_code"] = row["t7_code"]
-            pred_meta_records.append(meta_rec)
-
-        pred_meta_df = pd.DataFrame(pred_meta_records)
-        predictions = (pred_intensities, pred_energies, pred_meta_df)
-
-    return {
-        "models": models,
-        "evaluation": eval_results,
-        "histories": histories,
-        "bayesian_opt_results": bo_results,
-        "predictions": predictions,
-    }
+    return run_model_pipeline(
+        data=(ary_intensity, ary_energy, meta_df),
+        train_region_fn=train_unet_region,
+        predict_fn=predict_unet_spectra,
+        config=config,
+        hooks=hooks,
+    )
