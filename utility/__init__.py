@@ -1,6 +1,6 @@
 """Utility module for GGRD-SP spectral processing and synthetic data generation."""
 
-from utility.evaluation import calculate_prediction_metrics
+from utility.evaluation import calculate_prediction_metrics, format_side_by_side_metrics
 from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
@@ -49,5 +49,6 @@ __all__ = [
     "plot_training_history",
     "plot_prediction_comparison",
     "calculate_prediction_metrics",
+    "format_side_by_side_metrics",
     "plot_sliding_window_slices",
 ]
