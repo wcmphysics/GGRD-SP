@@ -150,7 +150,7 @@ class NormalizedMSELoss(nn.Module):
             Predicted intensity of shape (batch_size, n_points) or (batch_size, 1, n_points).
         y_true : torch.Tensor
             Target intensity of shape (batch_size, n_points) or (batch_size, 1, n_points).
-        model : Residual1DCNN | None, optional
+        model : nn.Module | None, optional
             The model instance, needed to compute L2 regularization if l2_weight > 0.
         max_val : torch.Tensor | None, optional
             Precomputed normalization maximum tensor. If None, computes max(|y_true|) per sample.

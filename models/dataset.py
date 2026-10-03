@@ -116,6 +116,12 @@ def split_session_datasets(
     val_ratio: float = float(cfg.get("val_ratio", 0.2))
     seed: int | None = cfg.get("seed", 42)
 
+    if len(ary_intensity) != len(ary_energy):
+        raise ValueError(
+            f"ary_intensity and ary_energy must have the same number of rows, "
+            f"got {len(ary_intensity)} vs {len(ary_energy)}"
+        )
+
     # Filter paired rows
     condition = meta_df["measurement_id_target"].notna() & (meta_df["region"] == region)
     if source_tool:
@@ -161,9 +167,23 @@ def split_session_datasets(
             f"Target measurement sessions leak across train and val splits: {target_leakage}"
         )
 
+    n_spectra = len(ary_intensity)
+
     def _build_dataset(df_subset: pd.DataFrame) -> SpectrumPairDataset:
         x_indices = df_subset["spectrum_index"].astype(int).to_numpy()
         y_indices = df_subset["spectrum_index_target"].astype(int).to_numpy()
+
+        if len(x_indices) > 0:
+            if np.any((x_indices < 0) | (x_indices >= n_spectra)):
+                raise IndexError(
+                    f"spectrum_index values out of bounds [0, {n_spectra - 1}]: "
+                    f"min={x_indices.min()}, max={x_indices.max()}"
+                )
+            if np.any((y_indices < 0) | (y_indices >= n_spectra)):
+                raise IndexError(
+                    f"spectrum_index_target values out of bounds [0, {n_spectra - 1}]: "
+                    f"min={y_indices.min()}, max={y_indices.max()}"
+                )
 
         x_arr = ary_intensity[x_indices]
         y_arr = ary_intensity[y_indices]
