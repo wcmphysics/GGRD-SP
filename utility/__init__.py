@@ -1,8 +1,14 @@
 """Utility module for GGRD-SP spectral processing and synthetic data generation."""
 
+from utility.evaluation import calculate_prediction_metrics
 from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
+)
+from utility.patching import (
+    calculate_window_points,
+    extract_sliding_windows,
+    reconstruct_from_patches,
 )
 from utility.pseudo_measurement import (
     generate_pseudo_measurements,
@@ -15,7 +21,6 @@ from utility.quantification import (
     get_default_quantification_config,
 )
 from utility.visualization import (
-    calculate_prediction_metrics,
     plot_pairing_timeline,
     plot_prediction_comparison,
     plot_regional_spectra,
@@ -34,6 +39,9 @@ __all__ = [
     "calculate_atomic_percentages",
     "get_default_quantification_config",
     "DEFAULT_SCOFIELD_RSF",
+    "calculate_window_points",
+    "extract_sliding_windows",
+    "reconstruct_from_patches",
     "plot_regional_spectra",
     "plot_tool_comparison",
     "plot_pairing_timeline",

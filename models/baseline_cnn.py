@@ -136,7 +136,7 @@ class NormalizedMSELoss(nn.Module):
         self,
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
-        model: Residual1DCNN | None = None,
+        model: nn.Module | None = None,
         max_val: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute the normalized MSE loss.
@@ -177,7 +177,14 @@ class NormalizedMSELoss(nn.Module):
         mse_loss = torch.mean((norm_pred - norm_true) ** 2)
 
         if self.l2_weight > 0.0 and model is not None:
-            l2_reg = model.get_l2_regularization()
+            if hasattr(model, "get_l2_regularization"):
+                l2_reg = model.get_l2_regularization()
+            else:
+                l2_reg = sum(
+                    torch.sum(p**2)
+                    for name, p in model.named_parameters()
+                    if "weight" in name and p.requires_grad and p.dim() > 1
+                )
             return mse_loss + self.l2_weight * l2_reg
 
         return mse_loss
