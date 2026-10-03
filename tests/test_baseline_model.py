@@ -13,6 +13,7 @@ from models.bayesian_opt import optimize_baseline_hyperparameters
 from models.dataset import (
     SpectrumPairDataset,
     create_dataloaders,
+    partition_measurement_sessions,
     split_session_datasets,
 )
 from models.inference import format_predicted_measurement_id, predict_spectra
@@ -155,6 +156,124 @@ class TestDatasetAndSplitting(unittest.TestCase):
         )
         self.assertGreater(len(train_ds), 0)
         self.assertGreater(len(val_ds), 0)
+
+    def test_partition_measurement_sessions_3way_default_and_custom(self) -> None:
+        """Test global session partitioning produces strictly disjoint train, val, and test splits."""
+        splits = partition_measurement_sessions(
+            self.meta_df,
+            config={"source_tool": "J4", "target_tool": "H1", "seed": 42},
+        )
+        self.assertIn("train", splits)
+        self.assertIn("val", splits)
+        self.assertIn("test", splits)
+
+        train_set = splits["train"]
+        val_set = splits["val"]
+        test_set = splits["test"]
+
+        # Ensure non-empty and mutually exclusive
+        self.assertGreater(len(train_set), 0)
+        self.assertGreater(len(val_set), 0)
+        self.assertGreater(len(test_set), 0)
+        self.assertEqual(len(train_set.intersection(val_set)), 0)
+        self.assertEqual(len(train_set.intersection(test_set)), 0)
+        self.assertEqual(len(val_set.intersection(test_set)), 0)
+
+        # Test custom ratios
+        custom_splits = partition_measurement_sessions(
+            self.meta_df,
+            config={
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "train_ratio": 0.6,
+                "val_ratio": 0.2,
+                "test_ratio": 0.2,
+                "seed": 123,
+            },
+        )
+        self.assertEqual(len(custom_splits["train"].intersection(custom_splits["test"])), 0)
+
+    def test_partition_measurement_sessions_negative_ratio_raises(self) -> None:
+        """Verify negative split ratios are rejected with ValueError."""
+        with self.assertRaises(ValueError):
+            partition_measurement_sessions(
+                self.meta_df,
+                config={"train_ratio": 1.2, "val_ratio": -0.1, "test_ratio": -0.1},
+            )
+
+    def test_partition_measurement_sessions_too_few_sessions_raises(self) -> None:
+        """Verify 3-way split on dataset with < 3 sessions raises ValueError."""
+        # Filter metadata to keep only 2 measurement sessions
+        two_sessions = sorted(self.meta_df[self.meta_df["measurement_id_target"].notna()]["measurement_id"].unique())[:2]
+        small_meta = self.meta_df[self.meta_df["measurement_id"].isin(two_sessions)]
+        with self.assertRaises(ValueError):
+            partition_measurement_sessions(
+                small_meta,
+                config={"train_ratio": 0.5, "val_ratio": 0.2, "test_ratio": 0.3},
+            )
+
+    def test_partition_measurement_sessions_two_way_when_test_ratio_zero(self) -> None:
+        """Verify 2-way split works cleanly when test_ratio=0.0."""
+        splits = partition_measurement_sessions(
+            self.meta_df,
+            config={"train_ratio": 0.7, "val_ratio": 0.3, "test_ratio": 0.0, "seed": 42},
+        )
+        self.assertGreater(len(splits["train"]), 0)
+        self.assertGreater(len(splits["val"]), 0)
+        self.assertEqual(len(splits["test"]), 0)
+        self.assertEqual(len(splits["train"].intersection(splits["val"])), 0)
+
+    def test_partition_measurement_sessions_target_leakage_detection(self) -> None:
+        """Verify that multi-mapped target sessions across splits trigger ValueError."""
+        # Intentionally force a conflicting target assignment across two source sessions
+        leak_df = self.meta_df.copy()
+        paired_sources = leak_df[leak_df["measurement_id_target"].notna()]["measurement_id"].unique()
+        # Set all paired source measurements to point to the exact same target measurement ID
+        leak_df.loc[leak_df["measurement_id"].isin(paired_sources), "measurement_id_target"] = "SHARED_TGT_ID"
+        with self.assertRaises(ValueError) as ctx:
+            partition_measurement_sessions(leak_df, config={"seed": 42})
+        self.assertIn("Target measurement sessions leak", str(ctx.exception))
+
+    def test_split_session_datasets_with_precomputed_partitions(self) -> None:
+        """Verify unified session partitions prevent cross-region session leakage."""
+        splits = partition_measurement_sessions(
+            self.meta_df,
+            config={"source_tool": "J4", "target_tool": "H1", "seed": 42},
+        )
+
+        train_al, val_al, test_al = split_session_datasets(
+            self.meta_df,
+            self.ary_intensity,
+            self.ary_energy,
+            config={
+                "region": "Al2p",
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "session_splits": splits,
+                "return_test": True,
+            },
+        )
+        train_ti, val_ti, test_ti = split_session_datasets(
+            self.meta_df,
+            self.ary_intensity,
+            self.ary_energy,
+            config={
+                "region": "Ti2p",
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "session_splits": splits,
+                "return_test": True,
+            },
+        )
+
+        al_train_sessions = {item["meta"]["measurement_id"] for item in train_al}
+        ti_train_sessions = {item["meta"]["measurement_id"] for item in train_ti}
+        # Identical session IDs across both regions - completely unified
+        self.assertEqual(al_train_sessions, ti_train_sessions)
+        self.assertEqual(al_train_sessions, splits["train"])
+
+        al_test_sessions = {item["meta"]["measurement_id"] for item in test_al}
+        self.assertEqual(al_test_sessions, splits["test"])
 
     def test_create_dataloaders(self) -> None:
         """Test dataloader batch construction."""
@@ -330,9 +449,14 @@ class TestTrainingAndInference(unittest.TestCase):
 
         self.assertIn("models", pipeline_res)
         self.assertIn("Al2p", pipeline_res["models"])
+        self.assertIn("session_splits", pipeline_res)
+        self.assertIn("test_evaluation", pipeline_res)
+        self.assertIn("Al2p", pipeline_res["test_evaluation"])
         self.assertIsNotNone(pipeline_res["predictions"])
         pred_int, pred_eng, pred_df = pipeline_res["predictions"]
         self.assertGreater(len(pred_df), 0)
+        self.assertIn("split", pred_df.columns)
+        self.assertTrue(set(pred_df["split"].unique()).issubset({"train", "val", "test", "unpaired"}))
 
 
 if __name__ == "__main__":

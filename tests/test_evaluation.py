@@ -6,11 +6,14 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from utility.evaluation import calculate_prediction_metrics
+from utility.evaluation import (
+    calculate_prediction_metrics,
+    format_side_by_side_metrics,
+)
 
 
 class TestEvaluationMetrics(unittest.TestCase):
-    """Test suite for calculate_prediction_metrics."""
+    """Test suite for calculate_prediction_metrics and format_side_by_side_metrics."""
 
     def setUp(self) -> None:
         # Create minimal paired dataset
@@ -41,6 +44,7 @@ class TestEvaluationMetrics(unittest.TestCase):
                 "region": "Al2p",
                 "die": 0,
                 "source_measurement_id": "M_SRC",
+                "split": "test",
             }
         ])
         self.intensity_orig = np.array([
@@ -60,6 +64,7 @@ class TestEvaluationMetrics(unittest.TestCase):
         )
 
         self.assertEqual(len(df_per_sample), 1)
+        self.assertEqual(df_per_sample["split"].iloc[0], "test")
         self.assertAlmostEqual(df_per_sample["normalized_mse"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["rmse"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["peak_err_pct"].iloc[0], 0.0)
@@ -96,6 +101,43 @@ class TestEvaluationMetrics(unittest.TestCase):
         self.assertTrue(df_per_sample.empty)
         self.assertTrue(df_summary.empty)
         self.assertIn("normalized_mse_mean", df_summary.columns)
+
+    def test_format_side_by_side_metrics_structure(self) -> None:
+        """Verify format_side_by_side_metrics produces multi-split comparison columns."""
+        df_samples = pd.DataFrame([
+            {"region": "Al2p", "split": "train", "normalized_mse": 0.001, "rmse": 10.0, "peak_err_pct": 2.0},
+            {"region": "Al2p", "split": "val", "normalized_mse": 0.002, "rmse": 12.0, "peak_err_pct": 2.5},
+            {"region": "Al2p", "split": "test", "normalized_mse": 0.003, "rmse": 14.0, "peak_err_pct": 3.0},
+            {"region": "O1s", "split": "train", "normalized_mse": 0.004, "rmse": 20.0, "peak_err_pct": 1.5},
+            {"region": "O1s", "split": "val", "normalized_mse": 0.005, "rmse": 22.0, "peak_err_pct": 1.8},
+            {"region": "O1s", "split": "test", "normalized_mse": 0.006, "rmse": 25.0, "peak_err_pct": 2.2},
+        ])
+
+        # Check default formatted string output
+        df_side_by_side = format_side_by_side_metrics(df_samples)
+        self.assertEqual(len(df_side_by_side), 2)  # Two regions: Al2p, O1s
+        self.assertIn("region", df_side_by_side.columns)
+
+        expected_formatted_cols = [
+            "norm_mse_train", "norm_mse_val", "norm_mse_test",
+            "rmse_train", "rmse_val", "rmse_test",
+            "peak_err%_train", "peak_err%_val", "peak_err%_test",
+        ]
+        for col in expected_formatted_cols:
+            self.assertIn(col, df_side_by_side.columns)
+
+        # Check numeric output with format_str=False
+        df_numeric = format_side_by_side_metrics(df_samples, config={"format_str": False})
+        al2p_row = df_numeric[df_numeric["region"] == "Al2p"].iloc[0]
+        self.assertAlmostEqual(al2p_row["norm_mse_train_mean"], 0.001)
+        self.assertAlmostEqual(al2p_row["norm_mse_val_mean"], 0.002)
+        self.assertAlmostEqual(al2p_row["norm_mse_test_mean"], 0.003)
+
+    def test_format_side_by_side_metrics_empty(self) -> None:
+        """Verify format_side_by_side_metrics gracefully returns empty DataFrame on empty input."""
+        df_empty = pd.DataFrame()
+        res = format_side_by_side_metrics(df_empty)
+        self.assertTrue(res.empty)
 
 
 if __name__ == "__main__":
