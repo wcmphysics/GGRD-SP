@@ -35,12 +35,13 @@ def main() -> None:
     # "baseline": Full regional spectrum ResNet
     # "sliding_window": Local sequence patch-to-patch ResNet with overlap reconstruction
     # "unet": Multi-scale 1D U-Net (supports both full spectrum and sliding window modes)
-    model_type = "unet"  # Options: "baseline", "sliding_window", or "unet"
+    model_type = "baseline"  # Options: "baseline", "sliding_window", or "unet"
 
     source_tool = "J4"
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
+    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
@@ -393,8 +394,9 @@ def main() -> None:
         },
     )
 
-    print("Showing plots (close plot windows to finish execution)...")
-    plt.show()
+    if show_plots:
+        print("Showing plots (close plot windows to finish execution)...")
+        plt.show()
 
 
 if __name__ == "__main__":
