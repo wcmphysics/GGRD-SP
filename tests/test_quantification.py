@@ -12,6 +12,7 @@ from utility.quantification import (
     _find_ti2p_endpoints,
     calculate_atomic_percentages,
     calculate_shirley_background,
+    determine_shirley_endpoints,
     get_default_quantification_config,
 )
 from utility.visualization import plot_shirley_background
@@ -239,6 +240,145 @@ class TestShirleyVisualization(unittest.TestCase):
         )
         self.assertIsNotNone(fig)
         self.assertIsNotNone(axes)
+
+
+class TestEndpointStrategiesAndAveraging(unittest.TestCase):
+    """Test suite for systematic Shirley endpoint determination strategies and mirror-padded averaging."""
+
+    def setUp(self) -> None:
+        # Create synthetic regional spectrum with 2 peaks and known minima
+        self.energy = np.linspace(70.0, 80.0, 101)  # 0.1 eV step
+        # Baseline = 20.0, main peak at 75 eV
+        self.intensity = 20.0 + 80.0 * np.exp(-0.5 * ((self.energy - 75.0) / 0.8) ** 2)
+
+    def test_strategy_edge_selects_boundaries(self) -> None:
+        """Strategy 'edge' must select index 0 and index N - 1."""
+        idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(
+            self.energy,
+            self.intensity,
+            config={"strategy": "edge", "average_width_ev": 0.0},
+        )
+        self.assertEqual(idx_1, 0)
+        self.assertEqual(idx_2, len(self.intensity) - 1)
+        self.assertAlmostEqual(i_1, self.intensity[0], places=5)
+        self.assertAlmostEqual(i_2, self.intensity[-1], places=5)
+
+    def test_strategy_minima_directional_search(self) -> None:
+        """Strategy 'minima' searches for directional minima away from peak maximum."""
+        # Add side shoulders so minima are not at the boundaries
+        int_with_shoulders = self.intensity.copy()
+        int_with_shoulders[:10] += 30.0  # High at low energy edge
+        int_with_shoulders[-10:] += 30.0  # High at high energy edge
+
+        idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(
+            self.energy,
+            int_with_shoulders,
+            config={"strategy": "minima", "average_width_ev": 0.0},
+        )
+        # Minima should be away from the edges
+        self.assertGreater(idx_1, 0)
+        self.assertLess(idx_2, len(self.intensity) - 1)
+        self.assertLess(idx_1, idx_2)
+
+    def test_default_strategy_is_minima_and_default_average_is_1ev(self) -> None:
+        """Default configuration must use strategy='minima' and average_width_ev=1.0."""
+        default_cfg = get_default_quantification_config()
+        self.assertEqual(default_cfg["default_endpoint_strategy"], "minima")
+        self.assertEqual(default_cfg["default_endpoint_average_ev"], 1.0)
+
+        # Calling determine_shirley_endpoints with empty config adopts these defaults
+        idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(self.energy, self.intensity, config={})
+        self.assertLess(idx_1, idx_2)
+        # Check boundary intensities are averaged
+        self.assertAlmostEqual(i_1, 20.0, places=2)
+        self.assertAlmostEqual(i_2, 20.0, places=2)
+
+    def test_mirror_reflection_padding_averages_boundary_noise(self) -> None:
+        """Window extending outside data must use reflection padding without edge repetition."""
+        # Create flat baseline with isolated noise spike at boundary index 0
+        noisy_int = np.full(101, 100.0)
+        noisy_int[0] = 50.0  # Noise dip at boundary
+        noisy_int[1] = 100.0
+        noisy_int[2] = 100.0
+
+        # With 0 eV averaging, i_1 is 50.0
+        _, _, raw_i1, _ = determine_shirley_endpoints(
+            self.energy, noisy_int, config={"strategy": "edge", "average_width_ev": 0.0}
+        )
+        self.assertEqual(raw_i1, 50.0)
+
+        # With 1.0 eV averaging, the centered window [-0.5 eV, +0.5 eV] reflects neighbors
+        # and smooths out the spike
+        _, _, avg_i1, _ = determine_shirley_endpoints(
+            self.energy, noisy_int, config={"strategy": "edge", "average_width_ev": 1.0}
+        )
+        self.assertGreater(avg_i1, 90.0)
+        self.assertLess(avg_i1, 100.0)
+
+    def test_per_region_endpoint_configuration_overrides(self) -> None:
+        """Per-region configuration must allow distinct strategies and averaging widths."""
+        cfg = {
+            "default_endpoint_strategy": "minima",
+            "default_endpoint_average_ev": 1.0,
+            "region_endpoint_config": {
+                "Al2p": {"strategy": "edge", "average_ev": 0.5},
+                "Ti2p": {"strategy": "minima", "average_ev": 2.0},
+            },
+        }
+
+        # For Al2p, should resolve to strategy='edge' and average=0.5
+        al_cfg = dict(cfg, region="Al2p")
+        idx_1_al, idx_2_al, _, _ = determine_shirley_endpoints(self.energy, self.intensity, al_cfg)
+        self.assertEqual(idx_1_al, 0)
+        self.assertEqual(idx_2_al, len(self.intensity) - 1)
+
+        # For unconfigured region (e.g. O1s), should fall back to default 'minima'
+        o_cfg = dict(cfg, region="O1s")
+        idx_1_o, idx_2_o, _, _ = determine_shirley_endpoints(self.energy, self.intensity, o_cfg)
+        self.assertLess(idx_1_o, idx_2_o)
+
+    def test_invalid_strategy_raises_value_error(self) -> None:
+        """Invalid strategy string must raise an informative ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            determine_shirley_endpoints(
+                self.energy, self.intensity, config={"strategy": "INVALID_STRATEGY"}
+            )
+        self.assertIn("Supported strategies are: 'minima', 'edge'", str(ctx.exception))
+
+    def test_shirley_background_with_edge_and_minima_strategies(self) -> None:
+        """Calculate Shirley background using both strategies produces valid outputs with B(E) <= I(E)."""
+        bg_edge, area_edge = calculate_shirley_background(
+            self.energy, self.intensity, config={"strategy": "edge", "average_width_ev": 0.5}
+        )
+        self.assertTrue(np.all(bg_edge <= self.intensity + 1e-6))
+        self.assertGreater(area_edge, 0.0)
+
+        bg_min, area_min = calculate_shirley_background(
+            self.energy, self.intensity, config={"strategy": "minima", "average_width_ev": 1.0}
+        )
+        self.assertTrue(np.all(bg_min <= self.intensity + 1e-6))
+        self.assertGreater(area_min, 0.0)
+
+    def test_legacy_ti2p_auto_endpoints_false_respected(self) -> None:
+        """Verify legacy ti2p_auto_endpoints=False overrides default minima strategy to edge."""
+        cfg = get_default_quantification_config()
+        cfg.update({"region": "Ti2p", "ti2p_auto_endpoints": False})
+        idx_1, idx_2, _, _ = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
+        self.assertEqual(idx_1, 0)
+        self.assertEqual(idx_2, len(self.intensity) - 1)
+
+    def test_per_region_average_width_none_disables_averaging(self) -> None:
+        """Explicit average_width_ev=None in region_endpoint_config must disable averaging."""
+        noisy_int = self.intensity.copy()
+        noisy_int[0] = 50.0  # Spike at boundary 0
+        cfg = {
+            "region": "Al2p",
+            "default_endpoint_average_ev": 1.0,
+            "region_endpoint_config": {"Al2p": {"strategy": "edge", "average_width_ev": None}},
+        }
+        _, _, i_1, _ = determine_shirley_endpoints(self.energy, noisy_int, config=cfg)
+        # Should return raw intensity without averaging
+        self.assertEqual(i_1, 50.0)
 
 
 if __name__ == "__main__":
