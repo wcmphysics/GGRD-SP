@@ -37,7 +37,7 @@ def main() -> None:
     model_type = "sliding_window"  # Options: "baseline", "sliding_window", or "unet"
 
     source_tool = "J4"
-    target_tool = "H1"
+    target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
 
