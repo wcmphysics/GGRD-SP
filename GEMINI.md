@@ -66,6 +66,8 @@ The codes will be composed of mainly 5 parts
 6. **Modular Functionality:** 
    - Implement new features in a strictly modular fashion inside dedicated modules within `models/` or `utility/`.
    - New functionality must be encapsulated as callable functions or classes ready for import by `main.py`, avoiding unsolicited edits or side effects to `main.py` or other existing modules.
+   - Try to minimize coupling between modules so editing one is less likely to break the others.
+   - Encapsulate internal functions that will not or should not be used by other modules.
 7. **Clean Function Interfaces (Parameter Packaging):**
    - If a function requires 5 or more parameters (>= 5), bundle them into a readable configuration dictionary (e.g., `config: dict[str, Any]`).
    - Dictionaries are strongly preferred by default for readability and simplicity. A dedicated dataclass should only be used when there is a clear, tangible advantage over a dictionary (such as complex nested hierarchies or strict validation requirements).
@@ -76,3 +78,7 @@ The codes will be composed of mainly 5 parts
    - When writing new code or significant components, launch a separate reviewer subagent to critique the code, probe for edge cases, inspect error handling, and run verification tests.
    - Address the reviewer agent's feedback and refine the implementation.
    - Repeat this write-test-rewrite loop up to 3 iterations until the code is robust and passes all checks.
+10. ** Error Handling and Warning*:*
+   - When error occurs provide informative details about the error.
+   - Avoid silent error.
+   - Always discuss with the user first about how to handle unexpected cases or error. Do not handle unexpected case silently. Do not guess what the fix should be without asking or at least notifying the user. 
