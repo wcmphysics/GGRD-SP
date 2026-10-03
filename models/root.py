@@ -1,66 +1,78 @@
-"""Root function orchestrating baseline neural network training, hyperparameter search, and prediction."""
+"""Root function orchestrating neural network training, hyperparameter search, and prediction."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
-import torch.nn as nn
+from torch.utils.data import Dataset
 
-from models.bayesian_opt import optimize_baseline_hyperparameters
 from models.dataset import split_session_datasets
-from models.inference import predict_spectra
-from models.trainer import train_baseline_region
 
 
-def run_baseline_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
+def run_model_pipeline(
+    data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any] | pd.DataFrame,
+    train_region_fn: Callable[[Any, Any, dict[str, Any]], dict[str, Any]],
+    predict_fn: Callable[..., Any],
     config: dict[str, Any] | None = None,
+    hooks: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """Execute the end-to-end baseline modeling pipeline.
+    """Execute a generalized end-to-end spectral transformation pipeline.
 
-    Orchestrates:
-    1. Session-level dataset splitting per spectral region.
-    2. Optional Bayesian hyperparameter optimization via Ax.
-    3. Model instantiation and training using normalized MSE loss and L2 penalty.
-    4. Model evaluation on validation sessions (pure reconstruction error).
-    5. Sequence-to-sequence prediction producing standardized output containers:
-       (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+    Unifies session-level partitioning, optional Bayesian hyperparameter optimization,
+    regional neural network training, and standardized prediction output.
 
     Parameters
     ----------
-    meta_df : pd.DataFrame
-        Metadata DataFrame containing source-to-target pairing information.
-    ary_intensity : np.ndarray
-        2D array of measured intensities.
-    ary_energy : np.ndarray
-        2D array of binding energies.
+    data : tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any] | pd.DataFrame
+        Dataset containers. Accepts (ary_intensity, ary_energy, meta_df) tuple,
+        a dictionary with 'meta_df', 'ary_intensity', 'ary_energy', or meta_df DataFrame.
+    train_region_fn : Callable
+        Function training a single region model with signature (train_ds, val_ds, config=...).
+    predict_fn : Callable
+        Function generating predictions with signature (models=..., data=..., config=...).
     config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'regions' (list[str] | None): Regions to train (default auto-detected from paired data).
-        - 'source_tool' (str): Source tool identifier (default 'J4').
-        - 'target_tool' (str): Target tool identifier (default 'H1').
-        - 'val_ratio' (float): Fraction of sessions reserved for validation (default 0.2).
-        - 'seed' (int | None): Random seed for reproducibility (default 42).
-        - 'use_bayesian_opt' (bool): Whether to perform Ax Bayesian optimization (default False).
-        - 'bayesian_opt_config' (dict[str, Any] | None): Configuration for Ax optimization.
-        - 'train_config' (dict[str, Any] | None): Training hyperparameters.
-        - 'predict_source' (bool): Whether to run inference on source data (default True).
-        - 'verbose' (bool): Whether to print training progress (default False).
+        Configuration dictionary.
+    hooks : dict[str, Any] | None, optional
+        Dictionary packaging lifecycle callback hooks:
+        - 'bo_fn': Function running Bayesian hyperparameter optimization.
+        - 'model_record_fn': Transforms training result into object stored in models dict.
+        - 'dataset_prep_fn': Hook to transform train/val datasets before training.
+    **kwargs : Any
+        Backward-compatibility keyword arguments.
 
     Returns
     -------
     dict[str, Any]
-        Dictionary containing:
-        - 'models': Dictionary mapping region -> trained Residual1DCNN.
-        - 'evaluation': Dictionary of validation losses per region.
-        - 'histories': Training history per region.
-        - 'bayesian_opt_results': Results from Ax (if use_bayesian_opt=True).
-        - 'predictions': Tuple of (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+        Dictionary with 'models', 'evaluation', 'histories', 'bayesian_opt_results', and 'predictions'.
     """
+    if isinstance(data, pd.DataFrame):
+        meta_df = data
+        ary_intensity = kwargs.get("ary_intensity")
+        ary_energy = kwargs.get("ary_energy")
+    elif isinstance(data, (tuple, list)) and len(data) == 3:
+        if isinstance(data[0], pd.DataFrame):
+            meta_df, ary_intensity, ary_energy = data[0], data[1], data[2]
+        else:
+            ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
+    elif isinstance(data, dict):
+        meta_df = data.get("meta_df", data.get("metadata"))
+        ary_intensity = data.get("ary_intensity", data.get("intensity"))
+        ary_energy = data.get("ary_energy", data.get("energy"))
+    else:
+        meta_df = kwargs.get("meta_df")
+        ary_intensity = kwargs.get("ary_intensity")
+        ary_energy = kwargs.get("ary_energy")
+
+    if meta_df is None or ary_intensity is None or ary_energy is None:
+        raise ValueError("run_model_pipeline requires meta_df, ary_intensity, and ary_energy to be provided.")
+
+    h = dict(hooks or {})
+    bo_fn = h.get("bo_fn", kwargs.get("bo_fn"))
+    model_record_fn = h.get("model_record_fn", kwargs.get("model_record_fn"))
+    dataset_prep_fn = h.get("dataset_prep_fn", kwargs.get("dataset_prep_fn"))
     cfg = config or {}
     source_tool: str = cfg.get("source_tool", "J4")
     target_tool: str = cfg.get("target_tool", "H1")
@@ -88,7 +100,7 @@ def run_baseline_pipeline(
             f"No valid spectral regions found to train for source_tool='{source_tool}', target_tool='{target_tool}'"
         )
 
-    models: dict[str, nn.Module] = {}
+    models: dict[str, Any] = {}
     eval_results: dict[str, float] = {}
     histories: dict[str, dict[str, list[float]]] = {}
     bo_results: dict[str, dict[str, Any]] = {}
@@ -110,20 +122,30 @@ def run_baseline_pipeline(
 
         region_train_cfg = dict(train_cfg)
 
-        if use_bo:
+        if dataset_prep_fn is not None:
+            train_ds, val_ds, region_train_cfg = dataset_prep_fn(
+                train_ds, val_ds, region_train_cfg
+            )
+
+        if use_bo and bo_fn is not None:
             if verbose:
                 print(f"Running Ax Bayesian Optimization for {region}...")
-            bo_res = optimize_baseline_hyperparameters(train_ds, val_ds, config=bo_cfg)
+            bo_res = bo_fn(train_ds, val_ds, config=bo_cfg)
             bo_results[region] = bo_res
-            best_params = bo_res["best_parameters"]
-            region_train_cfg.update(best_params)
+            best_params = bo_res.get("best_parameters", {})
+            if best_params:
+                region_train_cfg.update(best_params)
             if verbose:
                 print(f"Ax optimal params for {region}: {best_params}")
 
-        # Train model
-        train_result = train_baseline_region(train_ds, val_ds, config=region_train_cfg)
-        models[region] = train_result["model"]
-        eval_results[region] = train_result["best_val_loss"]
+        # Train model for this region
+        train_result = train_region_fn(train_ds, val_ds, config=region_train_cfg)
+        if model_record_fn is not None:
+            models[region] = model_record_fn(train_result, region_train_cfg)
+        else:
+            models[region] = train_result["model"]
+
+        eval_results[region] = float(train_result["best_val_loss"])
         histories[region] = train_result["history"]
 
         if verbose:
@@ -136,7 +158,7 @@ def run_baseline_pipeline(
             "source_tool": source_tool,
             "target_tool": target_tool,
         }
-        predictions = predict_spectra(
+        predictions = predict_fn(
             models=models,
             data=(ary_intensity, ary_energy, meta_df),
             config=pred_cfg,
@@ -149,3 +171,32 @@ def run_baseline_pipeline(
         "bayesian_opt_results": bo_results,
         "predictions": predictions,
     }
+
+
+def run_baseline_pipeline(
+    meta_df: pd.DataFrame,
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute the end-to-end baseline modeling pipeline.
+
+    Orchestrates:
+    1. Session-level dataset splitting per spectral region.
+    2. Optional Bayesian hyperparameter optimization via Ax.
+    3. Model instantiation and training using normalized MSE loss and L2 penalty.
+    4. Model evaluation on validation sessions (pure reconstruction error).
+    5. Sequence-to-sequence prediction producing standardized output containers:
+       (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+    """
+    from models.bayesian_opt import optimize_baseline_hyperparameters
+    from models.inference import predict_spectra
+    from models.trainer import train_baseline_region
+
+    return run_model_pipeline(
+        data=(ary_intensity, ary_energy, meta_df),
+        train_region_fn=train_baseline_region,
+        predict_fn=predict_spectra,
+        config=config,
+        hooks={"bo_fn": optimize_baseline_hyperparameters},
+    )
