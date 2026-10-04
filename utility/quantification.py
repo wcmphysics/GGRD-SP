@@ -521,77 +521,63 @@ def calculate_atomic_percentages(
             f"No spectra found matching criteria: measurement_id={target_meas}, material={material}"
         )
 
-    # Group by measurement session
-    meas_groups = filtered_df.groupby("measurement_id", sort=False)
+    # Single-pass calculation of scaled peak areas per row
+    rows_data: list[dict[str, Any]] = []
+    for _, row in filtered_df.iterrows():
+        region = str(row["region"])
+        spec_idx = int(row["spectrum_index"])
+        shirley_cfg = dict(cfg, region=region)
+        _, net_area = calculate_shirley_background(
+            ary_energy[spec_idx], ary_intensity[spec_idx], shirley_cfg
+        )
 
-    per_die_records: list[dict[str, Any]] = []
+        if region not in rsf_dict:
+            warnings.warn(
+                f"Region '{region}' not found in rsf_dict. Defaulting RSF to 1.0. "
+                "Atomic percentages may be uncalibrated without specific sensitivity factors."
+            )
+        rsf = float(rsf_dict.get(region, 1.0))
+        if rsf <= 0.0:
+            raise ValueError(f"RSF for region '{region}' must be positive, got {rsf}")
 
-    for meas_id, m_df in meas_groups:
-        mat_val = m_df["material"].iloc[0] if "material" in m_df.columns else "NMG"
-        die_groups = m_df.groupby("die", sort=True)
+        rows_data.append({
+            "measurement_id": str(row["measurement_id"]),
+            "material": str(row["material"]) if "material" in row else "NMG",
+            "die": int(row["die"]),
+            "region": region,
+            "scaled_area": max(0.0, net_area) / rsf,
+        })
 
-        for die_idx, d_df in die_groups:
-            # Calculate scaled area for each region
-            scaled_areas: dict[str, float] = {}
+    df_calc = pd.DataFrame(rows_data)
+    if not df_calc.empty:
+        df_calc = df_calc.drop_duplicates(
+            subset=["measurement_id", "material", "die", "region"], keep="last"
+        )
 
-            for _, row in d_df.iterrows():
-                region = str(row["region"])
-                spec_idx = int(row["spectrum_index"])
-                e_arr = ary_energy[spec_idx]
-                i_arr = ary_intensity[spec_idx]
+    # Normalize scaled areas row-wise to 100% per measurement session and die
+    totals = df_calc.groupby(["measurement_id", "material", "die"])["scaled_area"].transform("sum")
+    df_calc["at_pct"] = np.where(totals > 0.0, (df_calc["scaled_area"] / totals) * 100.0, 0.0).round(4)
+    df_calc["col_name"] = df_calc["region"] + "_at%"
 
-                shirley_cfg = dict(cfg)
-                shirley_cfg["region"] = region
-                _, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
+    # Pivot regions to columns in wide format preserving regional discovery order
+    df_per_die = (
+        df_calc.pivot(index=["measurement_id", "material", "die"], columns="col_name", values="at_pct")
+        .reset_index()
+    )
+    df_per_die.columns.name = None
+    region_cols = [f"{r}_at%" for r in filtered_df["region"].unique() if f"{r}_at%" in df_per_die.columns]
+    df_per_die = df_per_die[["measurement_id", "material", "die"] + region_cols]
 
-                if region not in rsf_dict:
-                    warnings.warn(
-                        f"Region '{region}' not found in rsf_dict. Defaulting RSF to 1.0. "
-                        "Atomic percentages may be uncalibrated without specific sensitivity factors."
-                    )
-                rsf = float(rsf_dict.get(region, 1.0))
-                if rsf <= 0.0:
-                    raise ValueError(f"RSF for region '{region}' must be positive, got {rsf}")
-
-                scaled_areas[region] = max(0.0, net_area) / rsf
-
-            total_scaled_area = sum(scaled_areas.values())
-
-            # Assemble row in wide format
-            record: dict[str, Any] = {
-                "measurement_id": meas_id,
-                "material": mat_val,
-                "die": int(die_idx),
-            }
-
-            for reg, scaled_a in scaled_areas.items():
-                if total_scaled_area > 0.0:
-                    at_pct = (scaled_a / total_scaled_area) * 100.0
-                else:
-                    at_pct = 0.0
-                record[f"{reg}_at%"] = round(at_pct, 4)
-
-            per_die_records.append(record)
-
-    df_per_die = pd.DataFrame(per_die_records)
-
-    # Calculate summary statistics (mean and std across dies per measurement session)
-    at_cols = [c for c in df_per_die.columns if c.endswith("_at%")]
-
+    # Summary statistics (mean and std across dies) per measurement session
     summary_records: list[dict[str, Any]] = []
     for meas_id, m_df in df_per_die.groupby("measurement_id", sort=False):
         mat_val = m_df["material"].iloc[0]
-
-        mean_row = {"measurement_id": meas_id, "material": mat_val, "metric": "mean"}
-        std_row = {"measurement_id": meas_id, "material": mat_val, "metric": "std"}
-
-        for col in at_cols:
+        mean_row: dict[str, Any] = {"measurement_id": meas_id, "material": mat_val, "metric": "mean"}
+        std_row: dict[str, Any] = {"measurement_id": meas_id, "material": mat_val, "metric": "std"}
+        for col in region_cols:
             mean_row[col] = round(float(m_df[col].mean()), 4)
             std_row[col] = round(float(m_df[col].std(ddof=1)), 4) if len(m_df) > 1 else 0.0
-
-        summary_records.append(mean_row)
-        summary_records.append(std_row)
+        summary_records.extend([mean_row, std_row])
 
     df_summary = pd.DataFrame(summary_records)
-
     return df_per_die, df_summary
