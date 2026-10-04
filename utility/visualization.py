@@ -14,10 +14,44 @@ import pandas as pd
 
 from utility.evaluation import calculate_prediction_metrics
 from utility.patching import calculate_window_points, extract_sliding_windows
-from utility.quantification import (
-    DEFAULT_SCOFIELD_RSF,
-    calculate_shirley_background,
-)
+from utility.quantification import calculate_shirley_background
+
+
+def _prepare_canvas(
+    ax: plt.Axes | None = None,
+    figsize: tuple[float, float] = (8, 5),
+) -> tuple[plt.Figure, plt.Axes]:
+    """Return figure and axes, creating a new figure and axes if ax is None."""
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+    return fig, ax
+
+
+def _finalize_plot(
+    ax: plt.Axes,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    invert_x: bool = True,
+    grid: bool = True,
+    grid_alpha: float = 0.6,
+    show: bool = False,
+) -> None:
+    """Apply standard plot styling, labels, inverted x-axis, and display."""
+    if title:
+        ax.set_title(title)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    if invert_x and not ax.xaxis_inverted():
+        ax.invert_xaxis()
+    if grid:
+        ax.grid(True, linestyle="--", alpha=grid_alpha)
+    if show:
+        plt.show()
 
 
 def plot_regional_spectra(
@@ -90,45 +124,35 @@ def plot_regional_spectra(
     if len(filtered_df) > max_spectra:
         filtered_df = filtered_df.iloc[:max_spectra]
 
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 5))
-    else:
-        fig = ax.get_figure()
+    fig, ax = _prepare_canvas(ax, figsize=(8, 5))
 
     for _, row in filtered_df.iterrows():
         idx = int(row["spectrum_index"])
-        energy = ary_energy[idx]
-        intensity = ary_intensity[idx]
-
         label = (
             f"{row.get('tool', 'Tool')} | {row.get('region', 'Region')} | "
             f"Die {row.get('die', '-')} | {row.get('measurement_id', '')}"
         )
-        ax.plot(energy, intensity, label=label)
+        ax.plot(ary_energy[idx], ary_intensity[idx], label=label)
 
-    ax.set_xlabel("Binding Energy (eV)")
-    ax.set_ylabel("Intensity (counts / a.u.)")
-
-    if invert_x and not ax.xaxis_inverted():
-        ax.invert_xaxis()
-
-    if title:
-        ax.set_title(title)
-    else:
+    if not title:
         regions = filtered_df["region"].unique()
         tools = filtered_df["tool"].unique()
-        ax.set_title(
+        title = (
             f"XPS Spectra - Region: {', '.join(map(str, regions))} | "
             f"Tool: {', '.join(map(str, tools))}"
         )
 
-    ax.grid(True, linestyle="--", alpha=0.6)
     if len(filtered_df) <= 15:
         ax.legend(loc="best", fontsize="small")
 
-    if show:
-        plt.show()
-
+    _finalize_plot(
+        ax,
+        title=title,
+        xlabel="Binding Energy (eV)",
+        ylabel="Intensity (counts / a.u.)",
+        invert_x=invert_x,
+        show=show,
+    )
     return fig, ax
 
 
@@ -178,11 +202,7 @@ def plot_tool_comparison(
     if len(tools) < 2:
         raise ValueError(f"At least 2 tools are required for comparison, got {tools}")
 
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 5))
-    else:
-        fig = ax.get_figure()
-
+    fig, ax = _prepare_canvas(ax, figsize=(8, 5))
     palette = ["tab:blue", "tab:red", "tab:green", "tab:purple"]
     color_map = {tool: palette[i % len(palette)] for i, tool in enumerate(tools)}
 
@@ -198,12 +218,9 @@ def plot_tool_comparison(
 
         first_row = subset.iloc[0]
         idx = int(first_row["spectrum_index"])
-        energy = ary_energy[idx]
-        intensity = ary_intensity[idx]
-
         ax.plot(
-            energy,
-            intensity,
+            ary_energy[idx],
+            ary_intensity[idx],
             label=f"{tool} ({first_row['measurement_id']})",
             color=color_map.get(tool),
             linewidth=1.8,
@@ -215,19 +232,15 @@ def plot_tool_comparison(
             f"No matching spectra found for tools={tools}, region='{region}', die={die}"
         )
 
-    ax.set_xlabel("Binding Energy (eV)")
-    ax.set_ylabel("Intensity (counts / a.u.)")
-    ax.set_title(f"Tool Comparison ({' vs '.join(tools)}) - Region: {region} (Die {die})")
-
-    if invert_x and not ax.xaxis_inverted():
-        ax.invert_xaxis()
-
-    ax.grid(True, linestyle="--", alpha=0.6)
     ax.legend(loc="best")
-
-    if show:
-        plt.show()
-
+    _finalize_plot(
+        ax,
+        title=f"Tool Comparison ({' vs '.join(tools)}) - Region: {region} (Die {die})",
+        xlabel="Binding Energy (eV)",
+        ylabel="Intensity (counts / a.u.)",
+        invert_x=invert_x,
+        show=show,
+    )
     return fig, ax
 
 
@@ -298,10 +311,7 @@ def plot_pairing_timeline(
             f"No measurements found for tools '{source_tool}' or '{target_tool}'."
         )
 
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 4.5))
-    else:
-        fig = ax.get_figure()
+    fig, ax = _prepare_canvas(ax, figsize=(10, 4.5))
 
     y_src = 1.0
     y_tgt = 0.0
@@ -416,15 +426,11 @@ def plot_pairing_timeline(
     ax.set_ylim(-0.3, 1.3)
     ax.set_xlabel("Measurement Time")
 
-    if title:
-        ax.set_title(title)
-    else:
-        n_pairs = len(paired_src_ids)
-        ax.set_title(
-            f"1-to-1 Measurement Pairing Timeline ({source_tool} -> {target_tool}) "
-            f"| Paired: {n_pairs}/{len(src_df)}"
-        )
-
+    timeline_title = title or (
+        f"1-to-1 Measurement Pairing Timeline ({source_tool} -> {target_tool}) "
+        f"| Paired: {len(paired_src_ids)}/{len(src_df)}"
+    )
+    ax.set_title(timeline_title)
     ax.grid(True, linestyle="--", alpha=0.5, axis="x")
     ax.legend(loc="upper right", fontsize="small", framealpha=0.9)
 
@@ -503,33 +509,26 @@ def plot_shirley_background(
         row = subset.iloc[0]
         region_name = str(row["region"])
         spec_idx = int(row["spectrum_index"])
-        e_arr = ary_energy[spec_idx]
-        i_arr = ary_intensity[spec_idx]
+        e_arr, i_arr = ary_energy[spec_idx], ary_intensity[spec_idx]
 
-        shirley_cfg = dict(cfg)
-        shirley_cfg["region"] = region_name
+        shirley_cfg = dict(cfg, region=region_name)
         b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
-        if custom_ax is None:
-            fig, ax = plt.subplots(figsize=(7, 4.5))
-        else:
-            fig = custom_ax.get_figure()
-            ax = custom_ax
-
+        fig, ax = _prepare_canvas(custom_ax, figsize=(7, 4.5))
         ax.plot(e_arr, i_arr, label="Raw Spectrum", color="navy", linewidth=1.8)
         ax.plot(e_arr, b_arr, label="Shirley Background", color="crimson", linestyle="--", linewidth=1.6)
         ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Net Area: {net_area:.1f}")
-
-        ax.set_xlabel("Binding Energy (eV)")
-        ax.set_ylabel("Intensity (counts / a.u.)")
-        ax.set_title(f"{meas_id} | Region: {region_name} (Die {die})")
-        if invert_x and not ax.xaxis_inverted():
-            ax.invert_xaxis()
-
-        ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
-        if show:
-            plt.show()
+
+        _finalize_plot(
+            ax,
+            title=f"{meas_id} | Region: {region_name} (Die {die})",
+            xlabel="Binding Energy (eV)",
+            ylabel="Intensity (counts / a.u.)",
+            invert_x=invert_x,
+            grid_alpha=0.5,
+            show=show,
+        )
         return fig, ax
 
     # Multi-region subplot grid
@@ -545,24 +544,25 @@ def plot_shirley_background(
         ax = axes_flat[idx]
         reg_row = subset[subset["region"] == reg].iloc[0]
         spec_idx = int(reg_row["spectrum_index"])
-        e_arr = ary_energy[spec_idx]
-        i_arr = ary_intensity[spec_idx]
+        e_arr, i_arr = ary_energy[spec_idx], ary_intensity[spec_idx]
 
-        shirley_cfg = dict(cfg)
-        shirley_cfg["region"] = reg
+        shirley_cfg = dict(cfg, region=reg)
         b_arr, net_area = calculate_shirley_background(e_arr, i_arr, shirley_cfg)
 
         ax.plot(e_arr, i_arr, label="Raw", color="navy", linewidth=1.5)
         ax.plot(e_arr, b_arr, label="Shirley", color="crimson", linestyle="--", linewidth=1.4)
         ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Area: {net_area:.1f}")
-
-        ax.set_title(f"Region: {reg}")
-        ax.set_xlabel("Binding Energy (eV)")
-        ax.set_ylabel("Intensity")
-        if invert_x and not ax.xaxis_inverted():
-            ax.invert_xaxis()
-        ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best", fontsize="x-small")
+
+        _finalize_plot(
+            ax,
+            title=f"Region: {reg}",
+            xlabel="Binding Energy (eV)",
+            ylabel="Intensity",
+            invert_x=invert_x,
+            grid_alpha=0.5,
+            show=False,
+        )
 
     # Hide unused subplot panels
     for empty_idx in range(n_regs, len(axes_flat)):
@@ -627,11 +627,16 @@ def plot_training_history(
         if log_scale:
             ax.set_yscale("log")
 
-        ax.set_title(f"Region: {reg}", fontsize=11)
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss (Normalized MSE)" if not log_scale else "Loss (log scale)")
-        ax.grid(True, linestyle="--", alpha=0.6)
         ax.legend(loc="upper right", fontsize="small")
+        _finalize_plot(
+            ax,
+            title=f"Region: {reg}",
+            xlabel="Epoch",
+            ylabel="Loss (Normalized MSE)" if not log_scale else "Loss (log scale)",
+            invert_x=False,
+            grid_alpha=0.6,
+            show=False,
+        )
 
     # Hide unused panels
     for empty_idx in range(n_regs, len(axes_flat)):
@@ -752,29 +757,34 @@ def plot_prediction_comparison(
     ax_main.plot(energy, i_src, label=f"Source Measured ({src_tool})", color="slategray", linestyle="--", linewidth=1.5)
     ax_main.plot(energy, i_tgt, label=f"True Target ({tgt_tool})", color="forestgreen", linewidth=1.8)
     ax_main.plot(energy, i_pred, label=f"Predicted Target ({src_tool} -> {tgt_tool})", color="crimson", linewidth=1.8)
-
-    ax_main.set_ylabel("Intensity (counts)")
-    ax_main.set_title(
-        f"Spectral Transfer Comparison | Region: {actual_region} | Die {die}\n"
-        f"Source: {meas_id} ({src_tool}) -> Target: {tgt_meas_id} ({tgt_tool})",
-        fontsize=11,
-    )
     ax_main.legend(loc="best", fontsize="small")
-    ax_main.grid(True, linestyle="--", alpha=0.6)
+    _finalize_plot(
+        ax_main,
+        title=(
+            f"Spectral Transfer Comparison | Region: {actual_region} | Die {die}\n"
+            f"Source: {meas_id} ({src_tool}) -> Target: {tgt_meas_id} ({tgt_tool})"
+        ),
+        ylabel="Intensity (counts)",
+        invert_x=invert_x,
+        grid_alpha=0.6,
+        show=False,
+    )
 
     # Residual plot
     if ax_res is not None:
         ax_res.plot(energy, residual, color="purple", linewidth=1.4, label="Target - Predicted")
         ax_res.axhline(0, color="black", linestyle=":", linewidth=1.0, alpha=0.7)
-        ax_res.set_xlabel("Binding Energy (eV)")
-        ax_res.set_ylabel("Residual")
-        ax_res.grid(True, linestyle="--", alpha=0.6)
         ax_res.legend(loc="best", fontsize="x-small")
+        _finalize_plot(
+            ax_res,
+            xlabel="Binding Energy (eV)",
+            ylabel="Residual",
+            invert_x=invert_x,
+            grid_alpha=0.6,
+            show=False,
+        )
     else:
         ax_main.set_xlabel("Binding Energy (eV)")
-
-    if invert_x and not ax_main.xaxis_inverted():
-        ax_main.invert_xaxis()
 
     plt.tight_layout()
     if show:
