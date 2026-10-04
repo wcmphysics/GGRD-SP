@@ -12,7 +12,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from models.baseline_cnn import NormalizedMSELoss, Residual1DCNN
+from models.cost import NormalizedMSELoss
+from models.resnet import ResNet1D, Residual1DCNN
 from models.bayesian_opt import run_ax_search
 from models.dataset import SpectrumPairDataset
 from models.inference import assemble_prediction_metadata

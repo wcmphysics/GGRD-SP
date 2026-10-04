@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from models.baseline_cnn import NormalizedMSELoss
+from models.cost import NormalizedMSELoss
 from models.dataset import (
     create_dataloaders,
     partition_measurement_sessions,
