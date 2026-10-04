@@ -34,14 +34,14 @@ def main() -> None:
     # "residual_unet": 1D Residual U-Net (y = x + UNet(x))
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
     # "deeplabv3": 1D DeepLabV3 (Multi-Grid ResNet backbone + ASPP with global pooling)
-    model_type = "resnet"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
-    use_sliding_window = True  # Toggle available to all models (True for patch data augmentation)
+    model_type = "deeplabv3"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
+    use_sliding_window = False  # Toggle available to all models (True for patch data augmentation)
 
     source_tool = "J4"
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
-    show_plots = False  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
+    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
@@ -80,8 +80,8 @@ def main() -> None:
         "val_ratio": 0.2,
         "test_ratio": 0.3,
         "seed": None,
-        "window_size_ev": 6.0,  # Global default window length in eV
-        "sliding_stride_ev": 2.0,  # Global default sliding stride step in eV
+        "window_size_ev": 3.0,  # Global default window length in eV
+        "sliding_stride_ev": 1.0,  # Global default sliding stride step in eV
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
             "num_trials": 5,
@@ -96,15 +96,15 @@ def main() -> None:
             "verbose": True,
         },
         "train_config": {
-            "epochs": 100,
-            "batch_size": 64,
+            "epochs": 500,
+            "batch_size": 16,
             "learning_rate": 1e-4,
             "hidden_channels": 32,
             "base_channels": 16,
             "depth": 3,
             "kernel_size": 5,
             "l2_weight": 1e-4,
-            "early_stopping_patience": 10,
+            "early_stopping_patience": 100,
             "verbose": True,
         },
         # Per-region configuration overrides (e.g. specialized window size or learning rate)

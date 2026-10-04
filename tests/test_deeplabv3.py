@@ -44,6 +44,27 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         y_3d = model(x_3d)
         self.assertEqual(y_3d.shape, (4, 1, 100))
 
+    def test_single_sample_batch_training_mode(self) -> None:
+        """Verify model handles batch_size=1 during training mode without BatchNorm error."""
+        model = DeepLabV3(
+            n_points=100,
+            config={
+                "backbone_channels": 16,
+                "aspp_channels": 16,
+                "use_batch_norm": True,
+            },
+        )
+        model.train()
+        x_single = torch.randn(1, 100)
+        y_single = model(x_single)
+        self.assertEqual(y_single.shape, (1, 100))
+        self.assertFalse(torch.isnan(y_single).any())
+
+        # Verify backward pass on batch_size=1 works cleanly
+        loss = y_single.sum()
+        loss.backward()
+        self.assertIsNotNone(model.head.weight.grad)
+
     def test_various_sequence_lengths(self) -> None:
         """Verify model handles various sequence lengths including small patches and odd lengths."""
         lengths = [15, 25, 50, 77, 101]

@@ -34,6 +34,30 @@ class _SafeReflectionPad1d(nn.Module):
         return F.pad(x, (self.pad, self.pad), mode="constant", value=0.0)
 
 
+class _SafeBatchNorm1d(nn.BatchNorm1d):
+    """BatchNorm1d that safely handles single-element tensors.
+
+    When batch_size * length <= 1 during training (such as following global average
+    pooling when batch_size == 1 or on the trailing batch of a dataset), PyTorch's
+    standard BatchNorm raises ValueError because sample variance is undefined.
+    This class falls back to running statistics (eval mode) without throwing an exception.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training and (x.size(0) * x.size(-1) <= 1):
+            return F.batch_norm(
+                x,
+                self.running_mean,
+                self.running_var,
+                self.weight,
+                self.bias,
+                training=False,
+                momentum=self.momentum,
+                eps=self.eps,
+            )
+        return super().forward(x)
+
+
 def _build_conv1d_layer(
     in_channels: int,
     out_channels: int,
@@ -103,7 +127,7 @@ class ResidualBlock1D(nn.Module):
             padding_mode=padding_mode,
             n_points=n_points,
         )
-        self.bn1 = nn.BatchNorm1d(channels) if use_batch_norm else nn.Identity()
+        self.bn1 = _SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
         self.relu1 = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
@@ -115,7 +139,7 @@ class ResidualBlock1D(nn.Module):
             padding_mode=padding_mode,
             n_points=n_points,
         )
-        self.bn2 = nn.BatchNorm1d(channels) if use_batch_norm else nn.Identity()
+        self.bn2 = _SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
         self.relu2 = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -161,7 +185,7 @@ class ResNet1DBackbone(nn.Module):
                 padding_mode=padding_mode,
                 n_points=n_points,
             ),
-            nn.BatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
+            _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
         )
 
@@ -219,7 +243,7 @@ class ASPP1D(nn.Module):
         # Branch 1: 1x1 convolution
         self.branch_1x1 = nn.Sequential(
             nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
+            _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
         )
 
@@ -235,7 +259,7 @@ class ASPP1D(nn.Module):
                     padding_mode=padding_mode,
                     n_points=n_points,
                 ),
-                nn.BatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
+                _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
                 nn.ReLU(inplace=True),
             )
             self.atrous_branches.append(branch)
@@ -244,7 +268,7 @@ class ASPP1D(nn.Module):
         self.global_pooling = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
             nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
+            _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
         )
 
@@ -252,7 +276,7 @@ class ASPP1D(nn.Module):
         total_in_channels = out_channels * (2 + len(aspp_rates))
         self.project = nn.Sequential(
             nn.Conv1d(total_in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
+            _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity(),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout) if dropout > 0.0 else nn.Identity(),
         )
