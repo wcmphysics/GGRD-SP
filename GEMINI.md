@@ -12,36 +12,52 @@ The codes will be composed of mainly 5 parts
    - store regional spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
    - store regional bidning energy as 2d numpy array `ary_energy` where the nth row is the nth binding energy array
    - Note that one array in the `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` will be (`N_measurement`*`N_die`*`N_region`, `N_points`).
-   - meta data is a pandas dataframe containing all meta data of the spectra recorded
+   - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded 
    - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array
 2. Pairing source and target spectra
    - allow users to specify source tool and target tool
-   - for every measurement in source tool, we find/map a measurement from the target tool
+   - for every measurement in the source tool, we find/map a measurement from the target tool
    - this source to target mapping must be 1-to-1 (no multiple source measurement is linked to the same target measurement)
+   - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accodringly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement) 
    - the time difference between source and target measurement should be lower than a user-specified threshold (default to 12 hours) 
    - store this pairing information in the meta data dataframe (add columns like tool_target, measurement_id_target, spectrum_index_target)
 3. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
    - we want to train a model such that it can find the mapping of spectra from source tool to the target tool, that is, the transformation such that the measurement performed on source tool can be transformed into the measurement performed on the target tool.
-   - the transformation info lies in the paired source and target measurement compiled in the previous step
-   - we will have many NN models and each of them should be called independently via a root function
-   - the root function contains model definition, training, cost function definition, dataset loader definition, and hyper-paramter search (Bayesian optimization)
-   - train and test split is based on measurement. 
-   1. baseline model:
-      - the input is the intensity for each regional spectra, the output is spectra for each region (sequence-to-sequence)
-      - the model is many ResNet (each for one regional spectrum) 
-      - the ResNet is composed of 3 CNN and one shortcut (kernel size and step size are hyper-parameters)
-      - cost function is mainly calculated by averaged error among all regions
-      - the error in each region is calculated by first normalize intensity of true and predicted spectrum by the maximun intensity of true spectrum, and then calculate mean-squared error (MSE). This MSE is the error of this region  
-      - cost function has a regularization term (with user-tunable relative weight), which is the sum of squares of model weights (L2 regularization)
-   2. sliding window model:
-      - the same model structure as the baseline model (1D CNN with shortcut) but with local sequence transformation using sliding windows (patches)
+   - the transformation info lies in the paired source and target measurement compiled in the "pairing source and target" step, note that material, 
+   - we will have many models and each of them should be called independently via a main orchestration function
+   - we want to apply data augmentation by sliding window to each models and user can specify whether to use this augmentation or not 
+   - the general architecture and workflow inside a main orchestration function will be: 
+      1. train-val-test data splitting (based on measurement and the splitting applies to all regions) 
+      2. sliding window definition/preparation if needed
+      3. dataset and data loader definition/preparation
+      4. cost function definition/preparation
+      5. model definition
+      6. definition of hyper-parameter search (Bayesian optimization)
+      7. model training and validation
+      8. after training completes, apply the trained model to predict target spectra for train/validation/test data (for model performance observation later), the output is a standardized output with corresponding energy/intensity/meta data output
+   - details about sliding window:
+      - local sequence transformation using sliding windows (patches) from the source spectrum to the target spectrum
       - window size and sliding stride can be specified in eV (default window size: 2.0 eV, default stride: 1.0 eV) or in data points
       - pure unpadded sliding window slices a regional spectrum into overlapping patches to capture local spectral features and augment training samples
       - right-edge anchoring guarantees 100% spectral coverage using only real physical measurements without artificial boundary padding
       - patch-to-patch mapping: predicts a target patch of length W for each input window
       - the predicted regional spectrum is reconstructed by accumulating and averaging all overlapping predicted slices across that region
       - validation loss and early stopping are evaluated directly on the reconstructed full spectrum
-      - root function provides dataset preparation, training, Ax Bayesian optimization (searching window size, kernel size, learning rate, L2 regularization), and standardized prediction output
+      - when sliding winodw is used, Bayesian optimization (searching window size, kernel size, learning rate, L2 regularization)
+   - definition of the cost function:
+      - the cost function is mainly composed of a weighted average error among all regions (default is equal weight for all region but tunable by user via config)
+      - the error in each region is calculated by first normalize intensity of true and predicted spectrum by the maximun intensity of true spectrum, and then calculate mean-squared error (MSE). This MSE is the error of this region
+      - the cost function also contains a L2 regularization term (with user-tunable weight)
+   - here are a list of models we want to implement:
+   1. ResNet:
+      - the model is many ResNet (each for one regional spectrum) 
+      - the ResNet is composed of 3 CNN and one shortcut (kernel size and step size are hyper-parameters)
+      - padding to maintain the sequence length (by mirrow padding)
+   2. residual U-Net:
+      - this model combines the idea of shortcut and conventional u-net so the target y and input x has the relation "y = x + UNet(x)"
+      - the u-net part has a default depth 3 (tunable by user)
+   3. u-net:
+      - the same as residual u-net but now no shortcut. Namely from "y = x + UNet(x)" to just "y = UNet(x)".
 4. Model performance observation
 5. Calculation of atomic percentage for elements by area integration
    - to get atomic percentage for elements you need to remove background, integrate area, and corrected with sensitivity factors
@@ -50,7 +66,7 @@ The codes will be composed of mainly 5 parts
 
 ## Tech Stack
 - Python 3
-- Scikit-learn, PyTorch, Pandas, NumPy, SciPy
+- Scikit-learn, PyTorch, Pandas, NumPy, SciPy, Ax (for Bayesian optimization)
 - Jupyter Notebooks for exploration, Python scripts for utilities.
 
 ## Agent Instructions (Rules for Gemini)
