@@ -104,30 +104,37 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
         raise ValueError(f"match_t7_code must be a boolean, got {match_t7}")
 
 
+def _compute_cost_matrix(
+    src_df: pd.DataFrame,
+    tgt_df: pd.DataFrame,
+) -> tuple[np.ndarray, list[str], list[str]]:
+    """Compute pairwise absolute time delta matrix in hours between source and target sessions.
+
+    Parameters
+    ----------
+    src_df : pd.DataFrame
+        Source sessions DataFrame containing 'measurement_id' and 'time'.
+    tgt_df : pd.DataFrame
+        Target sessions DataFrame containing 'measurement_id' and 'time'.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[str], list[str]]
+        (cost_matrix_hours, src_ids, tgt_ids)
+    """
+    src_times = pd.to_datetime(src_df["time"], utc=True).values[:, None]
+    tgt_times = pd.to_datetime(tgt_df["time"], utc=True).values[None, :]
+    delta_hours = (np.abs(src_times - tgt_times) / np.timedelta64(1, "h")).astype(np.float64)
+    return delta_hours, list(src_df["measurement_id"]), list(tgt_df["measurement_id"])
+
+
 def _match_sessions_optimal(
     src_ids: list[str],
     tgt_ids: list[str],
     cost_matrix: np.ndarray,
     threshold: float,
 ) -> dict[str, tuple[str, float]]:
-    """Perform globally optimal 1-to-1 matching via the Hungarian algorithm.
-
-    Parameters
-    ----------
-    src_ids : list[str]
-        List of source measurement IDs.
-    tgt_ids : list[str]
-        List of target measurement IDs.
-    cost_matrix : np.ndarray
-        2D array of pairwise absolute time differences in hours, shape (M, N).
-    threshold : float
-        Maximum allowed time difference in hours.
-
-    Returns
-    -------
-    dict[str, tuple[str, float]]
-        Mapping of source_measurement_id -> (target_measurement_id, time_diff_hours).
-    """
+    """Perform globally optimal 1-to-1 matching via the Hungarian algorithm."""
     if cost_matrix.size == 0:
         return {}
 
@@ -160,46 +167,28 @@ def _match_sessions_greedy(
     cost_matrix: np.ndarray,
     threshold: float,
 ) -> dict[str, tuple[str, float]]:
-    """Perform greedy 1-to-1 matching based on smallest time difference first.
-
-    Parameters
-    ----------
-    src_ids : list[str]
-        List of source measurement IDs.
-    tgt_ids : list[str]
-        List of target measurement IDs.
-    cost_matrix : np.ndarray
-        2D array of pairwise absolute time differences in hours, shape (M, N).
-    threshold : float
-        Maximum allowed time difference in hours.
-
-    Returns
-    -------
-    dict[str, tuple[str, float]]
-        Mapping of source_measurement_id -> (target_measurement_id, time_diff_hours).
-    """
+    """Perform greedy 1-to-1 matching based on smallest time difference first."""
     if cost_matrix.size == 0:
         return {}
 
-    candidates: list[tuple[float, int, int]] = []
-    m, n = cost_matrix.shape
-    for i in range(m):
-        for j in range(n):
-            diff = float(cost_matrix[i, j])
-            if diff <= threshold:
-                candidates.append((diff, i, j))
+    valid_indices = np.argwhere(cost_matrix <= threshold)
+    if valid_indices.size == 0:
+        return {}
 
-    candidates.sort(key=lambda item: item[0])
+    # Sort candidates by cost ascending
+    costs = cost_matrix[valid_indices[:, 0], valid_indices[:, 1]]
+    order = np.argsort(costs)
 
     pairs: dict[str, tuple[str, float]] = {}
     used_src: set[int] = set()
     used_tgt: set[int] = set()
 
-    for diff, i, j in candidates:
+    for idx in order:
+        i, j = int(valid_indices[idx, 0]), int(valid_indices[idx, 1])
         if i not in used_src and j not in used_tgt:
             used_src.add(i)
             used_tgt.add(j)
-            pairs[src_ids[i]] = (tgt_ids[j], diff)
+            pairs[src_ids[i]] = (tgt_ids[j], float(costs[idx]))
 
     return pairs
 
@@ -310,87 +299,55 @@ def pair_source_target_spectra(
                 .sort_values("time")
             )
 
-            src_ids = list(src_sessions_df["measurement_id"])
-            tgt_ids = list(tgt_sessions_df["measurement_id"])
-
-            if src_ids and tgt_ids:
-                # Convert timestamps to UTC datetime64 to compute absolute hour differences
-                src_times = pd.to_datetime(src_sessions_df["time"], utc=True)
-                tgt_times = pd.to_datetime(tgt_sessions_df["time"], utc=True)
-
-                delta_time = np.abs(src_times.values[:, None] - tgt_times.values[None, :])
-                cost_matrix = delta_time / np.timedelta64(1, "h")
-
+            if not src_sessions_df.empty and not tgt_sessions_df.empty:
+                cost_matrix, src_ids, tgt_ids = _compute_cost_matrix(src_sessions_df, tgt_sessions_df)
                 if method == "optimal":
                     mat_pairs = _match_sessions_optimal(src_ids, tgt_ids, cost_matrix, threshold_hours)
                 else:
                     mat_pairs = _match_sessions_greedy(src_ids, tgt_ids, cost_matrix, threshold_hours)
-
                 all_session_pairs.update(mat_pairs)
 
     # Build target lookup index: (measurement_id, die, region) -> (spectrum_index, time)
     tgt_spectra = result_df[result_df["tool"] == target_tool]
-    tgt_lookup: dict[tuple[str, int, str], tuple[int, pd.Timestamp]] = {}
-    tgt_t7_lookup: dict[str, Any] = {}
-    for _, row in tgt_spectra.iterrows():
-        key = (str(row["measurement_id"]), int(row["die"]), str(row["region"]))
-        tgt_lookup[key] = (int(row["spectrum_index"]), pd.Timestamp(row["time"]))
-    if "t7_code" in result_df.columns:
-        for _, row in tgt_spectra.drop_duplicates(subset=["measurement_id"]).iterrows():
-            tgt_t7_lookup[str(row["measurement_id"])] = row.get("t7_code")
+    tgt_lookup: dict[tuple[str, int, str], tuple[int, pd.Timestamp]] = {
+        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): (int(r["spectrum_index"]), pd.Timestamp(r["time"]))
+        for _, r in tgt_spectra.iterrows()
+    }
+    tgt_t7_lookup: dict[str, Any] = (
+        dict(zip(tgt_spectra["measurement_id"].astype(str), tgt_spectra["t7_code"]))
+        if "t7_code" in result_df.columns
+        else {}
+    )
 
-    # Prepare column vectors with size matching result_df length
+    # Prepare target columns aligning with result_df
     n_rows = len(result_df)
-    col_tool_target: list[str | None] = [None] * n_rows
-    col_meas_target: list[str | None] = [None] * n_rows
-    col_spec_target: list[int | None] = [None] * n_rows
-    col_time_target: list[pd.Timestamp | None] = [None] * n_rows
-    col_diff_hours: list[float | None] = [None] * n_rows
-    col_t7_target: list[str | None] = [None] * n_rows
+    col_tool = [target_tool if t == source_tool else None for t in result_df["tool"]]
+    col_meas: list[str | None] = [None] * n_rows
+    col_spec: list[int | None] = [None] * n_rows
+    col_time: list[pd.Timestamp | None] = [None] * n_rows
+    col_diff: list[float | None] = [None] * n_rows
+    col_t7: list[str | None] = [None] * n_rows
 
-    # Iterate using integer index to avoid label-indexing bugs on sliced/filtered DataFrames
-    for row_idx, (_, row) in enumerate(result_df.iterrows()):
-        current_tool = row["tool"]
+    if all_session_pairs:
+        for row_idx, (_, row) in enumerate(result_df.iterrows()):
+            if row["tool"] == source_tool:
+                src_meas = str(row["measurement_id"])
+                if src_meas in all_session_pairs:
+                    tgt_meas, diff_h = all_session_pairs[src_meas]
+                    key = (tgt_meas, int(row["die"]), str(row["region"]))
+                    if key in tgt_lookup:
+                        col_meas[row_idx] = tgt_meas
+                        col_spec[row_idx], col_time[row_idx] = tgt_lookup[key]
+                        col_diff[row_idx] = diff_h
+                        if "t7_code" in result_df.columns:
+                            col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
 
-        if current_tool == source_tool:
-            # Per user requirement: tool_target is always target_tool for source rows
-            col_tool_target[row_idx] = target_tool
-            src_meas = str(row["measurement_id"])
-
-            if src_meas in all_session_pairs:
-                tgt_meas, diff_h = all_session_pairs[src_meas]
-                die = int(row["die"])
-                region = str(row["region"])
-                lookup_key = (tgt_meas, die, region)
-
-                if lookup_key in tgt_lookup:
-                    tgt_spec_idx, tgt_time = tgt_lookup[lookup_key]
-                    col_meas_target[row_idx] = tgt_meas
-                    col_spec_target[row_idx] = tgt_spec_idx
-                    col_time_target[row_idx] = tgt_time
-                    col_diff_hours[row_idx] = diff_h
-                    if "t7_code" in result_df.columns:
-                        col_t7_target[row_idx] = tgt_t7_lookup.get(tgt_meas)
-
-    # Assign columns to result_df aligning explicitly with result_df.index
-    result_df["tool_target"] = pd.Series(
-        col_tool_target, index=result_df.index, dtype="object"
-    )
-    result_df["measurement_id_target"] = pd.Series(
-        col_meas_target, index=result_df.index, dtype="object"
-    )
-    result_df["spectrum_index_target"] = pd.Series(
-        col_spec_target, index=result_df.index, dtype="Int64"
-    )
-    result_df["time_target"] = pd.to_datetime(
-        pd.Series(col_time_target, index=result_df.index)
-    )
-    result_df["time_diff_hours"] = pd.Series(
-        col_diff_hours, index=result_df.index, dtype="float64"
-    )
+    result_df["tool_target"] = pd.Series(col_tool, index=result_df.index, dtype="object")
+    result_df["measurement_id_target"] = pd.Series(col_meas, index=result_df.index, dtype="object")
+    result_df["spectrum_index_target"] = pd.Series(col_spec, index=result_df.index, dtype="Int64")
+    result_df["time_target"] = pd.to_datetime(pd.Series(col_time, index=result_df.index))
+    result_df["time_diff_hours"] = pd.Series(col_diff, index=result_df.index, dtype="float64")
     if "t7_code" in result_df.columns:
-        result_df["t7_code_target"] = pd.Series(
-            col_t7_target, index=result_df.index, dtype="object"
-        )
+        result_df["t7_code_target"] = pd.Series(col_t7, index=result_df.index, dtype="object")
 
     return result_df
