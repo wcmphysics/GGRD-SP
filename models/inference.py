@@ -10,6 +10,100 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from utility.patching import extract_sliding_windows, reconstruct_from_patches
+
+
+def predict_sliding_window_spectrum(
+    model: nn.Module,
+    spectrum: np.ndarray,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> np.ndarray:
+    """Transform a full 1D spectrum using a trained sliding window patch model.
+
+    Applies unbiased linear overlap-averaging across patches, scales back to physical
+    intensity using source scale, and enforces physical non-negativity strictly at the
+    final reconstructed full spectrum level.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Trained patch model expecting input length window_size.
+    spectrum : np.ndarray
+        1D source spectrum array of length N.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing:
+        - 'window_size' (int): Window points (default 15).
+        - 'stride' (int): Stride points (default window_size // 2).
+        - 'device' (str | torch.device | None): Computation device.
+        - 'batch_size' (int): Batch size for patch forward pass (default 64).
+        - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
+        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
+        - 'eps' (float): Epsilon floor for source scale (default 1e-4).
+    **kwargs : Any
+        Optional keyword arguments (e.g. window_size, stride) for backward compatibility.
+
+    Returns
+    -------
+    np.ndarray
+        Reconstructed target spectrum of length N.
+    """
+    cfg = dict(config or {})
+    cfg.update(kwargs)
+    w_size = int(cfg.get("window_size", 15))
+    s_step = int(cfg.get("stride", max(1, w_size // 2)))
+    normalize_by_source = bool(cfg.get("normalize_by_source", True))
+    clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
+    eps = float(cfg.get("eps", 1e-4))
+
+    device = cfg.get("device")
+    if device is None:
+        params = list(model.parameters())
+        device = params[0].device if params else torch.device("cpu")
+    elif isinstance(device, str):
+        device = torch.device(device)
+
+    batch_size = int(cfg.get("batch_size", 64))
+
+    spectrum_1d = np.asarray(spectrum).ravel()
+    if normalize_by_source:
+        scale_x = max(float(np.max(np.abs(spectrum_1d))), eps)
+        spectrum_in = spectrum_1d / scale_x
+    else:
+        scale_x = 1.0
+        spectrum_in = spectrum_1d
+
+    windows, start_indices = extract_sliding_windows(
+        spectrum_in, window_size=w_size, stride=s_step
+    )
+
+    model.eval()
+    pred_patches_list: list[np.ndarray] = []
+    with torch.no_grad():
+        for i in range(0, len(windows), batch_size):
+            batch = torch.from_numpy(windows[i : i + batch_size]).to(device)
+            out = model(batch).cpu().numpy()
+            pred_patches_list.append(out)
+
+    pred_patches = np.vstack(pred_patches_list)
+    reconstructed_norm = reconstruct_from_patches(
+        patches=pred_patches,
+        start_indices=start_indices,
+        original_length=len(spectrum_1d),
+        config={"window_size": w_size, "clamp_non_negative": False},
+    )
+
+    # Rescale to physical counts
+    reconstructed_phys = reconstructed_norm * scale_x if normalize_by_source else reconstructed_norm
+
+    # Zero clamping at the final full spectrum reconstruction level
+    if clamp_non_negative:
+        reconstructed_final = np.clip(reconstructed_phys, 0.0, None)
+    else:
+        reconstructed_final = reconstructed_phys
+
+    return reconstructed_final
+
 
 def format_predicted_measurement_id(source_measurement_id: str, source_tool: str, target_tool: str) -> str:
     """Format a predicted measurement session ID uniquely and deterministically.
@@ -235,32 +329,64 @@ def predict_spectra(
         orig_indices = group["spectrum_index"].astype(int).to_numpy()
 
         if region in models:
-            model = models[str(region)]
+            model_entry = models[str(region)]
             region_x = ary_intensity[orig_indices]
+            is_sw = bool(cfg.get("use_sliding_window", False)) or isinstance(model_entry, (tuple, list))
 
-            if normalize_by_source:
-                scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
-                region_x_in = region_x / scales
+            if is_sw:
+                if isinstance(model_entry, (tuple, list)):
+                    m_obj = model_entry[0]
+                    w_size = int(model_entry[1])
+                    s_step = int(model_entry[2])
+                else:
+                    m_obj = model_entry
+                    w_size = int(cfg.get("window_size", 15))
+                    s_step = int(cfg.get("stride", max(1, w_size // 2)))
+
+                m_params = list(m_obj.parameters())
+                m_dev = m_params[0].device if m_params else device
+
+                sw_preds = []
+                for x_single in region_x:
+                    recon = predict_sliding_window_spectrum(
+                        model=m_obj,
+                        spectrum=x_single,
+                        config={
+                            "window_size": w_size,
+                            "stride": s_step,
+                            "device": m_dev,
+                            "normalize_by_source": normalize_by_source,
+                            "clamp_non_negative": clamp_non_negative,
+                            "eps": eps,
+                        },
+                    )
+                    sw_preds.append(recon)
+                pred_arr = np.vstack(sw_preds)
             else:
-                scales = 1.0
-                region_x_in = region_x
+                model = model_entry
+                if normalize_by_source:
+                    scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
+                    region_x_in = region_x / scales
+                else:
+                    scales = 1.0
+                    region_x_in = region_x
 
-            # Batch forward pass
-            preds = []
-            for i in range(0, len(region_x_in), batch_size):
-                batch_x = region_x_in[i : i + batch_size]
-                x_tensor = torch.from_numpy(batch_x.astype(np.float32)).to(device)
-                with torch.no_grad():
-                    y_pred = model(x_tensor).cpu().numpy()
-                preds.append(y_pred)
+                # Batch forward pass
+                preds = []
+                for i in range(0, len(region_x_in), batch_size):
+                    batch_x = region_x_in[i : i + batch_size]
+                    x_tensor = torch.from_numpy(batch_x.astype(np.float32)).to(device)
+                    with torch.no_grad():
+                        y_pred = model(x_tensor).cpu().numpy()
+                    preds.append(y_pred)
 
-            pred_arr = np.vstack(preds)
-            if normalize_by_source:
-                pred_arr = pred_arr * scales
+                pred_arr = np.vstack(preds)
+                if normalize_by_source:
+                    pred_arr = pred_arr * scales
 
-            # Zero clamping at final full spectrum reconstruction level
-            if clamp_non_negative:
-                pred_arr = np.clip(pred_arr, 0.0, None)
+                # Zero clamping at final full spectrum reconstruction level
+                if clamp_non_negative:
+                    pred_arr = np.clip(pred_arr, 0.0, None)
 
             predicted_intensities[group_new_indices] = pred_arr
         else:
