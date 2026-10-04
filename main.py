@@ -10,8 +10,10 @@ from models import (
     run_spectral_pipeline,
 )
 from utility import (
+    calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_prediction_metrics,
+    format_side_by_side_atomic_percentages,
     format_side_by_side_metrics,
     generate_pseudo_measurements,
     pair_source_target_spectra,
@@ -35,7 +37,7 @@ def main() -> None:
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
     # "deeplabv3": 1D DeepLabV3 (Multi-Grid ResNet backbone + ASPP with global pooling)
     model_type = "deeplabv3"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
-    use_sliding_window = False  # Toggle available to all models (True for patch data augmentation)
+    use_sliding_window = True  # Toggle available to all models (True for patch data augmentation)
 
     source_tool = "J4"
     target_tool = "J5"
@@ -221,6 +223,43 @@ def main() -> None:
     # =========================================================================
     print("\n=== Part 5: Calculating Atomic Percentage (Shirley Integration) ===")
 
+    # 1. Statistics across Train and Test dataset splits
+    print("\nAtomic percentage statistics across dataset splits (Train vs. Test):")
+    df_at_samples, df_at_summary = calculate_atomic_percentage_split_statistics(
+        data_orig,
+        data_pred,
+        config={"splits": ["train", "test"]},
+    )
+
+    if not df_at_summary.empty:
+        for split_name in ["train", "test"]:
+            split_df = df_at_summary[df_at_summary["split"] == split_name]
+            if not split_df.empty:
+                print(f"\n--- Split: {split_name.upper()} ---")
+                display_cols = [
+                    "element",
+                    "n_samples",
+                    "source_mean",
+                    "source_std",
+                    "target_mean",
+                    "target_std",
+                    "pred_mean",
+                    "pred_std",
+                    "diff_mean",
+                    "diff_std",
+                    "mae",
+                ]
+                print(split_df[display_cols].to_string(index=False))
+
+        # Side-by-side comparison across splits
+        df_at_side_by_side = format_side_by_side_atomic_percentages(
+            df_at_summary, config={"splits": ["train", "test"]}
+        )
+        if not df_at_side_by_side.empty:
+            print("\nSide-by-side atomic percentage comparison (Train vs. Test):")
+            print(df_at_side_by_side.to_string(index=False))
+
+    # 2. Detailed single session drill-down
     def _print_quant_summary(label: str, meas: str, df_die: pd.DataFrame, df_sum: pd.DataFrame) -> None:
         print(f"\n[{label}] Atomic percentage per die for session '{meas}' (first 3 dies):")
         print(df_die.head(3).to_string(index=False))
