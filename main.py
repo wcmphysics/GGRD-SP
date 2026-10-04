@@ -52,8 +52,8 @@ def main() -> None:
         "measurements_per_t7_code": 10,
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
-            source_tool: {"shift_ev": 0.0, "scale": 1.0},
-            target_tool: {"shift_ev": 0.2, "scale": 1.1},
+            source_tool: {"shift_ev": 0.0, "scale": 10000.0},
+            target_tool: {"shift_ev": 0.2, "scale": 10000.1},
         },
         "die_variation_std": 0.03,
         "noise_relative_std": 0.015,
