@@ -147,71 +147,174 @@ def run_ax_search(
     }
 
 
-def optimize_baseline_hyperparameters(
+def optimize_model_hyperparameters(
     train_dataset: Dataset,
     val_dataset: Dataset,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Perform Bayesian optimization over baseline CNN hyperparameters using Ax.
+    """Perform Bayesian optimization over model hyperparameters using Ax.
 
-    Optimizes kernel size, hidden channels, learning rate, and L2 regularization weight
-    to minimize validation loss.
+    Supports 'resnet', 'residual_unet', and 'unet' architectures, as well as
+    sliding window hyperparameter search (window_size).
+
+    Parameters
+    ----------
+    train_dataset : Dataset
+        Training dataset.
+    val_dataset : Dataset
+        Validation dataset.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'model_type' (str): 'resnet', 'residual_unet', or 'unet' (default 'resnet').
+        - 'use_sliding_window' (bool): Whether sliding window is active (default False).
+        - 'window_size_choices' (list[int]): Optional window sizes to search if sliding window active.
+        - Architecture-specific search spaces (kernel_sizes, hidden_channels, base_channels, depths).
+        - 'lr_bounds' (tuple[float, float]): Learning rate search bounds (default (1e-4, 1e-2)).
+        - 'l2_bounds' (tuple[float, float]): L2 regularization bounds (default (1e-6, 1e-2)).
+        - 'num_trials' (int): Total Ax trials (default 10).
+        - 'epochs_per_trial' (int): Max epochs per trial (default 20).
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary with 'best_parameters', 'best_val_loss', 'trials_data', and 'ax_client'.
     """
-    from models.trainer import train_baseline_region
+    from models.trainer import train_model_region
 
-    cfg = config or {}
-    kernel_sizes: list[int] = list(cfg.get("kernel_sizes", [3, 5, 7]))
-    hidden_channel_choices: list[int] = list(cfg.get("hidden_channels", [16, 32, 64]))
+    cfg = dict(config or {})
+    model_type = str(cfg.get("model_type", "resnet")).lower()
+    use_sw = bool(cfg.get("use_sliding_window", False))
+
     lr_bounds: tuple[float, float] = tuple(cfg.get("lr_bounds", (1e-4, 1e-2)))
     l2_bounds: tuple[float, float] = tuple(cfg.get("l2_bounds", (1e-6, 1e-2)))
 
-    # Parameter validation
-    for k in kernel_sizes:
-        if k <= 0 or k % 2 == 0:
-            raise ValueError(f"All kernel_sizes must be positive odd integers, got {k}")
-    if lr_bounds[0] <= 0 or lr_bounds[1] <= lr_bounds[0]:
-        raise ValueError(f"Invalid lr_bounds: {lr_bounds}, both must be > 0 with min < max")
-    if l2_bounds[0] <= 0 or l2_bounds[1] <= l2_bounds[0]:
-        raise ValueError(f"Invalid l2_bounds: {l2_bounds}, both must be > 0 with min < max")
+    parameters: list[dict[str, Any]] = []
 
-    parameters: list[dict[str, Any]] = [
-        {
-            "name": "kernel_size",
-            "type": "choice",
-            "values": kernel_sizes,
-            "value_type": "int",
-            "is_ordered": True,
-        },
-        {
-            "name": "hidden_channels",
-            "type": "choice",
-            "values": hidden_channel_choices,
-            "value_type": "int",
-            "is_ordered": True,
-        },
-        {
-            "name": "learning_rate",
-            "type": "range",
-            "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
-            "value_type": "float",
-            "log_scale": True,
-        },
-        {
-            "name": "l2_weight",
-            "type": "range",
-            "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
-            "value_type": "float",
-            "log_scale": True,
-        },
-    ]
+    # Sliding window parameter search if choices provided
+    if use_sw and "window_size_choices" in cfg:
+        parameters.append(
+            {
+                "name": "window_size",
+                "type": "choice",
+                "values": list(cfg["window_size_choices"]),
+                "value_type": "int",
+                "is_ordered": True,
+            }
+        )
+
+    # Architecture-specific search spaces
+    if model_type in ("residual_unet", "unet", "unet_residual"):
+        base_channels: list[int] = list(cfg.get("base_channels", [16, 32]))
+        depths: list[int] = list(cfg.get("depths", [2, 3]))
+        kernel_sizes: list[int] = list(cfg.get("kernel_sizes", [3, 5]))
+        parameters.extend(
+            [
+                {
+                    "name": "base_channels",
+                    "type": "choice",
+                    "values": base_channels,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+                {
+                    "name": "depth",
+                    "type": "choice",
+                    "values": depths,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+                {
+                    "name": "kernel_size",
+                    "type": "choice",
+                    "values": kernel_sizes,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+            ]
+        )
+    else:  # 'resnet'
+        kernel_sizes_res: list[int] = list(cfg.get("kernel_sizes", [3, 5, 7]))
+        hidden_channels: list[int] = list(cfg.get("hidden_channels", [16, 32, 64]))
+        parameters.extend(
+            [
+                {
+                    "name": "kernel_size",
+                    "type": "choice",
+                    "values": kernel_sizes_res,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+                {
+                    "name": "hidden_channels",
+                    "type": "choice",
+                    "values": hidden_channels,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+            ]
+        )
+
+    # Optimization parameters
+    parameters.extend(
+        [
+            {
+                "name": "learning_rate",
+                "type": "range",
+                "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
+                "value_type": "float",
+                "log_scale": True,
+            },
+            {
+                "name": "l2_weight",
+                "type": "range",
+                "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
+                "value_type": "float",
+                "log_scale": True,
+            },
+        ]
+    )
 
     opt_cfg = dict(cfg)
-    opt_cfg["experiment_name"] = cfg.get("experiment_name", "baseline_cnn_optimization")
+    opt_cfg.setdefault("experiment_name", f"{model_type}_spectral_transfer_optimization")
 
     return run_ax_search(
-        train_fn=train_baseline_region,
+        train_fn=train_model_region,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         parameters=parameters,
         config=opt_cfg,
     )
+
+
+def optimize_baseline_hyperparameters(
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Perform Bayesian optimization over baseline ResNet CNN hyperparameters."""
+    cfg = dict(config or {})
+    cfg.setdefault("model_type", "resnet")
+    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
+
+
+def optimize_unet_hyperparameters(
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Perform Bayesian optimization over 1D U-Net hyperparameters."""
+    cfg = dict(config or {})
+    cfg.setdefault("model_type", "residual_unet")
+    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
+
+
+def optimize_sliding_window_hyperparameters(
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Perform Bayesian optimization over sliding window model hyperparameters."""
+    cfg = dict(config or {})
+    cfg.setdefault("use_sliding_window", True)
+    cfg.setdefault("model_type", "resnet")
+    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
