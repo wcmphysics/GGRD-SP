@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from models.baseline_cnn import NormalizedMSELoss, Residual1DCNN
+from models.cost import NormalizedMSELoss
 from models.dataset import split_session_datasets
+from models.resnet import ResNet1D, Residual1DCNN
 from models.sliding_window import (
     SpectrumPatchDataset,
     calculate_window_points,

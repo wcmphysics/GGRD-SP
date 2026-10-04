@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from models.baseline_cnn import NormalizedMSELoss
+from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
 from models.unet import (
     UNet1D,

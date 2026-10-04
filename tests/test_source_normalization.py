@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import torch
 
-from models.baseline_cnn import Residual1DCNN
+from models.resnet import Residual1DCNN
 from models.dataset import SpectrumPairDataset, split_session_datasets
 from models.inference import predict_spectra
 from models.sliding_window import predict_sliding_window_spectrum
@@ -160,7 +160,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
             {"region": "Ti2p", "source_tool": "J4", "target_tool": "J5", "normalize_by_source": True},
         )
 
-        from models.baseline_cnn import NormalizedMSELoss
+        from models.cost import NormalizedMSELoss
         untrained_val_loss = NormalizedMSELoss()(val_ds.x, val_ds.y).item()
 
         res = train_baseline_region(

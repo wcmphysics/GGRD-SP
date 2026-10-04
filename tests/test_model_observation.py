@@ -12,7 +12,7 @@ matplotlib.use("Agg")  # Non-interactive backend for testing
 import numpy as np
 import pandas as pd
 
-from models.root import run_baseline_pipeline
+from models.orchestration import run_baseline_pipeline
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.visualization import (

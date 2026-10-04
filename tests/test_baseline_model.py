@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from models.baseline_cnn import NormalizedMSELoss, Residual1DCNN
 from models.bayesian_opt import optimize_baseline_hyperparameters
+from models.cost import NormalizedMSELoss
 from models.dataset import (
     SpectrumPairDataset,
     create_dataloaders,
@@ -17,7 +17,8 @@ from models.dataset import (
     split_session_datasets,
 )
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.root import run_baseline_pipeline
+from models.orchestration import run_baseline_pipeline
+from models.resnet import ResNet1D, Residual1DCNN
 from models.trainer import evaluate, train_baseline_region
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
