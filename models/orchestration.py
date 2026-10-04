@@ -73,6 +73,111 @@ def instantiate_model(
         )
 
 
+def _resolve_region_config(
+    global_cfg: dict[str, Any],
+    region: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Resolve regional sliding window, training, and Bayesian optimization configurations.
+
+    Applies hierarchical fallback: global top-level settings provide defaults,
+    which are optionally overridden by specific settings under
+    global_cfg['region_configs'][region].
+
+    Parameters
+    ----------
+    global_cfg : dict[str, Any]
+        Top-level pipeline configuration dictionary.
+    region : str
+        Target spectral region identifier (e.g. 'Al2p').
+
+    Returns
+    -------
+    tuple[dict[str, Any], dict[str, Any], dict[str, Any]]
+        (sw_calc_cfg, region_train_cfg, region_bo_cfg)
+    """
+    region_configs = global_cfg.get("region_configs", {})
+    reg_overrides = (
+        dict(region_configs.get(region, {}))
+        if isinstance(region_configs, dict) and region in region_configs
+        else {}
+    )
+
+    # 1. Sliding window parameters
+    sw_calc_cfg = {
+        "window_size_ev": reg_overrides.get(
+            "window_size_ev", global_cfg.get("window_size_ev", 2.0)
+        ),
+        "sliding_stride_ev": reg_overrides.get(
+            "sliding_stride_ev", global_cfg.get("sliding_stride_ev", 1.0)
+        ),
+        "window_size_points": reg_overrides.get(
+            "window_size_points",
+            reg_overrides.get(
+                "window_size",
+                global_cfg.get("window_size_points", global_cfg.get("window_size")),
+            ),
+        ),
+        "sliding_stride_points": reg_overrides.get(
+            "sliding_stride_points",
+            reg_overrides.get(
+                "stride",
+                global_cfg.get("sliding_stride_points", global_cfg.get("stride")),
+            ),
+        ),
+    }
+
+    # 2. Training configuration (epochs, batch_size, lr, architecture params, l2_weight, etc.)
+    base_train_cfg = dict(global_cfg.get("train_config", {}))
+    if "train_config" in reg_overrides and isinstance(reg_overrides["train_config"], dict):
+        base_train_cfg.update(reg_overrides["train_config"])
+
+    train_param_keys = (
+        "batch_size",
+        "learning_rate",
+        "hidden_channels",
+        "base_channels",
+        "depth",
+        "kernel_size",
+        "epochs",
+        "l2_weight",
+        "early_stopping_patience",
+        "dropout",
+        "weight_decay",
+        "verbose",
+    )
+    for k in train_param_keys:
+        if k in reg_overrides:
+            base_train_cfg[k] = reg_overrides[k]
+
+    # 3. Bayesian optimization configuration
+    base_bo_cfg = dict(global_cfg.get("bayesian_opt_config", {}))
+    if "bayesian_opt_config" in reg_overrides and isinstance(
+        reg_overrides["bayesian_opt_config"], dict
+    ):
+        base_bo_cfg.update(reg_overrides["bayesian_opt_config"])
+
+    bo_param_keys = (
+        "batch_sizes",
+        "kernel_sizes",
+        "window_size_choices",
+        "lr_bounds",
+        "l2_bounds",
+        "num_trials",
+        "epochs_per_trial",
+        "seed",
+        "verbose",
+    )
+    for k in bo_param_keys:
+        if k in reg_overrides:
+            base_bo_cfg[k] = reg_overrides[k]
+
+    for arch_choice in ("hidden_channels", "base_channels", "depths"):
+        if arch_choice in reg_overrides and isinstance(reg_overrides[arch_choice], (list, tuple)):
+            base_bo_cfg[arch_choice] = list(reg_overrides[arch_choice])
+
+    return sw_calc_cfg, base_train_cfg, base_bo_cfg
+
+
 def run_spectral_pipeline(
     data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any] | pd.DataFrame,
     model_type: str = "resnet",
@@ -105,6 +210,9 @@ def run_spectral_pipeline(
         - 'use_bayesian_opt' (bool): Whether to run Ax Bayesian optimization (default False).
         - 'bayesian_opt_config' (dict[str, Any]): Ax hyperparameter search configuration.
         - 'train_config' (dict[str, Any]): Regional training configuration (epochs, lr, batch_size, etc.).
+        - 'region_configs' (dict[str, dict[str, Any]]): Optional per-region overrides for
+          window_size_ev, sliding_stride_ev, batch_size, learning_rate, architecture parameters,
+          train_config, or bayesian_opt_config.
         - 'window_size_ev' (float): Patch window size in eV if sliding window enabled (default 2.0).
         - 'sliding_stride_ev' (float): Patch stride in eV if sliding window enabled (default 1.0).
         - 'window_size' | 'window_size_points' (int): Explicit patch points override.
@@ -213,6 +321,8 @@ def run_spectral_pipeline(
         if verbose:
             print(f"\n--- Processing Region: {region} ({source_tool} -> {target_tool}) ---")
 
+        sw_calc_cfg, region_train_cfg, region_bo_cfg = _resolve_region_config(cfg, region)
+
         split_cfg = {
             "region": region,
             "source_tool": source_tool,
@@ -237,12 +347,6 @@ def run_spectral_pipeline(
             else:
                 e_grid = np.linspace(0.0, 10.0, full_len)
 
-            sw_calc_cfg = {
-                "window_size_ev": cfg.get("window_size_ev", 2.0),
-                "sliding_stride_ev": cfg.get("sliding_stride_ev", 1.0),
-                "window_size_points": cfg.get("window_size_points", cfg.get("window_size")),
-                "sliding_stride_points": cfg.get("sliding_stride_points", cfg.get("stride")),
-            }
             w_size, s_step = calculate_window_points(e_grid, config=sw_calc_cfg)
             w_size = min(full_len, max(3, w_size))
             s_step = max(1, min(w_size, s_step))
@@ -270,14 +374,13 @@ def run_spectral_pipeline(
         # =====================================================================
         # STEP 4: COST FUNCTION DEFINITION
         # =====================================================================
-        l2_weight = float(train_cfg.get("l2_weight", 1e-4))
+        l2_weight = float(region_train_cfg.get("l2_weight", 1e-4))
         region_weights = cfg.get("region_weights")
         criterion = NormalizedMSELoss(l2_weight=l2_weight, region_weights=region_weights)
 
         # =====================================================================
         # STEP 5: MODEL DEFINITION
         # =====================================================================
-        region_train_cfg = dict(train_cfg)
         region_train_cfg.update(
             {
                 "model_type": m_type,
@@ -296,7 +399,6 @@ def run_spectral_pipeline(
         if use_bo:
             if verbose:
                 print(f"Running Ax Bayesian Optimization for {region}...")
-            region_bo_cfg = dict(bo_cfg)
             region_bo_cfg.update(
                 {
                     "model_type": m_type,
