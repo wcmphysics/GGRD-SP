@@ -23,6 +23,12 @@ class SpectrumPairDataset(Dataset):
         Array of binding energies of shape (N_samples, N_points) or (N_points,).
     metadata : list[dict[str, Any]] | None, optional
         List of metadata dictionaries per sample.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'normalize_by_source' (bool): Whether to divide both x and y by max(|x|) per sample (default True).
+        - 'eps' (float): Epsilon floor to prevent division by zero (default 1e-4).
+    **kwargs : Any
+        Optional keyword arguments for backward compatibility.
 
     Raises
     ------
@@ -36,6 +42,8 @@ class SpectrumPairDataset(Dataset):
         y_data: np.ndarray | torch.Tensor,
         energy: np.ndarray | torch.Tensor | None = None,
         metadata: list[dict[str, Any]] | None = None,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         if len(x_data) != len(y_data):
             raise ValueError(
@@ -52,6 +60,26 @@ class SpectrumPairDataset(Dataset):
         else:
             self.y = y_data.float()
 
+        cfg = dict(config or {})
+        cfg.update(kwargs)
+        self.normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+        eps: float = float(cfg.get("eps", 1e-4))
+
+        if self.normalize_by_source and len(self.x) > 0:
+            if self.x.dim() == 1:
+                scales = torch.clamp(torch.max(torch.abs(self.x)), min=eps)
+            else:
+                scales, _ = torch.max(torch.abs(self.x), dim=-1, keepdim=True)
+                scales = torch.clamp(scales, min=eps)
+            self.scale_x = scales
+            self.x = self.x / scales
+            self.y = self.y / scales
+        else:
+            if self.x.dim() > 1:
+                self.scale_x = torch.ones((len(self.x), 1), dtype=torch.float32)
+            else:
+                self.scale_x = torch.tensor(1.0, dtype=torch.float32)
+
         if energy is not None:
             if isinstance(energy, np.ndarray):
                 self.energy = torch.from_numpy(energy.astype(np.float32))
@@ -66,15 +94,30 @@ class SpectrumPairDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
+        scale_val = self.scale_x[idx] if self.scale_x.dim() > 1 else self.scale_x
         item: dict[str, Any] = {
             "x": self.x[idx],
             "y": self.y[idx],
+            "scale_x": scale_val,
         }
         if self.energy is not None:
             item["energy"] = self.energy[idx] if self.energy.dim() > 1 else self.energy
         if self.metadata and idx < len(self.metadata):
             item["meta"] = self.metadata[idx]
         return item
+
+    def get_scale(self, idx: int) -> float:
+        """Return the source normalization scalar for a given sample index."""
+        if self.scale_x.dim() > 1:
+            return float(self.scale_x[idx].item())
+        return float(self.scale_x.item())
+
+    def unnormalize_y(
+        self, y_norm: torch.Tensor | np.ndarray, idx: int
+    ) -> torch.Tensor | np.ndarray:
+        """Scale a normalized target prediction back to physical counts using source scale."""
+        scale = self.get_scale(idx)
+        return y_norm * scale
 
 
 def partition_measurement_sessions(
@@ -266,6 +309,8 @@ def split_session_datasets(
     source_tool: str | None = cfg.get("source_tool")
     target_tool: str | None = cfg.get("target_tool")
     return_test: bool = bool(cfg.get("return_test", False))
+    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+    eps_val: float = float(cfg.get("eps", 1e-4))
 
     if len(ary_intensity) != len(ary_energy):
         raise ValueError(
@@ -327,7 +372,13 @@ def split_session_datasets(
         energy_arr = ary_energy[x_indices]
 
         meta_list = df_subset.to_dict(orient="records")
-        return SpectrumPairDataset(x_arr, y_arr, energy=energy_arr, metadata=meta_list)
+        return SpectrumPairDataset(
+            x_arr,
+            y_arr,
+            energy=energy_arr,
+            metadata=meta_list,
+            config={"normalize_by_source": normalize_by_source, "eps": eps_val},
+        )
 
     train_ds = _build_dataset(train_df)
     val_ds = _build_dataset(val_df)

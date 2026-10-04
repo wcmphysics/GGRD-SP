@@ -164,7 +164,9 @@ def reconstruct_from_patches(
     original_length : int
         Length of the target spectrum (N).
     config : dict[str, Any] | None, optional
-        Configuration dictionary containing optional 'window_size'.
+        Configuration dictionary containing:
+        - 'window_size' (int | None): Window width in points.
+        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default False).
     **kwargs : Any
         Optional keyword arguments (e.g. window_size) for backward compatibility.
 
@@ -183,6 +185,7 @@ def reconstruct_from_patches(
     patches_np = np.atleast_2d(patches_np)
 
     w_size = int(cfg.get("window_size", patches_np.shape[1]))
+    clamp_non_negative = bool(cfg.get("clamp_non_negative", False))
 
     accum = np.zeros(original_length, dtype=np.float32)
     counts = np.zeros(original_length, dtype=np.float32)
@@ -197,4 +200,8 @@ def reconstruct_from_patches(
             f"Patch reconstruction left {len(missing)} uncovered points in spectrum (e.g. index {missing[0]})."
         )
 
-    return accum / np.maximum(counts, 1.0)
+    reconstructed = accum / np.maximum(counts, 1.0)
+    if clamp_non_negative:
+        reconstructed = np.clip(reconstructed, 0.0, None)
+
+    return reconstructed
