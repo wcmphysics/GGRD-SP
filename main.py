@@ -36,14 +36,14 @@ def main() -> None:
     # "resnet": 1D ResNet (3 CNN layers with mirror padding and shortcut)
     # "residual_unet": 1D Residual U-Net (y = x + UNet(x))
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
-    model_type = "resnet"  # Options: "resnet", "residual_unet", or "unet"
-    use_sliding_window = False  # Toggle available to all 3 models (True for patch data augmentation)
+    model_type = "unet"  # Options: "resnet", "residual_unet", or "unet"
+    use_sliding_window = True  # Toggle available to all 3 models (True for patch data augmentation)
 
     source_tool = "J4"
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
-    show_plots = False  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
+    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
@@ -82,8 +82,8 @@ def main() -> None:
         "val_ratio": 0.2,
         "test_ratio": 0.3,
         "seed": None,
-        "window_size_ev": 2.0,  # Local window length in eV (used if use_sliding_window=True)
-        "sliding_stride_ev": 1.0,  # Sliding stride step in eV (used if use_sliding_window=True)
+        "window_size_ev": 6.0,  # Local window length in eV (used if use_sliding_window=True)
+        "sliding_stride_ev": 2.0,  # Sliding stride step in eV (used if use_sliding_window=True)
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
             "num_trials": 5,
@@ -98,8 +98,8 @@ def main() -> None:
         },
         "train_config": {
             "epochs": 100,
-            "batch_size": 16,
-            "learning_rate": 1e-3,
+            "batch_size": 64,
+            "learning_rate": 1e-4,
             "hidden_channels": 32,
             "base_channels": 16,
             "depth": 3,
@@ -109,6 +109,12 @@ def main() -> None:
             "verbose": True,
         },
         "predict_source": True,
+    }
+
+    # Part 4: Side-by-side performance report configuration
+    report_config = {
+        "splits": ["train", "test"],
+        "metrics": ["norm_mse", "peak_err%", "max%err"],
     }
 
     # =========================================================================
@@ -196,9 +202,11 @@ def main() -> None:
     print("\nDetailed quantitative prediction metrics by region and split:")
     print(df_metrics_summary.to_string(index=False))
 
-    df_side_by_side = format_side_by_side_metrics(df_metrics_samples)
+    df_side_by_side = format_side_by_side_metrics(df_metrics_samples, config=report_config)
     if not df_side_by_side.empty:
-        print("\nSide-by-side performance comparison across splits (Train vs. Val vs. Test):")
+        splits_list = report_config.get("splits", ["train", "test"])
+        split_titles = " vs. ".join([s.capitalize() for s in splits_list])
+        print(f"\nSide-by-side performance comparison across splits ({split_titles}):")
         print(df_side_by_side.to_string(index=False))
 
     # =========================================================================
