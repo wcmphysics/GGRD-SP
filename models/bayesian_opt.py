@@ -200,6 +200,22 @@ def optimize_model_hyperparameters(
 
     parameters: list[dict[str, Any]] = []
 
+    # Batch size parameter search if choices provided
+    if "batch_sizes" in cfg:
+        batch_sizes: list[int] = list(cfg["batch_sizes"])
+        for b in batch_sizes:
+            if b <= 0:
+                raise ValueError(f"All batch_sizes must be positive integers, got {b}")
+        parameters.append(
+            {
+                "name": "batch_size",
+                "type": "choice",
+                "values": batch_sizes,
+                "value_type": "int",
+                "is_ordered": True,
+            }
+        )
+
     # Sliding window parameter search if choices provided
     if use_sw and "window_size_choices" in cfg:
         parameters.append(
