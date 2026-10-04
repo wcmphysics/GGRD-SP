@@ -103,6 +103,9 @@ def predict_sliding_window_spectrum(
         - 'stride' (int): Stride points.
         - 'device' (str | torch.device | None): Computation device.
         - 'batch_size' (int): Batch size for patch forward pass (default 64).
+        - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
+        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
+        - 'eps' (float): Epsilon floor for source scale (default 1e-4).
     **kwargs : Any
         Optional keyword arguments (e.g. window_size, stride) for backward compatibility.
 
@@ -115,17 +118,29 @@ def predict_sliding_window_spectrum(
     cfg.update(kwargs)
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
+    normalize_by_source = bool(cfg.get("normalize_by_source", True))
+    clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
+    eps = float(cfg.get("eps", 1e-4))
 
     device = cfg.get("device")
     if device is None:
-        device = next(model.parameters()).device
+        params = list(model.parameters())
+        device = params[0].device if params else torch.device("cpu")
     elif isinstance(device, str):
         device = torch.device(device)
 
     batch_size = int(cfg.get("batch_size", 64))
 
+    spectrum_1d = np.asarray(spectrum).ravel()
+    if normalize_by_source:
+        scale_x = max(float(np.max(np.abs(spectrum_1d))), eps)
+        spectrum_in = spectrum_1d / scale_x
+    else:
+        scale_x = 1.0
+        spectrum_in = spectrum_1d
+
     windows, start_indices = extract_sliding_windows(
-        spectrum, window_size=w_size, stride=s_step
+        spectrum_in, window_size=w_size, stride=s_step
     )
 
     model.eval()
@@ -137,13 +152,23 @@ def predict_sliding_window_spectrum(
             pred_patches_list.append(out)
 
     pred_patches = np.vstack(pred_patches_list)
-    reconstructed = reconstruct_from_patches(
+    reconstructed_norm = reconstruct_from_patches(
         patches=pred_patches,
         start_indices=start_indices,
-        original_length=len(np.asarray(spectrum).ravel()),
-        config={"window_size": w_size},
+        original_length=len(spectrum_1d),
+        config={"window_size": w_size, "clamp_non_negative": False},
     )
-    return reconstructed
+
+    # Rescale to physical counts
+    reconstructed_phys = reconstructed_norm * scale_x if normalize_by_source else reconstructed_norm
+
+    # Zero clamping at the final full spectrum reconstruction level
+    if clamp_non_negative:
+        reconstructed_final = np.clip(reconstructed_phys, 0.0, None)
+    else:
+        reconstructed_final = reconstructed_phys
+
+    return reconstructed_final
 
 
 def evaluate_sliding_window(
@@ -577,7 +602,10 @@ def predict_sliding_window_spectra(
             predicted_intensities[new_idx] = reconstructed
         else:
             warnings.warn(f"Region '{region}' not in models; falling back to identity pass-through.")
-            predicted_intensities[new_idx] = x_raw.copy()
+            fallback = x_raw.copy()
+            if bool(cfg.get("clamp_non_negative", True)):
+                fallback = np.clip(fallback, 0.0, None)
+            predicted_intensities[new_idx] = fallback
 
     meta_df_predicted = assemble_prediction_metadata(
         source_df,

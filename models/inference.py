@@ -164,6 +164,9 @@ def predict_spectra(
           (default None = all sessions for source_tool).
         - 'batch_size' (int): Batch size for inference (default 64).
         - 'device' (str | torch.device | None): Computation device (default CPU/CUDA auto).
+        - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
+        - 'clamp_non_negative' (bool): Whether to clamp final predicted intensities to non-negative (default True).
+        - 'eps' (float): Epsilon floor for source normalization scale (default 1e-4).
 
     Returns
     -------
@@ -188,6 +191,9 @@ def predict_spectra(
     target_tool: str = cfg.get("target_tool", "H1")
     measurement_ids: list[str] | None = cfg.get("measurement_ids")
     batch_size: int = int(cfg.get("batch_size", 64))
+    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+    clamp_non_negative: bool = bool(cfg.get("clamp_non_negative", True))
+    eps: float = float(cfg.get("eps", 1e-4))
     device_str = cfg.get("device")
 
     if device_str is None:
@@ -209,8 +215,9 @@ def predict_spectra(
 
     # Set all models to eval mode on target device
     for m in models.values():
-        m.eval()
-        m.to(device)
+        if isinstance(m, nn.Module):
+            m.eval()
+            m.to(device)
 
     n_samples = len(source_df)
     n_points = ary_intensity.shape[1]
@@ -231,21 +238,39 @@ def predict_spectra(
             model = models[str(region)]
             region_x = ary_intensity[orig_indices]
 
+            if normalize_by_source:
+                scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
+                region_x_in = region_x / scales
+            else:
+                scales = 1.0
+                region_x_in = region_x
+
             # Batch forward pass
             preds = []
-            for i in range(0, len(region_x), batch_size):
-                batch_x = region_x[i : i + batch_size]
+            for i in range(0, len(region_x_in), batch_size):
+                batch_x = region_x_in[i : i + batch_size]
                 x_tensor = torch.from_numpy(batch_x.astype(np.float32)).to(device)
                 with torch.no_grad():
                     y_pred = model(x_tensor).cpu().numpy()
                 preds.append(y_pred)
 
-            predicted_intensities[group_new_indices] = np.vstack(preds)
+            pred_arr = np.vstack(preds)
+            if normalize_by_source:
+                pred_arr = pred_arr * scales
+
+            # Zero clamping at final full spectrum reconstruction level
+            if clamp_non_negative:
+                pred_arr = np.clip(pred_arr, 0.0, None)
+
+            predicted_intensities[group_new_indices] = pred_arr
         else:
             warnings.warn(
                 f"Region '{region}' not in models dictionary; falling back to identity pass-through."
             )
-            predicted_intensities[group_new_indices] = ary_intensity[orig_indices]
+            fallback = ary_intensity[orig_indices]
+            if clamp_non_negative:
+                fallback = np.clip(fallback, 0.0, None)
+            predicted_intensities[group_new_indices] = fallback
 
     meta_df_predicted = assemble_prediction_metadata(
         source_df,

@@ -472,10 +472,17 @@ def predict_unet_spectra(
     source_mask = (meta_df["tool"] == source_tool) & (meta_df["region"].isin(regions))
     source_df = meta_df[source_mask].copy()
 
+    if source_df.empty:
+        raise ValueError(f"No source spectra found for tool='{source_tool}' with criteria: {cfg}")
+
     n_pred = len(source_df)
     n_points = ary_intensity.shape[1]
-    pred_intensities = np.empty((n_pred, n_points), dtype=np.float64)
-    pred_energies = np.empty((n_pred, n_points), dtype=np.float64)
+    pred_intensities = np.zeros((n_pred, n_points), dtype=np.float32)
+    pred_energies = np.zeros((n_pred, n_points), dtype=np.float32)
+
+    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+    clamp_non_negative: bool = bool(cfg.get("clamp_non_negative", True))
+    eps: float = float(cfg.get("eps", 1e-4))
 
     for new_idx, (_, row) in enumerate(source_df.iterrows()):
         reg = str(row["region"])
@@ -485,25 +492,59 @@ def predict_unet_spectra(
 
         if reg in models:
             model_entry = models[reg]
-            if use_sw or isinstance(model_entry, (tuple, list)):
+            if isinstance(model_entry, (tuple, list)):
                 model, w_size, s_step = model_entry[0], model_entry[1], model_entry[2]
-                model_device = next(model.parameters()).device
+                is_sw = True
+            elif use_sw:
+                model = model_entry
+                w_size = int(cfg.get("window_size", 15))
+                s_step = int(cfg.get("stride", max(1, w_size // 2)))
+                is_sw = True
+            else:
+                model = model_entry
+                is_sw = False
+
+            if is_sw:
+                sw_params = list(model.parameters())
+                model_device = sw_params[0].device if sw_params else torch.device("cpu")
                 pred_intensities[new_idx] = predict_sliding_window_spectrum(
                     model=model,
                     spectrum=x_raw,
-                    config={"window_size": w_size, "stride": s_step, "device": model_device},
+                    config={
+                        "window_size": w_size,
+                        "stride": s_step,
+                        "device": model_device,
+                        "normalize_by_source": normalize_by_source,
+                        "clamp_non_negative": clamp_non_negative,
+                        "eps": eps,
+                    },
                 )
             else:
                 model = model_entry
                 model.eval()
-                model_device = next(model.parameters()).device
+                m_params = list(model.parameters())
+                model_device = m_params[0].device if m_params else torch.device("cpu")
+                if normalize_by_source:
+                    scale_x = max(float(np.max(np.abs(x_raw))), eps)
+                    x_in = x_raw / scale_x
+                else:
+                    scale_x = 1.0
+                    x_in = x_raw
+
                 with torch.no_grad():
-                    x_tensor = torch.from_numpy(x_raw.astype(np.float32)).unsqueeze(0).to(model_device)
+                    x_tensor = torch.from_numpy(x_in.astype(np.float32)).unsqueeze(0).to(model_device)
                     y_pred = model(x_tensor).squeeze(0).cpu().numpy()
-                pred_intensities[new_idx] = y_pred
+
+                y_pred_phys = y_pred * scale_x if normalize_by_source else y_pred
+                if clamp_non_negative:
+                    y_pred_phys = np.clip(y_pred_phys, 0.0, None)
+                pred_intensities[new_idx] = y_pred_phys
         else:
             warnings.warn(f"No trained model found for region '{reg}'. Copying source intensity.")
-            pred_intensities[new_idx] = x_raw.copy()
+            fallback = x_raw.copy()
+            if clamp_non_negative:
+                fallback = np.clip(fallback, 0.0, None)
+            pred_intensities[new_idx] = fallback
 
     pred_meta_df = assemble_prediction_metadata(
         source_df,
