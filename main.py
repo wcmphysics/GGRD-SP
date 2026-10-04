@@ -41,7 +41,7 @@ def main() -> None:
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
-    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
+    show_plots = False  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
@@ -53,7 +53,7 @@ def main() -> None:
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
             source_tool: {"shift_ev": 0.0, "scale": 10000.0},
-            target_tool: {"shift_ev": 0.2, "scale": 10000.1},
+            target_tool: {"shift_ev": 1.1, "scale": 14000.0},
         },
         "die_variation_std": 0.03,
         "noise_relative_std": 0.015,
@@ -111,7 +111,7 @@ def main() -> None:
         "val_ratio": 0.2,
         "test_ratio": 0.3,
         "seed": None,
-        "window_size_ev": 2.0,  # Local window length in eV
+        "window_size_ev": 3.0,  # Local window length in eV
         "sliding_stride_ev": 1.0,  # Sliding stride step in eV
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
@@ -132,14 +132,14 @@ def main() -> None:
             "kernel_size": 5,
             "l2_weight": 1e-4,
             "early_stopping_patience": 10,
-            "verbose": False,
+            "verbose": True,
         },
         "predict_source": True,
     }
 
     # Part 3: 1D U-Net Neural Network & Ax Bayesian Optimization configuration
     unet_config = {
-        "use_sliding_window": False,  # True for patch-to-patch mode, False for full regional spectrum mode
+        "use_sliding_window": True,  # True for patch-to-patch mode, False for full regional spectrum mode
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "source_tool": source_tool,
         "target_tool": target_tool,
