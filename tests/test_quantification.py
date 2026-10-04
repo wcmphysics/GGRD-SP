@@ -10,9 +10,11 @@ from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
     _find_minima_endpoints,
+    calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,
     determine_shirley_endpoints,
+    format_side_by_side_atomic_percentages,
     get_default_quantification_config,
 )
 from utility.visualization import plot_shirley_background
@@ -466,5 +468,84 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         self.assertEqual(i_1, 50.0)
 
 
+class TestAtomicPercentageSplitStatistics(unittest.TestCase):
+    """Test suite for atomic percentage split statistics and side-by-side formatting."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        config = {
+            "measurements_per_tool": {"J4": 2, "J5": 2},
+            "n_die": 3,
+            "n_points": 60,
+            "seed": 42,
+        }
+        cls.ary_int, cls.ary_ene, cls.meta_df = generate_pseudo_measurements(config)
+
+    def test_calculate_atomic_percentage_split_statistics(self) -> None:
+        """Verify atomic percentage statistics are calculated across train and test splits."""
+        # Build mock original and predicted datasets
+        meta_orig = self.meta_df.copy()
+        # Pair measurement M_J4_00000 with M_J5_00000 and M_J4_00001 with M_J5_00001
+        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00000", "measurement_id_target"] = "NMG_M_J5_00000"
+        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00001", "measurement_id_target"] = "NMG_M_J5_00001"
+
+        meta_pred = meta_orig[meta_orig["tool"] == "J4"].copy()
+        meta_pred["source_measurement_id"] = meta_pred["measurement_id"]
+        meta_pred["measurement_id"] = meta_pred["measurement_id"].str.replace("_M_J4_", "_P_J4J5_")
+        meta_pred["split"] = np.where(meta_pred["source_measurement_id"] == "NMG_M_J4_00000", "train", "test")
+        meta_pred["spectrum_index"] = np.arange(len(meta_pred))
+
+        # Use ary_int with slight shift for predicted
+        ary_pred = self.ary_int[:len(meta_pred)] * 1.05
+
+        df_samples, df_summary = calculate_atomic_percentage_split_statistics(
+            (self.ary_int, self.ary_ene, meta_orig),
+            (ary_pred, self.ary_ene[:len(meta_pred)], meta_pred),
+            config={"splits": ["train", "test"]},
+        )
+
+        self.assertFalse(df_samples.empty)
+        self.assertFalse(df_summary.empty)
+        self.assertEqual(set(df_summary["split"].unique()), {"train", "test"})
+        self.assertIn("element", df_summary.columns)
+        self.assertIn("target_mean", df_summary.columns)
+        self.assertIn("pred_mean", df_summary.columns)
+        self.assertIn("diff_mean", df_summary.columns)
+        self.assertIn("mae", df_summary.columns)
+
+        # Check side-by-side formatting
+        df_side = format_side_by_side_atomic_percentages(df_summary, config={"splits": ["train", "test"]})
+        self.assertFalse(df_side.empty)
+        self.assertIn("element", df_side.columns)
+        self.assertIn("pred_train", df_side.columns)
+        self.assertIn("pred_test", df_side.columns)
+        self.assertIn("mae_train", df_side.columns)
+        self.assertIn("mae_test", df_side.columns)
+
+    def test_split_statistics_empty_splits_warns(self) -> None:
+        """Verify warning when requested split is not present in data."""
+        meta_orig = self.meta_df.copy()
+        meta_orig["measurement_id_target"] = "NMG_M_J5_00000"
+        meta_pred = meta_orig[meta_orig["tool"] == "J4"].copy()
+        meta_pred["source_measurement_id"] = meta_pred["measurement_id"]
+        meta_pred["measurement_id"] = "NMG_P_J4J5_00000"
+        meta_pred["split"] = "train"
+        meta_pred["spectrum_index"] = np.arange(len(meta_pred))
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            df_samples, df_summary = calculate_atomic_percentage_split_statistics(
+                (self.ary_int, self.ary_ene, meta_orig),
+                (self.ary_int[:len(meta_pred)], self.ary_ene[:len(meta_pred)], meta_pred),
+                config={"splits": ["non_existent_split"]},
+            )
+            self.assertTrue(df_samples.empty)
+            self.assertTrue(df_summary.empty)
+            self.assertTrue(any("No paired sessions found" in str(item.message) for item in w))
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
