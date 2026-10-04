@@ -13,12 +13,10 @@ import numpy as np
 import pandas as pd
 
 try:
-    from scipy.optimize._lsap import linear_sum_assignment
+    from scipy.optimize import linear_sum_assignment
 except (ImportError, OSError):
-    try:
-        from scipy.optimize import linear_sum_assignment
-    except (ImportError, OSError):
-        linear_sum_assignment = None
+    linear_sum_assignment = None
+
 
 
 def get_default_pairing_config() -> dict[str, Any]:

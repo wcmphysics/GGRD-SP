@@ -12,11 +12,11 @@ import warnings
 import numpy as np
 import pandas as pd
 
-# Backward compatibility for trapezoidal numerical integration:
-# In older NumPy versions (< 2.0), this function is named numpy.trapz.
-# In NumPy >= 2.0, it was renamed to numpy.trapezoid.
-if not hasattr(np, "trapz") and hasattr(np, "trapezoid"):
-    np.trapz = np.trapezoid  # type: ignore[attr-defined]
+def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
+    """Compute trapezoidal integration robustly across NumPy versions."""
+    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+    return float(trapz_fn(y, x))
+
 
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka X-ray excitation
@@ -417,7 +417,7 @@ def calculate_shirley_background(
         # Iterative Shirley background calculation
         for _ in range(max_iter):
             peak = np.maximum(0.0, i_sub - b_sub)
-            total_peak_area = float(np.trapz(peak, e_sub))  # type: ignore[attr-defined]
+            total_peak_area = _trapezoid(peak, e_sub)
 
             if total_peak_area <= 0.0:
                 break
@@ -436,7 +436,7 @@ def calculate_shirley_background(
 
         # Physical safeguard: background cannot exceed measured spectrum intensity
         b_sub = np.minimum(b_sub, i_sub)
-        net_area = float(np.trapz(np.maximum(0.0, i_sub - b_sub), e_sub))  # type: ignore[attr-defined]
+        net_area = _trapezoid(np.maximum(0.0, i_sub - b_sub), e_sub)
 
     # Construct full background array: B(E) = I(E) outside [E1, E2]
     b_work = i_work.copy()
