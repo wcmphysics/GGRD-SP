@@ -16,9 +16,11 @@ from utility.pseudo_measurement import (
 )
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
+    calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,
     determine_shirley_endpoints,
+    format_side_by_side_atomic_percentages,
     get_default_quantification_config,
 )
 from utility.visualization import (
@@ -39,6 +41,8 @@ __all__ = [
     "calculate_shirley_background",
     "determine_shirley_endpoints",
     "calculate_atomic_percentages",
+    "calculate_atomic_percentage_split_statistics",
+    "format_side_by_side_atomic_percentages",
     "get_default_quantification_config",
     "DEFAULT_SCOFIELD_RSF",
     "calculate_window_points",

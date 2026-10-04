@@ -581,3 +581,235 @@ def calculate_atomic_percentages(
 
     df_summary = pd.DataFrame(summary_records)
     return df_per_die, df_summary
+
+
+def calculate_atomic_percentage_split_statistics(
+    data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    config: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Calculate atomic percentage statistics across data splits (Train, Test, Val).
+
+    Fulfills chemical quantification comparison across splits:
+    1. Computes Shirley net peak areas and atomic percentages for Source, True Target,
+       and Predicted Target spectra across each die of all paired sessions.
+    2. Groups results by data split ('train', 'test', etc.) and element.
+    3. Provides detailed element-wise statistics: Source mean/std, Target mean/std,
+       Predicted mean/std, error (Pred - Target), MAE, and baseline MAE.
+
+    Parameters
+    ----------
+    data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Original measured data (ary_intensity, ary_energy, meta_df).
+    data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Predicted data (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'splits' (list[str]): Data splits to evaluate (default ['train', 'test']).
+        - 'material' (str | None): Target material (default 'NMG').
+        - 'rsf_dict' (dict[str, float]): RSF mapping (default DEFAULT_SCOFIELD_RSF).
+        - 'quantification_config' (dict | None): Extra options for calculate_atomic_percentages.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        - df_samples: Detailed DataFrame per (split, measurement, die, element).
+        - df_summary: Summary DataFrame aggregated by (split, element).
+    """
+    ary_intensity_orig, ary_energy_orig, meta_df_orig = data_original
+    ary_intensity_pred, ary_energy_pred, meta_df_pred = data_predicted
+
+    cfg = config or {}
+    splits_filter = list(cfg.get("splits", ["train", "test"]))
+    material = cfg.get("material", "NMG")
+    rsf_dict = cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF)
+    quant_extra = cfg.get("quantification_config", {})
+
+    quant_cfg = dict(quant_extra)
+    quant_cfg.setdefault("material", material)
+    quant_cfg.setdefault("rsf_dict", rsf_dict)
+
+    # 1. Compute per-die atomic percentages for original and predicted datasets
+    df_per_die_orig, _ = calculate_atomic_percentages(
+        ary_energy_orig, ary_intensity_orig, meta_df_orig, config=quant_cfg
+    )
+    df_per_die_pred, _ = calculate_atomic_percentages(
+        ary_energy_pred, ary_intensity_pred, meta_df_pred, config=quant_cfg
+    )
+
+    # 2. Build mapping between predicted session, source session, target session, and split
+    pred_meta_subset = meta_df_pred[
+        ["measurement_id", "source_measurement_id", "split"]
+    ].dropna().drop_duplicates()
+
+    src_target_map = meta_df_orig[
+        ["measurement_id", "measurement_id_target"]
+    ].dropna().drop_duplicates().rename(columns={"measurement_id": "source_measurement_id"})
+
+    session_mapping = pred_meta_subset.merge(
+        src_target_map, on="source_measurement_id", how="inner"
+    )
+
+    if splits_filter is not None:
+        session_mapping = session_mapping[session_mapping["split"].isin(splits_filter)]
+
+    if session_mapping.empty:
+        warnings.warn("No paired sessions found matching requested splits for atomic percentage statistics.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    element_cols = [c for c in df_per_die_orig.columns if c.endswith("_at%")]
+
+    # 3. Combine per-die atomic percentages for Source, Target, and Predicted
+    records: list[dict[str, Any]] = []
+    for _, map_row in session_mapping.iterrows():
+        p_id = str(map_row["measurement_id"])
+        s_id = str(map_row["source_measurement_id"])
+        t_id = str(map_row["measurement_id_target"])
+        split_val = str(map_row["split"])
+
+        sub_p = df_per_die_pred[df_per_die_pred["measurement_id"] == p_id].set_index("die")
+        sub_s = df_per_die_orig[df_per_die_orig["measurement_id"] == s_id].set_index("die")
+        sub_t = df_per_die_orig[df_per_die_orig["measurement_id"] == t_id].set_index("die")
+
+        common_dies = sorted(set(sub_p.index).intersection(sub_s.index).intersection(sub_t.index))
+        for die in common_dies:
+            for c in element_cols:
+                elem = c[:-4] if c.endswith("_at%") else c
+                val_s = float(sub_s.loc[die, c])
+                val_t = float(sub_t.loc[die, c])
+                val_p = float(sub_p.loc[die, c])
+                diff_val = val_p - val_t
+                abs_diff = abs(diff_val)
+                base_diff = abs(val_s - val_t)
+
+                records.append({
+                    "split": split_val,
+                    "element": elem,
+                    "source_measurement_id": s_id,
+                    "target_measurement_id": t_id,
+                    "predicted_measurement_id": p_id,
+                    "die": int(die),
+                    "source_at%": val_s,
+                    "target_at%": val_t,
+                    "pred_at%": val_p,
+                    "diff_at%": diff_val,
+                    "abs_diff_at%": abs_diff,
+                    "base_abs_diff_at%": base_diff,
+                })
+
+    df_samples = pd.DataFrame(records)
+    if df_samples.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # 4. Aggregate summary statistics by (split, element)
+    summary_records: list[dict[str, Any]] = []
+    ordered_splits = [s for s in splits_filter if s in df_samples["split"].unique()]
+    ordered_elements = [c[:-4] for c in element_cols if c[:-4] in df_samples["element"].unique()]
+
+    for split in ordered_splits:
+        sp_df = df_samples[df_samples["split"] == split]
+        for elem in ordered_elements:
+            el_df = sp_df[sp_df["element"] == elem]
+            if el_df.empty:
+                continue
+
+            n_samples = len(el_df)
+            src_mean = float(el_df["source_at%"].mean())
+            src_std = float(el_df["source_at%"].std(ddof=1)) if n_samples > 1 else 0.0
+            tgt_mean = float(el_df["target_at%"].mean())
+            tgt_std = float(el_df["target_at%"].std(ddof=1)) if n_samples > 1 else 0.0
+            pred_mean = float(el_df["pred_at%"].mean())
+            pred_std = float(el_df["pred_at%"].std(ddof=1)) if n_samples > 1 else 0.0
+
+            diff_mean = float(el_df["diff_at%"].mean())
+            diff_std = float(el_df["diff_at%"].std(ddof=1)) if n_samples > 1 else 0.0
+            mae = float(el_df["abs_diff_at%"].mean())
+            mae_std = float(el_df["abs_diff_at%"].std(ddof=1)) if n_samples > 1 else 0.0
+            base_mae = float(el_df["base_abs_diff_at%"].mean())
+
+            summary_records.append({
+                "split": split,
+                "element": elem,
+                "n_samples": n_samples,
+                "source_mean": round(src_mean, 3),
+                "source_std": round(src_std, 3),
+                "target_mean": round(tgt_mean, 3),
+                "target_std": round(tgt_std, 3),
+                "pred_mean": round(pred_mean, 3),
+                "pred_std": round(pred_std, 3),
+                "diff_mean": round(diff_mean, 3),
+                "diff_std": round(diff_std, 3),
+                "mae": round(mae, 3),
+                "mae_std": round(mae_std, 3),
+                "base_mae": round(base_mae, 3),
+            })
+
+    df_summary = pd.DataFrame(summary_records)
+    return df_samples, df_summary
+
+
+def format_side_by_side_atomic_percentages(
+    df_split_summary: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Format split atomic percentage summary into a side-by-side comparison table.
+
+    Produces a clean comparison table with elements as rows and metrics grouped
+    side-by-side across splits (e.g. Train vs. Test).
+
+    Parameters
+    ----------
+    df_split_summary : pd.DataFrame
+        Summary DataFrame output from calculate_atomic_percentage_split_statistics.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'splits' (list[str]): Data splits to display (default ['train', 'test']).
+        - 'format_str' (bool): Format values as 'mean ± std%' string (default True).
+
+    Returns
+    -------
+    pd.DataFrame
+        Side-by-side comparison table.
+    """
+    if df_split_summary.empty or "split" not in df_split_summary.columns:
+        return pd.DataFrame()
+
+    cfg = config or {}
+    preferred_splits = list(cfg.get("splits", ["train", "test"]))
+    format_str = bool(cfg.get("format_str", True))
+
+    present_splits = [s for s in preferred_splits if s in df_split_summary["split"].unique()]
+    if not present_splits:
+        return pd.DataFrame()
+
+    elements = sorted(df_split_summary["element"].unique())
+    rows: list[dict[str, Any]] = []
+
+    for elem in elements:
+        row_dict: dict[str, Any] = {"element": elem}
+        for split in present_splits:
+            s_df = df_split_summary[
+                (df_split_summary["split"] == split) & (df_split_summary["element"] == elem)
+            ]
+            if s_df.empty:
+                continue
+            r = s_df.iloc[0]
+
+            if format_str:
+                row_dict[f"target_{split}"] = f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
+                row_dict[f"pred_{split}"] = f"{r['pred_mean']:.2f}% ± {r['pred_std']:.2f}%"
+                row_dict[f"diff_{split}"] = f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
+                row_dict[f"mae_{split}"] = f"{r['mae']:.2f}%"
+            else:
+                row_dict[f"target_mean_{split}"] = r["target_mean"]
+                row_dict[f"target_std_{split}"] = r["target_std"]
+                row_dict[f"pred_mean_{split}"] = r["pred_mean"]
+                row_dict[f"pred_std_{split}"] = r["pred_std"]
+                row_dict[f"diff_mean_{split}"] = r["diff_mean"]
+                row_dict[f"diff_std_{split}"] = r["diff_std"]
+                row_dict[f"mae_{split}"] = r["mae"]
+
+        rows.append(row_dict)
+
+    return pd.DataFrame(rows)
+
