@@ -175,8 +175,7 @@ def main() -> None:
     print("\nRegional Evaluation Losses:")
     print("  Region | Val Normalized MSE | Test Normalized MSE")
     print("  -------+--------------------+--------------------")
-    for reg in sorted(val_evaluation.keys()):
-        val_l = val_evaluation.get(reg, float("nan"))
+    for reg, val_l in sorted(val_evaluation.items()):
         test_l = test_evaluation.get(reg, float("nan"))
         print(f"  {reg:6s} | {val_l:18.6f} | {test_l:19.6f}")
 
@@ -210,32 +209,24 @@ def main() -> None:
     # =========================================================================
     print("\n=== Part 5: Calculating Atomic Percentage (Shirley Integration) ===")
 
-    # 1. Measured source tool session
-    df_per_die_src, df_summary_src = calculate_atomic_percentages(
-        ary_energy,
-        ary_intensity,
-        meta_df,
-        config={"measurement_id": sample_meas_id},
-    )
+    def _print_quant_summary(label: str, meas: str, df_die: pd.DataFrame, df_sum: pd.DataFrame) -> None:
+        print(f"\n[{label}] Atomic percentage per die for session '{meas}' (first 3 dies):")
+        print(df_die.head(3).to_string(index=False))
+        print(f"\nSummary across all dies for {label} '{meas}':")
+        print(df_sum.to_string(index=False))
 
-    # 2. Predicted target tool session
     pred_sample_meas_id = format_predicted_measurement_id(sample_meas_id, source_tool, target_tool)
+
+    df_per_die_src, df_summary_src = calculate_atomic_percentages(
+        ary_energy, ary_intensity, meta_df, config={"measurement_id": sample_meas_id}
+    )
     df_per_die_pred, df_summary_pred = calculate_atomic_percentages(
-        ary_energy_predicted,
-        ary_intensity_predicted,
-        meta_df_predicted,
-        config={"measurement_id": pred_sample_meas_id},
+        ary_energy_predicted, ary_intensity_predicted, meta_df_predicted,
+        config={"measurement_id": pred_sample_meas_id}
     )
 
-    print(f"\n[Source Measured] Atomic percentage per die for session '{sample_meas_id}' (first 3 dies):")
-    print(df_per_die_src.head(3).to_string(index=False))
-    print(f"\n[Predicted Target] Atomic percentage per die for session '{pred_sample_meas_id}' (first 3 dies):")
-    print(df_per_die_pred.head(3).to_string(index=False))
-
-    print(f"\nSummary across all 9 dies for Source '{sample_meas_id}':")
-    print(df_summary_src.to_string(index=False))
-    print(f"\nSummary across all 9 dies for Predicted '{pred_sample_meas_id}':")
-    print(df_summary_pred.to_string(index=False))
+    _print_quant_summary("Source Measured", sample_meas_id, df_per_die_src, df_summary_src)
+    _print_quant_summary("Predicted Target", pred_sample_meas_id, df_per_die_pred, df_summary_pred)
 
     # =========================================================================
     # DEMONSTRATION PLOTS
@@ -262,15 +253,14 @@ def main() -> None:
     )
 
     # 4. Training loss history curves across all regions (Part 4)
+    model_labels = {
+        "resnet": "1D ResNet",
+        "residual_unet": "1D Residual U-Net",
+        "unet_residual": "1D Residual U-Net",
+        "unet": "Conventional 1D U-Net",
+    }
     mode_str = "Sliding Window" if use_sliding_window else "Full Spectrum"
-    if model_type == "resnet":
-        model_name_label = f"1D ResNet ({mode_str})"
-    elif model_type in ("residual_unet", "unet_residual"):
-        model_name_label = f"1D Residual U-Net ({mode_str})"
-    elif model_type == "unet":
-        model_name_label = f"Conventional 1D U-Net ({mode_str})"
-    else:
-        model_name_label = f"{model_type} ({mode_str})"
+    model_name_label = f"{model_labels.get(model_type, model_type)} ({mode_str})"
 
     plot_training_history(
         model_results["histories"],
