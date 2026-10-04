@@ -9,6 +9,8 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from utility.patching import extract_sliding_windows
+
 
 class SpectrumPairDataset(Dataset):
     """PyTorch Dataset yielding paired source and target spectral vectors.
@@ -118,6 +120,63 @@ class SpectrumPairDataset(Dataset):
         """Scale a normalized target prediction back to physical counts using source scale."""
         scale = self.get_scale(idx)
         return y_norm * scale
+
+
+class SpectrumPatchDataset(Dataset):
+    """PyTorch Dataset yielding paired sliding window patches extracted from paired spectra.
+
+    Parameters
+    ----------
+    full_dataset : SpectrumPairDataset
+        The full-spectrum paired dataset.
+    window_size : int
+        Window size in points.
+    stride : int
+        Stride in points.
+    """
+
+    def __init__(
+        self,
+        full_dataset: SpectrumPairDataset,
+        window_size: int,
+        stride: int,
+    ) -> None:
+        self.window_size = window_size
+        self.stride = stride
+
+        x_patches_list: list[np.ndarray] = []
+        y_patches_list: list[np.ndarray] = []
+        max_vals_list: list[float] = []
+
+        for idx in range(len(full_dataset)):
+            item = full_dataset[idx]
+            x_arr = item["x"].cpu().numpy()
+            y_arr = item["y"].cpu().numpy()
+            max_y = max(float(np.max(np.abs(y_arr))), 1e-4)
+
+            x_win, _ = extract_sliding_windows(x_arr, window_size, stride)
+            y_win, _ = extract_sliding_windows(y_arr, window_size, stride)
+
+            x_patches_list.append(x_win)
+            y_patches_list.append(y_win)
+            max_vals_list.extend([max_y] * len(x_win))
+
+        if not x_patches_list:
+            raise ValueError("No patches could be extracted from the dataset.")
+
+        self.x = torch.from_numpy(np.vstack(x_patches_list).astype(np.float32))
+        self.y = torch.from_numpy(np.vstack(y_patches_list).astype(np.float32))
+        self.max_vals = torch.tensor(max_vals_list, dtype=torch.float32).unsqueeze(1)
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        return {
+            "x": self.x[idx],
+            "y": self.y[idx],
+            "max_val": self.max_vals[idx],
+        }
 
 
 def partition_measurement_sessions(
