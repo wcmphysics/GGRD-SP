@@ -32,7 +32,7 @@ def main() -> None:
     # "resnet": 1D ResNet (3 CNN layers with mirror padding and shortcut)
     # "residual_unet": 1D Residual U-Net (y = x + UNet(x))
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
-    model_type = "unet"  # Options: "resnet", "residual_unet", or "unet"
+    model_type = "residual_unet"  # Options: "resnet", "residual_unet", or "unet"
     use_sliding_window = True  # Toggle available to all 3 models (True for patch data augmentation)
 
     source_tool = "J4"
@@ -78,12 +78,13 @@ def main() -> None:
         "val_ratio": 0.2,
         "test_ratio": 0.3,
         "seed": None,
-        "window_size_ev": 6.0,  # Local window length in eV (used if use_sliding_window=True)
-        "sliding_stride_ev": 2.0,  # Sliding stride step in eV (used if use_sliding_window=True)
+        "window_size_ev": 6.0,  # Global default window length in eV
+        "sliding_stride_ev": 2.0,  # Global default sliding stride step in eV
         "use_bayesian_opt": False,  # Set to True to enable Ax Bayesian hyperparameter optimization
         "bayesian_opt_config": {
             "num_trials": 5,
             "epochs_per_trial": 15,
+            "batch_sizes": [16, 32, 64],
             "kernel_sizes": [3, 5, 7],
             "hidden_channels": [16, 32, 64],
             "base_channels": [16, 32],
@@ -103,6 +104,15 @@ def main() -> None:
             "l2_weight": 1e-4,
             "early_stopping_patience": 10,
             "verbose": True,
+        },
+        # Per-region configuration overrides (e.g. specialized window size or learning rate)
+        "region_configs": {
+            "Al2p": {
+                "window_size_ev": 3.0,
+                "sliding_stride_ev": 1.0,
+                "batch_size": 16,
+                "learning_rate": 2e-3,
+            },
         },
         "predict_source": True,
     }
