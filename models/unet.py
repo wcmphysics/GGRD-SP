@@ -17,18 +17,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from models.baseline_cnn import NormalizedMSELoss
-from models.bayesian_opt import run_ax_search
-from models.dataset import SpectrumPairDataset, create_dataloaders
-from models.inference import assemble_prediction_metadata
-from models.root import run_model_pipeline
-from models.sliding_window import (
-    SpectrumPatchDataset,
-    evaluate_sliding_window,
-    predict_sliding_window_spectrum,
-)
-from utility.patching import calculate_window_points
-
 
 class UNetConvBlock1D(nn.Module):
     """Double 1D convolutional block with normalization and non-linear activations."""
@@ -239,152 +227,36 @@ class UNet1D(nn.Module):
         return l2_sum
 
 
+class ResidualUNet1D(UNet1D):
+    """1D U-Net with global residual shortcut: y = x + UNet(x)."""
+
+    def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
+        cfg = dict(config or {})
+        cfg["residual"] = True
+        super().__init__(n_points=n_points, config=cfg)
+
+
+class ConventionalUNet1D(UNet1D):
+    """Conventional 1D U-Net without global shortcut: y = UNet(x)."""
+
+    def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
+        cfg = dict(config or {})
+        cfg["residual"] = False
+        super().__init__(n_points=n_points, config=cfg)
+
+
 def train_unet_region(
     train_dataset: Dataset,
     val_dataset: Dataset,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Train a 1D U-Net model on a spectral dataset.
+    """Train a 1D U-Net model on a spectral dataset."""
+    from models.trainer import train_model_region
 
-    Parameters
-    ----------
-    train_dataset : Dataset
-        Dataset providing training samples.
-    val_dataset : Dataset
-        Dataset providing validation samples.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'epochs' (int): Number of training epochs (default 100).
-        - 'batch_size' (int): Batch size (default 16).
-        - 'learning_rate' (float): Optimizer learning rate (default 1e-3).
-        - 'l2_weight' (float): L2 regularization factor (default 1e-4).
-        - 'base_channels' (int): Base feature channels (default 16).
-        - 'depth' (int): Number of downsampling levels (default 3).
-        - 'kernel_size' (int): Convolution kernel size (default 5).
-        - 'dropout' (float): Dropout probability (default 0.0).
-        - 'use_batch_norm' (bool): Whether to use BatchNorm1d (default True).
-        - 'residual' (bool): Global residual mode (default True).
-        - 'early_stopping_patience' (int): Early stopping patience (default 15).
-        - 'device' (str | torch.device | None): Computation device.
-        - 'verbose' (bool): Whether to print epoch progress (default False).
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary containing 'model', 'best_val_loss', 'best_epoch', and 'history'.
-    """
-    cfg = config or {}
-    epochs: int = int(cfg.get("epochs", 100))
-    batch_size: int = int(cfg.get("batch_size", 16))
-    lr: float = float(cfg.get("learning_rate", 1e-3))
-    l2_weight: float = float(cfg.get("l2_weight", 1e-4))
-    patience: int = int(cfg.get("early_stopping_patience", 15))
-    verbose: bool = bool(cfg.get("verbose", False))
-
-    device_cfg = cfg.get("device")
-    if device_cfg is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(device_cfg)
-
-    # Inspect sample length
-    sample = train_dataset[0]
-    n_points = int(sample["x"].shape[-1])
-
-    dl_cfg = {
-        "batch_size": batch_size,
-        "shuffle_train": True,
-        "num_workers": int(cfg.get("num_workers", 0)),
-    }
-    train_loader, val_loader = create_dataloaders(train_dataset, val_dataset, config=dl_cfg)
-
-    model = UNet1D(n_points=n_points, config=cfg).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = NormalizedMSELoss(l2_weight=l2_weight)
-    eval_criterion = NormalizedMSELoss(l2_weight=0.0)
-
-    best_val_loss = float("inf")
-    best_epoch = 0
-    best_state_dict: dict[str, Any] | None = None
-    patience_counter = 0
-
-    history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
-
-    for epoch in range(1, epochs + 1):
-        # Training phase
-        model.train()
-        total_train_loss = 0.0
-        n_batches = 0
-
-        for batch in train_loader:
-            x = batch["x"].to(device)
-            y = batch["y"].to(device)
-            max_v = batch["max_val"].to(device) if "max_val" in batch and batch["max_val"] is not None else None
-
-            optimizer.zero_grad()
-            y_pred = model(x)
-            loss = criterion(y_pred, y, model=model, max_val=max_v)
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item()
-            n_batches += 1
-
-        avg_train_loss = total_train_loss / max(1, n_batches)
-
-        # Validation phase: evaluate on full reconstructed spectrum if val_full_dataset is supplied
-        if cfg.get("val_full_dataset") is not None:
-            w_size = int(cfg.get("window_size", n_points))
-            s_step = int(cfg.get("stride", max(1, w_size // 2)))
-            avg_val_loss = evaluate_sliding_window(
-                model=model,
-                full_val_dataset=cfg["val_full_dataset"],
-                criterion=eval_criterion,
-                config={"window_size": w_size, "stride": s_step, "device": device},
-            )
-        else:
-            model.eval()
-            total_val_loss = 0.0
-            val_batches = 0
-            with torch.no_grad():
-                for batch in val_loader:
-                    x = batch["x"].to(device)
-                    y = batch["y"].to(device)
-                    y_pred = model(x)
-                    val_loss = eval_criterion(y_pred, y)
-                    total_val_loss += val_loss.item()
-                    val_batches += 1
-
-            avg_val_loss = total_val_loss / max(1, val_batches)
-        history["train_loss"].append(avg_train_loss)
-        history["val_loss"].append(avg_val_loss)
-
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            best_epoch = epoch
-            best_state_dict = copy.deepcopy(model.state_dict())
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if verbose and (epoch % 10 == 0 or epoch == epochs):
-            print(f"[UNet1D] Epoch {epoch:3d}/{epochs:3d} - Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
-
-        if patience_counter >= patience:
-            if verbose:
-                print(f"[UNet1D] Early stopping at epoch {epoch} (best: {best_val_loss:.6f})")
-            break
-
-    if best_state_dict is not None:
-        model.load_state_dict(best_state_dict)
-
-    return {
-        "model": model,
-        "best_val_loss": best_val_loss,
-        "best_epoch": best_epoch,
-        "history": history,
-        "config": cfg,
-    }
+    cfg = dict(config or {})
+    is_res = cfg.get("residual", True)
+    cfg.setdefault("model_type", "residual_unet" if is_res else "unet")
+    return train_model_region(train_dataset, val_dataset, config=cfg)
 
 
 def optimize_unet_hyperparameters(
@@ -393,63 +265,9 @@ def optimize_unet_hyperparameters(
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Perform Bayesian optimization over 1D U-Net hyperparameters using Ax."""
-    cfg = config or {}
-    base_channel_choices: list[int] = list(cfg.get("base_channels", [16, 32]))
-    depth_choices: list[int] = list(cfg.get("depths", [2, 3]))
-    kernel_sizes: list[int] = list(cfg.get("kernel_sizes", [3, 5]))
-    lr_bounds: tuple[float, float] = tuple(cfg.get("lr_bounds", (1e-4, 1e-2)))
-    l2_bounds: tuple[float, float] = tuple(cfg.get("l2_bounds", (1e-6, 1e-2)))
+    from models.bayesian_opt import optimize_unet_hyperparameters as _opt
 
-    parameters: list[dict[str, Any]] = [
-        {
-            "name": "base_channels",
-            "type": "choice",
-            "values": base_channel_choices,
-            "value_type": "int",
-            "is_ordered": True,
-        },
-        {
-            "name": "depth",
-            "type": "choice",
-            "values": depth_choices,
-            "value_type": "int",
-            "is_ordered": True,
-        },
-        {
-            "name": "kernel_size",
-            "type": "choice",
-            "values": kernel_sizes,
-            "value_type": "int",
-            "is_ordered": True,
-        },
-        {
-            "name": "learning_rate",
-            "type": "range",
-            "bounds": [float(lr_bounds[0]), float(lr_bounds[1])],
-            "value_type": "float",
-            "log_scale": True,
-        },
-        {
-            "name": "l2_weight",
-            "type": "range",
-            "bounds": [float(l2_bounds[0]), float(l2_bounds[1])],
-            "value_type": "float",
-            "log_scale": True,
-        },
-    ]
-
-    search_cfg = dict(cfg)
-    search_cfg.setdefault("experiment_name", "unet_spectral_transfer_optimization")
-    search_cfg.setdefault("num_trials", 6)
-    search_cfg.setdefault("epochs_per_trial", 15)
-
-    return run_ax_search(
-        train_fn=train_unet_region,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        parameters=parameters,
-        config=search_cfg,
-    )
+    return _opt(train_dataset, val_dataset, config=config)
 
 
 def predict_unet_spectra(
@@ -458,104 +276,9 @@ def predict_unet_spectra(
     config: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """Generate transformed predictions across source measurements using trained U-Net models."""
-    if isinstance(data, (tuple, list)):
-        ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
-    else:
-        ary_intensity, ary_energy, meta_df = data["ary_intensity"], data["ary_energy"], data["meta_df"]
+    from models.inference import predict_spectra
 
-    cfg = config or {}
-    source_tool = str(cfg.get("source_tool", "J4"))
-    target_tool = str(cfg.get("target_tool", "H1"))
-    use_sw = bool(cfg.get("use_sliding_window", False))
-
-    regions = list(models.keys())
-    source_mask = (meta_df["tool"] == source_tool) & (meta_df["region"].isin(regions))
-    source_df = meta_df[source_mask].copy()
-
-    if source_df.empty:
-        raise ValueError(f"No source spectra found for tool='{source_tool}' with criteria: {cfg}")
-
-    n_pred = len(source_df)
-    n_points = ary_intensity.shape[1]
-    pred_intensities = np.zeros((n_pred, n_points), dtype=np.float32)
-    pred_energies = np.zeros((n_pred, n_points), dtype=np.float32)
-
-    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
-    clamp_non_negative: bool = bool(cfg.get("clamp_non_negative", True))
-    eps: float = float(cfg.get("eps", 1e-4))
-
-    for new_idx, (_, row) in enumerate(source_df.iterrows()):
-        reg = str(row["region"])
-        orig_idx = int(row["spectrum_index"])
-        pred_energies[new_idx] = ary_energy[orig_idx]
-        x_raw = ary_intensity[orig_idx]
-
-        if reg in models:
-            model_entry = models[reg]
-            if isinstance(model_entry, (tuple, list)):
-                model, w_size, s_step = model_entry[0], model_entry[1], model_entry[2]
-                is_sw = True
-            elif use_sw:
-                model = model_entry
-                w_size = int(cfg.get("window_size", 15))
-                s_step = int(cfg.get("stride", max(1, w_size // 2)))
-                is_sw = True
-            else:
-                model = model_entry
-                is_sw = False
-
-            if is_sw:
-                sw_params = list(model.parameters())
-                model_device = sw_params[0].device if sw_params else torch.device("cpu")
-                pred_intensities[new_idx] = predict_sliding_window_spectrum(
-                    model=model,
-                    spectrum=x_raw,
-                    config={
-                        "window_size": w_size,
-                        "stride": s_step,
-                        "device": model_device,
-                        "normalize_by_source": normalize_by_source,
-                        "clamp_non_negative": clamp_non_negative,
-                        "eps": eps,
-                    },
-                )
-            else:
-                model = model_entry
-                model.eval()
-                m_params = list(model.parameters())
-                model_device = m_params[0].device if m_params else torch.device("cpu")
-                if normalize_by_source:
-                    scale_x = max(float(np.max(np.abs(x_raw))), eps)
-                    x_in = x_raw / scale_x
-                else:
-                    scale_x = 1.0
-                    x_in = x_raw
-
-                with torch.no_grad():
-                    x_tensor = torch.from_numpy(x_in.astype(np.float32)).unsqueeze(0).to(model_device)
-                    y_pred = model(x_tensor).squeeze(0).cpu().numpy()
-
-                y_pred_phys = y_pred * scale_x if normalize_by_source else y_pred
-                if clamp_non_negative:
-                    y_pred_phys = np.clip(y_pred_phys, 0.0, None)
-                pred_intensities[new_idx] = y_pred_phys
-        else:
-            warnings.warn(f"No trained model found for region '{reg}'. Copying source intensity.")
-            fallback = x_raw.copy()
-            if clamp_non_negative:
-                fallback = np.clip(fallback, 0.0, None)
-            pred_intensities[new_idx] = fallback
-
-    pred_meta_df = assemble_prediction_metadata(
-        source_df,
-        config={
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "n_points": n_points,
-            "session_splits": cfg.get("session_splits"),
-        },
-    )
-    return pred_intensities, pred_energies, pred_meta_df
+    return predict_spectra(models=models, data=data, config=config)
 
 
 def run_unet_pipeline(
@@ -564,53 +287,12 @@ def run_unet_pipeline(
     ary_energy: np.ndarray,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute the end-to-end 1D U-Net spectral transformation pipeline.
+    """Execute the end-to-end 1D U-Net spectral transformation pipeline."""
+    from models.orchestration import run_unet_pipeline as _run_pipeline
 
-    Supports both full regional spectrum mode (default) and sliding window
-    patch mode via the 'use_sliding_window' configuration flag.
-    """
-    cfg = config or {}
-    use_sw: bool = bool(cfg.get("use_sliding_window", False))
-
-    hooks: dict[str, Any] = {
-        "bo_fn": optimize_unet_hyperparameters,
-    }
-
-    if use_sw:
-        def _dataset_prep_sw(
-            train_full_ds: Any,
-            val_full_ds: Any,
-            reg_cfg: dict[str, Any],
-        ) -> tuple[Any, Any, dict[str, Any]]:
-            sample_energy = train_full_ds[0].get("energy")
-            if sample_energy is not None:
-                e_grid = sample_energy.cpu().numpy()
-            else:
-                e_grid = np.linspace(0.0, 10.0, train_full_ds[0]["x"].shape[-1])
-            sw_calc_cfg = {
-                "window_size_ev": cfg.get("window_size_ev", 2.0),
-                "sliding_stride_ev": cfg.get("sliding_stride_ev", 1.0),
-                "window_size_points": cfg.get("window_size_points"),
-                "sliding_stride_points": cfg.get("sliding_stride_points"),
-            }
-            w_size, s_step = calculate_window_points(e_grid, config=sw_calc_cfg)
-
-            train_ds = SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
-            val_ds = SpectrumPatchDataset(val_full_ds, window_size=w_size, stride=s_step)
-
-            updated_cfg = dict(reg_cfg)
-            updated_cfg["val_full_dataset"] = val_full_ds
-            updated_cfg["window_size"] = w_size
-            updated_cfg["stride"] = s_step
-            return train_ds, val_ds, updated_cfg
-
-        hooks["dataset_prep_fn"] = _dataset_prep_sw
-        hooks["model_record_fn"] = lambda res, r_cfg: (res["model"], r_cfg["window_size"], r_cfg["stride"])
-
-    return run_model_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        train_region_fn=train_unet_region,
-        predict_fn=predict_unet_spectra,
+    return _run_pipeline(
+        meta_df=meta_df,
+        ary_intensity=ary_intensity,
+        ary_energy=ary_energy,
         config=config,
-        hooks=hooks,
     )
