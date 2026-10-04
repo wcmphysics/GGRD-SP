@@ -162,6 +162,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         from models.cost import NormalizedMSELoss
         untrained_val_loss = NormalizedMSELoss()(val_ds.x, val_ds.y).item()
 
+        torch.manual_seed(42)
         res = train_model_region(
             train_ds,
             val_ds,

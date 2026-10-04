@@ -261,33 +261,15 @@ def partition_measurement_sessions(
             )
         n_train = max(1, int(round(n_sessions * train_ratio)))
         n_val = max(1, int(round(n_sessions * val_ratio)))
-        n_test = n_sessions - n_train - n_val
+        n_test = max(1, n_sessions - n_train - n_val)
 
-        while n_test < 1:
-            if n_train > 1 and (n_train >= n_val or n_val == 1):
+        while n_train + n_val + n_test > n_sessions:
+            if n_train > 1 and n_train >= max(n_val, n_test):
                 n_train -= 1
-                n_test += 1
-            elif n_val > 1:
+            elif n_val > 1 and n_val >= n_test:
                 n_val -= 1
-                n_test += 1
-            else:
-                break
-        while n_val < 1:
-            if n_train > 1:
-                n_train -= 1
-                n_val += 1
             elif n_test > 1:
                 n_test -= 1
-                n_val += 1
-            else:
-                break
-        while n_train < 1:
-            if n_val > 1:
-                n_val -= 1
-                n_train += 1
-            elif n_test > 1:
-                n_test -= 1
-                n_train += 1
             else:
                 break
 
@@ -304,12 +286,9 @@ def partition_measurement_sessions(
         n_train = n_sessions - n_eval
 
         train_sessions = {str(s) for s in shuffled_sessions[:n_train]}
-        if val_ratio > 0.0:
-            val_sessions = {str(s) for s in shuffled_sessions[n_train:]}
-            test_sessions = set()
-        else:
-            val_sessions = set()
-            test_sessions = {str(s) for s in shuffled_sessions[n_train:]}
+        eval_sessions = {str(s) for s in shuffled_sessions[n_train:]}
+        val_sessions = eval_sessions if val_ratio > 0.0 else set()
+        test_sessions = eval_sessions if val_ratio <= 0.0 else set()
 
     splits_dict = {"train": train_sessions, "val": val_sessions, "test": test_sessions}
     target_sessions = {
@@ -415,27 +394,22 @@ def split_session_datasets(
         y_indices = df_subset["spectrum_index_target"].astype(int).to_numpy()
 
         if len(x_indices) > 0:
-            if np.any((x_indices < 0) | (x_indices >= n_spectra)):
+            if x_indices.min() < 0 or x_indices.max() >= n_spectra:
                 raise IndexError(
                     f"spectrum_index values out of bounds [0, {n_spectra - 1}]: "
                     f"min={x_indices.min()}, max={x_indices.max()}"
                 )
-            if np.any((y_indices < 0) | (y_indices >= n_spectra)):
+            if y_indices.min() < 0 or y_indices.max() >= n_spectra:
                 raise IndexError(
                     f"spectrum_index_target values out of bounds [0, {n_spectra - 1}]: "
                     f"min={y_indices.min()}, max={y_indices.max()}"
                 )
 
-        x_arr = ary_intensity[x_indices]
-        y_arr = ary_intensity[y_indices]
-        energy_arr = ary_energy[x_indices]
-
-        meta_list = df_subset.to_dict(orient="records")
         return SpectrumPairDataset(
-            x_arr,
-            y_arr,
-            energy=energy_arr,
-            metadata=meta_list,
+            ary_intensity[x_indices],
+            ary_intensity[y_indices],
+            energy=ary_energy[x_indices],
+            metadata=df_subset.to_dict(orient="records"),
             config={"normalize_by_source": normalize_by_source, "eps": eps_val},
         )
 
