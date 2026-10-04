@@ -33,14 +33,15 @@ def main() -> None:
     # "resnet": 1D ResNet (3 CNN layers with mirror padding and shortcut)
     # "residual_unet": 1D Residual U-Net (y = x + UNet(x))
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
-    model_type = "residual_unet"  # Options: "resnet", "residual_unet", or "unet"
-    use_sliding_window = True  # Toggle available to all 3 models (True for patch data augmentation)
+    # "deeplabv3": 1D DeepLabV3 (Multi-Grid ResNet backbone + ASPP with global pooling)
+    model_type = "resnet"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
+    use_sliding_window = True  # Toggle available to all models (True for patch data augmentation)
 
     source_tool = "J4"
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
-    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
+    show_plots = False  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {

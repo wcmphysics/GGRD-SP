@@ -31,6 +31,7 @@ from models.dataset import (
     partition_measurement_sessions,
     split_session_datasets,
 )
+from models.deeplabv3 import DeepLabV3
 from models.inference import predict_spectra
 from models.resnet import ResNet1D
 from models.trainer import evaluate, evaluate_sliding_window, train_model_region
@@ -48,7 +49,7 @@ def instantiate_model(
     Parameters
     ----------
     model_type : str
-        Architecture type: 'resnet', 'residual_unet', or 'unet'.
+        Architecture type: 'resnet', 'residual_unet', 'unet', or 'deeplabv3'.
     seq_len : int
         Input sequence length in points (patch window or full spectrum).
     config : dict[str, Any] | None, optional
@@ -67,9 +68,11 @@ def instantiate_model(
         return ResidualUNet1D(n_points=seq_len, config=cfg)
     elif m_type == "unet":
         return ConventionalUNet1D(n_points=seq_len, config=cfg)
+    elif m_type in ("deeplabv3", "deeplab", "deeplabv3_1d"):
+        return DeepLabV3(n_points=seq_len, config=cfg)
     else:
         raise ValueError(
-            f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', or 'unet'."
+            f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', 'unet', or 'deeplabv3'."
         )
 
 
@@ -137,6 +140,10 @@ def _resolve_region_config(
         "hidden_channels",
         "base_channels",
         "depth",
+        "backbone_channels",
+        "aspp_channels",
+        "multi_grid",
+        "aspp_rates",
         "kernel_size",
         "epochs",
         "l2_weight",
@@ -171,7 +178,13 @@ def _resolve_region_config(
         if k in reg_overrides:
             base_bo_cfg[k] = reg_overrides[k]
 
-    for arch_choice in ("hidden_channels", "base_channels", "depths"):
+    for arch_choice in (
+        "hidden_channels",
+        "base_channels",
+        "depths",
+        "backbone_channels",
+        "aspp_channels",
+    ):
         if arch_choice in reg_overrides and isinstance(reg_overrides[arch_choice], (list, tuple)):
             base_bo_cfg[arch_choice] = list(reg_overrides[arch_choice])
 
@@ -432,6 +445,8 @@ def run_spectral_pipeline(
                     "hidden_channels",
                     "base_channels",
                     "depth",
+                    "backbone_channels",
+                    "aspp_channels",
                     "window_size",
                 )
                 if any(k in best_params for k in arch_keys):
@@ -568,4 +583,24 @@ def run_unet_pipeline(
         config=cfg,
         **kwargs,
     )
+
+
+def run_deeplabv3_pipeline(
+    meta_df: pd.DataFrame,
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Execute the end-to-end DeepLabV3 modeling pipeline."""
+    cfg = dict(config or {})
+    cfg.setdefault("model_type", "deeplabv3")
+    return run_spectral_pipeline(
+        data=(ary_intensity, ary_energy, meta_df),
+        model_type="deeplabv3",
+        use_sliding_window=bool(cfg.get("use_sliding_window", False)),
+        config=cfg,
+        **kwargs,
+    )
+
 

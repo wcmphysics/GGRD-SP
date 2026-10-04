@@ -13,9 +13,11 @@ from torch.utils.data import DataLoader, Dataset
 
 from models.cost import NormalizedMSELoss, format_loss_log10
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders
+from models.deeplabv3 import DeepLabV3
 from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
 from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
+
 
 
 def train_one_epoch(
@@ -308,9 +310,11 @@ def train_model_region(
             model = ResidualUNet1D(n_points=seq_len, config=cfg).to(device)
         elif model_type == "unet":
             model = ConventionalUNet1D(n_points=seq_len, config=cfg).to(device)
+        elif model_type in ("deeplabv3", "deeplab", "deeplabv3_1d"):
+            model = DeepLabV3(n_points=seq_len, config=cfg).to(device)
         else:
             raise ValueError(
-                f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', or 'unet'."
+                f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', 'unet', or 'deeplabv3'."
             )
     else:
         model = model.to(device)

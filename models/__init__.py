@@ -14,6 +14,7 @@ from models.dataset import (
     partition_measurement_sessions,
     split_session_datasets,
 )
+from models.deeplabv3 import DeepLabV3, DeepLabV3_1D
 from models.inference import (
     assemble_prediction_metadata,
     format_predicted_measurement_id,
@@ -22,6 +23,7 @@ from models.inference import (
 )
 from models.orchestration import (
     instantiate_model,
+    run_deeplabv3_pipeline,
     run_residual_unet_pipeline,
     run_resnet_pipeline,
     run_spectral_pipeline,
@@ -46,6 +48,8 @@ __all__ = [
     "UNet1D",
     "ResidualUNet1D",
     "ConventionalUNet1D",
+    "DeepLabV3",
+    "DeepLabV3_1D",
     "instantiate_model",
     # Cost
     "NormalizedMSELoss",
@@ -74,4 +78,6 @@ __all__ = [
     "run_resnet_pipeline",
     "run_residual_unet_pipeline",
     "run_unet_pipeline",
+    "run_deeplabv3_pipeline",
 ]
+

@@ -154,7 +154,7 @@ def optimize_model_hyperparameters(
 ) -> dict[str, Any]:
     """Perform Bayesian optimization over model hyperparameters using Ax.
 
-    Supports 'resnet', 'residual_unet', and 'unet' architectures, as well as
+    Supports 'resnet', 'residual_unet', 'unet', and 'deeplabv3' architectures, as well as
     sliding window hyperparameter search (window_size).
 
     Parameters
@@ -165,7 +165,7 @@ def optimize_model_hyperparameters(
         Validation dataset.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'model_type' (str): 'resnet', 'residual_unet', or 'unet' (default 'resnet').
+        - 'model_type' (str): 'resnet', 'residual_unet', 'unet', or 'deeplabv3' (default 'resnet').
         - 'use_sliding_window' (bool): Whether sliding window is active (default False).
         - 'window_size_choices' (list[int]): Optional window sizes to search if sliding window active.
         - Architecture-specific search spaces (kernel_sizes, hidden_channels, base_channels, depths).
@@ -253,6 +253,35 @@ def optimize_model_hyperparameters(
                     "name": "kernel_size",
                     "type": "choice",
                     "values": kernel_sizes,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+            ]
+        )
+    elif model_type in ("deeplabv3", "deeplab", "deeplabv3_1d"):
+        kernel_sizes_dl: list[int] = list(cfg.get("kernel_sizes", [3, 5]))
+        backbone_channels: list[int] = list(cfg.get("backbone_channels", [16, 32, 64]))
+        aspp_channels: list[int] = list(cfg.get("aspp_channels", [16, 32, 64]))
+        parameters.extend(
+            [
+                {
+                    "name": "kernel_size",
+                    "type": "choice",
+                    "values": kernel_sizes_dl,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+                {
+                    "name": "backbone_channels",
+                    "type": "choice",
+                    "values": backbone_channels,
+                    "value_type": "int",
+                    "is_ordered": True,
+                },
+                {
+                    "name": "aspp_channels",
+                    "type": "choice",
+                    "values": aspp_channels,
                     "value_type": "int",
                     "is_ordered": True,
                 },
