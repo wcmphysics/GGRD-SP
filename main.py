@@ -36,7 +36,7 @@ def main() -> None:
     # "residual_unet": 1D Residual U-Net (y = x + UNet(x))
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
     # "deeplabv3": 1D DeepLabV3 (Multi-Grid ResNet backbone + ASPP with global pooling)
-    model_type = "deeplabv3"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
+    model_type = "resnet"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
     use_sliding_window = True  # Toggle available to all models (True for patch data augmentation)
 
     source_tool = "J4"
@@ -98,15 +98,15 @@ def main() -> None:
             "verbose": True,
         },
         "train_config": {
-            "epochs": 500,
+            "epochs": 100,
             "batch_size": 16,
             "learning_rate": 1e-4,
             "hidden_channels": 32,
             "base_channels": 16,
             "depth": 3,
             "kernel_size": 5,
-            "l2_weight": 1e-4,
-            "early_stopping_patience": 100,
+            "l2_weight": 1e-6,
+            "early_stopping_patience": 10,
             "verbose": True,
         },
         # Per-region configuration overrides (e.g. specialized window size or learning rate)
@@ -115,7 +115,7 @@ def main() -> None:
                 "window_size_ev": 3.0,
                 "sliding_stride_ev": 1.0,
                 "batch_size": 16,
-                "learning_rate": 2e-3,
+                "learning_rate": 1e-4,
             },
         },
         "predict_source": True,
