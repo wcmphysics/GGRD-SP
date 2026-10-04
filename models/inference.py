@@ -17,7 +17,6 @@ def predict_sliding_window_spectrum(
     model: nn.Module,
     spectrum: np.ndarray,
     config: dict[str, Any] | None = None,
-    **kwargs: Any,
 ) -> np.ndarray:
     """Transform a full 1D spectrum using a trained sliding window patch model.
 
@@ -40,16 +39,13 @@ def predict_sliding_window_spectrum(
         - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
         - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
         - 'eps' (float): Epsilon floor for source scale (default 1e-4).
-    **kwargs : Any
-        Optional keyword arguments (e.g. window_size, stride) for backward compatibility.
 
     Returns
     -------
     np.ndarray
         Reconstructed target spectrum of length N.
     """
-    cfg = dict(config or {})
-    cfg.update(kwargs)
+    cfg = config or {}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
     normalize_by_source = bool(cfg.get("normalize_by_source", True))
@@ -150,9 +146,7 @@ def format_predicted_measurement_id(source_measurement_id: str, source_tool: str
 
 def assemble_prediction_metadata(
     source_df: pd.DataFrame,
-    *args: Any,
     config: dict[str, Any] | None = None,
-    **kwargs: Any,
 ) -> pd.DataFrame:
     """Build standardized prediction metadata DataFrame for transferred spectra.
 
@@ -166,24 +160,13 @@ def assemble_prediction_metadata(
         - 'target_tool' (str): Target tool identifier.
         - 'n_points' (int): Number of spectral data points per region.
         - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
-    *args : Any
-        Positional parameters for backward compatibility: (source_tool, target_tool, n_points).
-    **kwargs : Any
-        Keyword arguments for backward compatibility (e.g. session_splits).
 
     Returns
     -------
     pd.DataFrame
         DataFrame containing standardized prediction metadata.
     """
-    cfg = dict(config or {})
-    cfg.update(kwargs)
-    if len(args) >= 1:
-        cfg["source_tool"] = args[0]
-    if len(args) >= 2:
-        cfg["target_tool"] = args[1]
-    if len(args) >= 3:
-        cfg["n_points"] = args[2]
+    cfg = config or {}
 
     source_tool = str(cfg.get("source_tool", ""))
     target_tool = str(cfg.get("target_tool", ""))

@@ -6,16 +6,11 @@ with global residual shortcut for stable inter-tool transfer.
 
 from __future__ import annotations
 
-import copy
-import warnings
 from typing import Any
 
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
 
 
 class UNetConvBlock1D(nn.Module):
@@ -244,55 +239,3 @@ class ConventionalUNet1D(UNet1D):
         cfg["residual"] = False
         super().__init__(n_points=n_points, config=cfg)
 
-
-def train_unet_region(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Train a 1D U-Net model on a spectral dataset."""
-    from models.trainer import train_model_region
-
-    cfg = dict(config or {})
-    is_res = cfg.get("residual", True)
-    cfg.setdefault("model_type", "residual_unet" if is_res else "unet")
-    return train_model_region(train_dataset, val_dataset, config=cfg)
-
-
-def optimize_unet_hyperparameters(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Perform Bayesian optimization over 1D U-Net hyperparameters using Ax."""
-    from models.bayesian_opt import optimize_unet_hyperparameters as _opt
-
-    return _opt(train_dataset, val_dataset, config=config)
-
-
-def predict_unet_spectra(
-    models: dict[str, Any],
-    data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any],
-    config: dict[str, Any] | None = None,
-) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Generate transformed predictions across source measurements using trained U-Net models."""
-    from models.inference import predict_spectra
-
-    return predict_spectra(models=models, data=data, config=config)
-
-
-def run_unet_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Execute the end-to-end 1D U-Net spectral transformation pipeline."""
-    from models.orchestration import run_unet_pipeline as _run_pipeline
-
-    return _run_pipeline(
-        meta_df=meta_df,
-        ary_intensity=ary_intensity,
-        ary_energy=ary_energy,
-        config=config,
-    )

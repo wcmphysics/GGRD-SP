@@ -325,7 +325,14 @@ def run_spectral_pipeline(
                     region_train_cfg["stride"] = s_step
 
                 # Re-instantiate model with optimal parameters if architecture parameters changed
-                if any(k in best_params for k in ("kernel_size", "hidden_channels", "base_channels", "depth", "window_size")):
+                arch_keys = (
+                    "kernel_size",
+                    "hidden_channels",
+                    "base_channels",
+                    "depth",
+                    "window_size",
+                )
+                if any(k in best_params for k in arch_keys):
                     model = instantiate_model(m_type, seq_len=seq_len, config=region_train_cfg)
                     region_train_cfg["model"] = model
             if verbose:
@@ -460,29 +467,3 @@ def run_unet_pipeline(
         **kwargs,
     )
 
-
-def run_sliding_window_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Execute the sliding window modeling pipeline (ResNet with patch training)."""
-    cfg = dict(config or {})
-    cfg["use_sliding_window"] = True
-    cfg.setdefault("model_type", "resnet")
-    return run_spectral_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        model_type="resnet",
-        use_sliding_window=True,
-        config=cfg,
-        **kwargs,
-    )
-
-
-# Backward compatibility wrappers
-run_baseline_pipeline = run_resnet_pipeline
-
-
-run_model_pipeline = run_spectral_pipeline

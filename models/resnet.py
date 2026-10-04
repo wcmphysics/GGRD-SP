@@ -128,6 +128,3 @@ class ResNet1D(nn.Module):
                 l2_sum = l2_sum + torch.sum(param ** 2)
         return l2_sum
 
-
-# Backward compatibility alias
-Residual1DCNN = ResNet1D

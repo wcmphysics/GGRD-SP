@@ -378,8 +378,3 @@ def train_model_region(
         "stride": s_step,
     }
 
-
-# Backward compatibility aliases
-train_baseline_region = train_model_region
-train_sliding_window_region = train_model_region
-train_unet_region = train_model_region

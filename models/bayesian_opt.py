@@ -188,6 +188,16 @@ def optimize_model_hyperparameters(
     lr_bounds: tuple[float, float] = tuple(cfg.get("lr_bounds", (1e-4, 1e-2)))
     l2_bounds: tuple[float, float] = tuple(cfg.get("l2_bounds", (1e-6, 1e-2)))
 
+    if "kernel_sizes" in cfg:
+        for k in cfg["kernel_sizes"]:
+            if k <= 0 or k % 2 == 0:
+                raise ValueError(f"All kernel_sizes must be positive odd integers, got {k}")
+
+    if lr_bounds[0] <= 0 or lr_bounds[1] <= lr_bounds[0]:
+        raise ValueError(f"Invalid lr_bounds: {lr_bounds}, both must be > 0 with min < max")
+    if l2_bounds[0] <= 0 or l2_bounds[1] <= l2_bounds[0]:
+        raise ValueError(f"Invalid l2_bounds: {l2_bounds}, both must be > 0 with min < max")
+
     parameters: list[dict[str, Any]] = []
 
     # Sliding window parameter search if choices provided
@@ -285,36 +295,3 @@ def optimize_model_hyperparameters(
         config=opt_cfg,
     )
 
-
-def optimize_baseline_hyperparameters(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Perform Bayesian optimization over baseline ResNet CNN hyperparameters."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "resnet")
-    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
-
-
-def optimize_unet_hyperparameters(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Perform Bayesian optimization over 1D U-Net hyperparameters."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "residual_unet")
-    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
-
-
-def optimize_sliding_window_hyperparameters(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Perform Bayesian optimization over sliding window model hyperparameters."""
-    cfg = dict(config or {})
-    cfg.setdefault("use_sliding_window", True)
-    cfg.setdefault("model_type", "resnet")
-    return optimize_model_hyperparameters(train_dataset, val_dataset, config=cfg)
