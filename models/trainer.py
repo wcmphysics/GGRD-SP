@@ -1,20 +1,25 @@
-"""Training and evaluation routines for baseline 1D Residual CNN."""
+"""Unified training and evaluation routines for spectral transformation models."""
 
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
-from models.baseline_cnn import NormalizedMSELoss, Residual1DCNN
-from models.dataset import SpectrumPairDataset, create_dataloaders
+from models.cost import NormalizedMSELoss, format_loss_log10
+from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders
+from models.inference import predict_sliding_window_spectrum
+from models.resnet import ResNet1D
+from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
 
 
 def train_one_epoch(
-    model: Residual1DCNN,
+    model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     criterion: NormalizedMSELoss,
@@ -24,10 +29,10 @@ def train_one_epoch(
 
     Parameters
     ----------
-    model : Residual1DCNN
+    model : nn.Module
         The neural network model.
     loader : DataLoader
-        DataLoader for the training dataset.
+        DataLoader for the training dataset (batches of full spectra or patches).
     optimizer : torch.optim.Optimizer
         Optimizer instance.
     criterion : NormalizedMSELoss
@@ -43,7 +48,8 @@ def train_one_epoch(
     cfg = config or {}
     device = cfg.get("device")
     if device is None:
-        device = next(model.parameters()).device
+        params = list(model.parameters())
+        device = params[0].device if params else torch.device("cpu")
     elif isinstance(device, str):
         device = torch.device(device)
 
@@ -54,10 +60,13 @@ def train_one_epoch(
     for batch in loader:
         x = batch["x"].to(device)
         y = batch["y"].to(device)
+        max_v = batch.get("max_val")
+        if max_v is not None and isinstance(max_v, torch.Tensor):
+            max_v = max_v.to(device)
 
         optimizer.zero_grad()
         y_pred = model(x)
-        loss = criterion(y_pred, y, model=model)
+        loss = criterion(y_pred, y, model=model, max_val=max_v)
         loss.backward()
         optimizer.step()
 
@@ -71,7 +80,7 @@ def train_one_epoch(
 
 
 def evaluate(
-    model: Residual1DCNN,
+    model: nn.Module,
     loader: DataLoader,
     criterion: NormalizedMSELoss,
     config: dict[str, Any] | None = None,
@@ -80,7 +89,7 @@ def evaluate(
 
     Parameters
     ----------
-    model : Residual1DCNN
+    model : nn.Module
         The neural network model.
     loader : DataLoader
         DataLoader for the validation dataset.
@@ -97,7 +106,8 @@ def evaluate(
     cfg = config or {}
     device = cfg.get("device")
     if device is None:
-        device = next(model.parameters()).device
+        params = list(model.parameters())
+        device = params[0].device if params else torch.device("cpu")
     elif isinstance(device, str):
         device = torch.device(device)
 
@@ -109,9 +119,12 @@ def evaluate(
         for batch in loader:
             x = batch["x"].to(device)
             y = batch["y"].to(device)
+            max_v = batch.get("max_val")
+            if max_v is not None and isinstance(max_v, torch.Tensor):
+                max_v = max_v.to(device)
+
             y_pred = model(x)
-            # Pass model=None so evaluation strictly measures out-of-sample normalized MSE
-            loss = criterion(y_pred, y, model=None)
+            loss = criterion(y_pred, y, model=None, max_val=max_v)
             total_loss += loss.item()
             num_batches += 1
 
@@ -121,44 +134,117 @@ def evaluate(
     return total_loss / num_batches
 
 
-def train_baseline_region(
+def evaluate_sliding_window(
+    model: nn.Module,
+    full_val_dataset: SpectrumPairDataset,
+    criterion: NormalizedMSELoss | None = None,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> float:
+    """Evaluate end-to-end normalized MSE directly on reconstructed full spectra.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Trained patch model.
+    full_val_dataset : SpectrumPairDataset
+        Validation dataset containing full paired spectra.
+    criterion : NormalizedMSELoss | None, optional
+        Loss function instance (default NormalizedMSELoss()).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing 'window_size', 'stride', and 'device'.
+    **kwargs : Any
+        Optional keyword arguments for backward compatibility.
+
+    Returns
+    -------
+    float
+        Average normalized MSE across all reconstructed validation spectra.
+    """
+    if criterion is None:
+        criterion = NormalizedMSELoss()
+    cfg = dict(config or {})
+    cfg.update(kwargs)
+    w_size = int(cfg.get("window_size", 15))
+    s_step = int(cfg.get("stride", max(1, w_size // 2)))
+
+    device = cfg.get("device")
+    if device is None:
+        params = list(model.parameters())
+        device = params[0].device if params else torch.device("cpu")
+    elif isinstance(device, str):
+        device = torch.device(device)
+
+    if len(full_val_dataset) == 0:
+        raise ValueError("full_val_dataset is empty.")
+
+    total_loss = 0.0
+    model.eval()
+
+    predict_cfg = {
+        "device": device,
+        "window_size": w_size,
+        "stride": s_step,
+        "normalize_by_source": False,  # dataset items are already normalized
+        "clamp_non_negative": True,
+    }
+
+    for idx in range(len(full_val_dataset)):
+        item = full_val_dataset[idx]
+        x_arr = item["x"].cpu().numpy()
+        y_true = item["y"].unsqueeze(0).to(device)
+
+        reconstructed_arr = predict_sliding_window_spectrum(
+            model, x_arr, config=predict_cfg
+        )
+        y_pred = torch.from_numpy(reconstructed_arr).unsqueeze(0).to(device)
+
+        loss = criterion(y_pred, y_true, model=None)
+        total_loss += loss.item()
+
+    return total_loss / len(full_val_dataset)
+
+
+def train_model_region(
     train_dataset: SpectrumPairDataset,
     val_dataset: SpectrumPairDataset,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Train a baseline Residual1DCNN for a single spectral region.
+    """Train a neural network model for a single spectral region.
+
+    Unifies ResNet, Residual U-Net, and conventional U-Net training, with
+    optional sliding window augmentation and log10 loss progress logging.
 
     Parameters
     ----------
     train_dataset : SpectrumPairDataset
-        Training dataset.
+        Training dataset for this region.
     val_dataset : SpectrumPairDataset
-        Validation dataset.
+        Validation dataset for this region.
     config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'n_points' (int | None): Sequence length (default auto-detected from dataset).
-        - 'hidden_channels' (int): Feature channels (default 32).
-        - 'kernel_size' (int): Conv kernel size, must be odd (default 5).
-        - 'dropout' (float): Dropout probability (default 0.0).
-        - 'use_batch_norm' (bool): Whether to use BatchNorm1d (default True).
-        - 'l2_weight' (float): Regularization weight on model weights (default 1e-4).
-        - 'learning_rate' (float): Optimizer learning rate (default 1e-3).
-        - 'weight_decay' (float): Optimizer weight decay (default 0.0).
-        - 'batch_size' (int): Batch size (default 16).
+        Configuration dictionary containing:
+        - 'model_type' (str): Architecture 'resnet', 'residual_unet', or 'unet' (default 'resnet').
+        - 'use_sliding_window' (bool): Whether to use sliding window patch training (default False).
+        - 'window_size' (int): Window points if sliding window active (default 15).
+        - 'stride' (int): Stride points if sliding window active (default window_size // 2).
         - 'epochs' (int): Maximum training epochs (default 50).
+        - 'batch_size' (int): Batch size (default 16).
+        - 'learning_rate' (float): Optimizer learning rate (default 1e-3).
+        - 'l2_weight' (float): L2 regularization weight (default 1e-4).
         - 'early_stopping_patience' (int): Patience epochs before stopping (default 10).
-        - 'device' (str | torch.device | None): Device to use (default CPU/CUDA auto).
-        - 'verbose' (bool): Whether to print progress each epoch (default False).
+        - 'verbose' (bool): Whether to print progress in log10 scale (default False).
+        - 'device' (str | torch.device | None): Device to use.
+        - 'model' (nn.Module | None): Pre-instantiated model instance if available.
 
     Returns
     -------
     dict[str, Any]
         Dictionary containing:
-        - 'model': Trained Residual1DCNN model (with weights restored to best epoch).
-        - 'best_val_loss': Best validation loss achieved.
+        - 'model': Trained model (weights restored to lowest validation loss epoch).
+        - 'best_val_loss': Lowest validation loss achieved.
         - 'best_epoch': Epoch index with lowest validation loss.
         - 'history': Dictionary of 'train_loss' and 'val_loss' histories.
-        - 'config': Resolved configuration used during training.
+        - 'config': Resolved configuration dictionary.
     """
     if len(train_dataset) == 0:
         raise ValueError("Cannot train on an empty train_dataset.")
@@ -166,9 +252,8 @@ def train_baseline_region(
         raise ValueError("Cannot evaluate on an empty val_dataset.")
 
     cfg = config or {}
-    sample_item = train_dataset[0]
-    n_points = int(cfg.get("n_points", len(sample_item["x"])))
-
+    model_type: str = str(cfg.get("model_type", "resnet")).lower()
+    use_sw: bool = bool(cfg.get("use_sliding_window", False))
     epochs: int = int(cfg.get("epochs", 50))
     batch_size: int = int(cfg.get("batch_size", 16))
     lr: float = float(cfg.get("learning_rate", 1e-3))
@@ -185,15 +270,51 @@ def train_baseline_region(
     else:
         device = device_str
 
-    # Create dataloaders
-    train_loader, val_loader = create_dataloaders(
-        train_dataset,
-        val_dataset,
-        config={"batch_size": batch_size, "shuffle_train": True},
-    )
+    # Determine sequence length & sliding window setup
+    sample_item = train_dataset[0]
+    full_len = len(sample_item["x"])
 
-    # Initialize model, loss, optimizer
-    model = Residual1DCNN(n_points=n_points, config=cfg).to(device)
+    if use_sw:
+        if isinstance(train_dataset, SpectrumPatchDataset):
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            w_size = train_dataset.window_size
+            s_step = train_dataset.stride
+            seq_len = w_size
+            val_loader = None
+        else:
+            w_size = int(cfg.get("window_size", cfg.get("window_size_points", 15)))
+            s_step = int(cfg.get("stride", cfg.get("sliding_stride_points", max(1, w_size // 2))))
+            w_size = min(full_len, max(3, w_size))
+            s_step = max(1, min(w_size, s_step))
+            seq_len = w_size
+
+            train_patch_ds = SpectrumPatchDataset(train_dataset, window_size=w_size, stride=s_step)
+            train_loader = DataLoader(train_patch_ds, batch_size=batch_size, shuffle=True)
+            val_loader = None
+    else:
+        seq_len = full_len
+        w_size = full_len
+        s_step = full_len
+        train_loader, val_loader = create_dataloaders(
+            train_dataset, val_dataset, config={"batch_size": batch_size, "shuffle_train": True}
+        )
+
+    # Instantiate model if not provided
+    model: nn.Module | None = cfg.get("model")
+    if model is None:
+        if model_type == "resnet":
+            model = ResNet1D(n_points=seq_len, config=cfg).to(device)
+        elif model_type in ("residual_unet", "unet_residual"):
+            model = ResidualUNet1D(n_points=seq_len, config=cfg).to(device)
+        elif model_type == "unet":
+            model = ConventionalUNet1D(n_points=seq_len, config=cfg).to(device)
+        else:
+            raise ValueError(
+                f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', or 'unet'."
+            )
+    else:
+        model = model.to(device)
+
     criterion = NormalizedMSELoss(l2_weight=l2_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
@@ -204,10 +325,16 @@ def train_baseline_region(
     patience_counter = 0
 
     run_cfg = {"device": device}
+    eval_cfg = {"device": device, "window_size": w_size, "stride": s_step}
 
     for epoch in range(1, epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config=run_cfg)
-        val_loss = evaluate(model, val_loader, criterion, config=run_cfg)
+
+        if use_sw:
+            val_loss = evaluate_sliding_window(model, val_dataset, criterion, config=eval_cfg)
+        else:
+            assert val_loader is not None
+            val_loss = evaluate(model, val_loader, criterion, config=run_cfg)
 
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
@@ -220,22 +347,39 @@ def train_baseline_region(
         else:
             patience_counter += 1
 
-        if verbose and (epoch % 10 == 0 or epoch == epochs):
-            print(f"Epoch {epoch:3d}/{epochs:3d} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        if verbose and (epoch % 10 == 0 or epoch == epochs or epoch == 1):
+            tr_str = format_loss_log10(train_loss)
+            val_str = format_loss_log10(val_loss)
+            print(
+                f"Epoch {epoch:3d}/{epochs:3d} - Train Loss: {tr_str}, Val Loss: {val_str}"
+            )
 
         if patience_counter >= patience:
             if verbose:
-                print(f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, best val_loss: {best_val_loss:.6f})")
+                b_str = format_loss_log10(best_val_loss)
+                print(
+                    f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, best val_loss: {b_str})"
+                )
             break
 
-    # Restore best weights
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
+
+    resolved_cfg = dict(cfg)
+    resolved_cfg.update({"window_size": w_size, "stride": s_step, "seq_len": seq_len})
 
     return {
         "model": model,
         "best_val_loss": best_val_loss,
         "best_epoch": best_epoch,
         "history": history,
-        "config": cfg,
+        "config": resolved_cfg,
+        "window_size": w_size,
+        "stride": s_step,
     }
+
+
+# Backward compatibility aliases
+train_baseline_region = train_model_region
+train_sliding_window_region = train_model_region
+train_unet_region = train_model_region
