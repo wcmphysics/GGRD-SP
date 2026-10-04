@@ -485,22 +485,4 @@ def run_sliding_window_pipeline(
 run_baseline_pipeline = run_resnet_pipeline
 
 
-def run_model_pipeline(
-    data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any] | pd.DataFrame,
-    train_region_fn: Callable[..., Any] | None = None,
-    predict_fn: Callable[..., Any] | None = None,
-    config: dict[str, Any] | None = None,
-    hooks: dict[str, Any] | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Backward compatibility wrapper redirecting to run_spectral_pipeline."""
-    from models.root import run_model_pipeline as _legacy_run
-
-    return _legacy_run(
-        data=data,
-        train_region_fn=train_region_fn,
-        predict_fn=predict_fn,
-        config=config,
-        hooks=hooks,
-        **kwargs,
-    )
+run_model_pipeline = run_spectral_pipeline

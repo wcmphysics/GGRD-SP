@@ -17,7 +17,6 @@ from models.resnet import ResNet1D, Residual1DCNN
 from models.bayesian_opt import run_ax_search
 from models.dataset import SpectrumPairDataset
 from models.inference import assemble_prediction_metadata
-from models.root import run_model_pipeline
 
 
 from utility.patching import (
@@ -627,31 +626,11 @@ def run_sliding_window_pipeline(
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute the end-to-end sliding window modeling pipeline."""
-    cfg = config or {}
+    from models.orchestration import run_sliding_window_pipeline as _run
 
-    def _prep_sw_cfg(train_ds: Any, val_ds: Any, region_cfg: dict[str, Any]) -> tuple[Any, Any, dict[str, Any]]:
-        c = dict(region_cfg)
-        for k in (
-            "window_size_ev",
-            "sliding_stride_ev",
-            "window_size",
-            "window_size_points",
-            "stride",
-            "sliding_stride_points",
-        ):
-            if k in cfg and k not in c:
-                c[k] = cfg[k]
-        return train_ds, val_ds, c
-
-    hooks = {
-        "bo_fn": optimize_sliding_window_hyperparameters,
-        "dataset_prep_fn": _prep_sw_cfg,
-        "model_record_fn": lambda res, r_cfg: (res["model"], res["window_size"], res["stride"]),
-    }
-    return run_model_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        train_region_fn=train_sliding_window_region,
-        predict_fn=predict_sliding_window_spectra,
+    return _run(
+        meta_df=meta_df,
+        ary_intensity=ary_intensity,
+        ary_energy=ary_energy,
         config=config,
-        hooks=hooks,
     )
