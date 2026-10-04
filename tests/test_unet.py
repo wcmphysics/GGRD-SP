@@ -10,11 +10,13 @@ import torch
 
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
+from models.orchestration import run_unet_pipeline
+from models.trainer import train_model_region
 from models.unet import (
+    ConventionalUNet1D,
+    ResidualUNet1D,
     UNet1D,
     UNetConvBlock1D,
-    run_unet_pipeline,
-    train_unet_region,
 )
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
@@ -119,10 +121,11 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
         y_synth = x_synth + np.random.normal(0.0, 1.0, size=(10, 30))
         ds = SpectrumPairDataset(x_synth, y_synth)
 
-        res = train_unet_region(
+        res = train_model_region(
             train_dataset=ds,
             val_dataset=ds,
             config={
+                "model_type": "residual_unet",
                 "epochs": 3,
                 "batch_size": 4,
                 "base_channels": 8,

@@ -12,7 +12,7 @@ matplotlib.use("Agg")  # Non-interactive backend for testing
 import numpy as np
 import pandas as pd
 
-from models.orchestration import run_baseline_pipeline
+from models.orchestration import run_resnet_pipeline
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.visualization import (
@@ -47,7 +47,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 "time_threshold_hours": 12.0,
             },
         )
-        cls.pipeline_res = run_baseline_pipeline(
+        cls.pipeline_res = run_resnet_pipeline(
             cls.meta_df,
             cls.ary_intensity,
             cls.ary_energy,

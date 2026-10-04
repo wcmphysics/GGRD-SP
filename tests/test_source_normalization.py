@@ -7,12 +7,11 @@ import unittest
 import numpy as np
 import torch
 
-from models.resnet import Residual1DCNN
 from models.dataset import SpectrumPairDataset, split_session_datasets
-from models.inference import predict_spectra
-from models.sliding_window import predict_sliding_window_spectrum
-from models.trainer import train_baseline_region
-from models.unet import UNet1D, predict_unet_spectra
+from models.inference import predict_sliding_window_spectrum, predict_spectra
+from models.resnet import ResNet1D
+from models.trainer import train_model_region
+from models.unet import UNet1D
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 
@@ -127,7 +126,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
                 return out
 
         models = {"Al2p": DummyUNet()}
-        pred_i, _, _ = predict_unet_spectra(
+        pred_i, _, _ = predict_spectra(
             models=models,
             data=(x_intensities, np.tile(energies, (2, 1)), meta_df),
             config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
@@ -163,10 +162,10 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         from models.cost import NormalizedMSELoss
         untrained_val_loss = NormalizedMSELoss()(val_ds.x, val_ds.y).item()
 
-        res = train_baseline_region(
+        res = train_model_region(
             train_ds,
             val_ds,
-            {"epochs": 10, "verbose": False, "learning_rate": 1e-3, "l2_weight": 1e-4},
+            {"model_type": "resnet", "epochs": 10, "verbose": False, "learning_rate": 1e-3, "l2_weight": 1e-4},
         )
 
         best_val_loss = res["best_val_loss"]

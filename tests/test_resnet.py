@@ -1,4 +1,4 @@
-"""Unit tests for baseline 1D Residual CNN, training pipeline, and Ax optimization."""
+"""Unit tests for 1D ResNet architecture, training pipeline, and Ax optimization."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from models.bayesian_opt import optimize_baseline_hyperparameters
+from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
 from models.dataset import (
     SpectrumPairDataset,
@@ -17,26 +17,26 @@ from models.dataset import (
     split_session_datasets,
 )
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.orchestration import run_baseline_pipeline
-from models.resnet import ResNet1D, Residual1DCNN
-from models.trainer import evaluate, train_baseline_region
+from models.orchestration import run_resnet_pipeline
+from models.resnet import ResNet1D
+from models.trainer import evaluate, train_model_region
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 
 
-class TestBaselineCNN(unittest.TestCase):
-    """Test cases for the Residual1DCNN architecture and NormalizedMSELoss."""
+class TestResNet1D(unittest.TestCase):
+    """Test cases for the ResNet1D architecture and NormalizedMSELoss."""
 
     def test_cnn_forward_shape_2d(self) -> None:
         """Test forward pass with 2D tensor input (batch, n_points)."""
-        model = Residual1DCNN(n_points=100, config={"hidden_channels": 16, "kernel_size": 5})
+        model = ResNet1D(n_points=100, config={"hidden_channels": 16, "kernel_size": 5})
         x = torch.randn(8, 100)
         out = model(x)
         self.assertEqual(out.shape, (8, 100))
 
     def test_cnn_forward_shape_3d(self) -> None:
         """Test forward pass with 3D tensor input (batch, 1, n_points)."""
-        model = Residual1DCNN(n_points=80, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=80, config={"hidden_channels": 8, "kernel_size": 3})
         x = torch.randn(4, 1, 80)
         out = model(x)
         self.assertEqual(out.shape, (4, 1, 80))
@@ -44,15 +44,15 @@ class TestBaselineCNN(unittest.TestCase):
     def test_invalid_kernel_size_raises(self) -> None:
         """Test that even or non-positive kernel size raises ValueError."""
         with self.assertRaises(ValueError):
-            Residual1DCNN(n_points=50, config={"kernel_size": 4})
+            ResNet1D(n_points=50, config={"kernel_size": 4})
         with self.assertRaises(ValueError):
-            Residual1DCNN(n_points=50, config={"kernel_size": 0})
+            ResNet1D(n_points=50, config={"kernel_size": 0})
         with self.assertRaises(ValueError):
-            Residual1DCNN(n_points=50, config={"kernel_size": -3})
+            ResNet1D(n_points=50, config={"kernel_size": -3})
 
     def test_l2_regularization_targets_weights_only(self) -> None:
         """Test that L2 weight penalty only targets conv weights, not biases or BatchNorm."""
-        model = Residual1DCNN(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
         l2_reg = model.get_l2_regularization()
         self.assertIsInstance(l2_reg, torch.Tensor)
         self.assertGreater(l2_reg.item(), 0.0)
@@ -205,7 +205,8 @@ class TestDatasetAndSplitting(unittest.TestCase):
     def test_partition_measurement_sessions_too_few_sessions_raises(self) -> None:
         """Verify 3-way split on dataset with < 3 sessions raises ValueError."""
         # Filter metadata to keep only 2 measurement sessions
-        two_sessions = sorted(self.meta_df[self.meta_df["measurement_id_target"].notna()]["measurement_id"].unique())[:2]
+        valid_paired = self.meta_df[self.meta_df["measurement_id_target"].notna()]
+        two_sessions = sorted(valid_paired["measurement_id"].unique())[:2]
         small_meta = self.meta_df[self.meta_df["measurement_id"].isin(two_sessions)]
         with self.assertRaises(ValueError):
             partition_measurement_sessions(
@@ -326,7 +327,7 @@ class TestTrainingAndInference(unittest.TestCase):
             config={"region": "Al2p", "source_tool": "J4", "target_tool": "H1"},
         )
         _, val_loader = create_dataloaders(train_ds, val_ds, config={"batch_size": 8})
-        model = Residual1DCNN(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
 
         crit_zero_l2 = NormalizedMSELoss(l2_weight=0.0)
         crit_large_l2 = NormalizedMSELoss(l2_weight=10.0)
@@ -336,8 +337,8 @@ class TestTrainingAndInference(unittest.TestCase):
 
         self.assertAlmostEqual(loss_zero, loss_large, places=6)
 
-    def test_train_baseline_region(self) -> None:
-        """Test training execution and loss logging."""
+    def test_train_resnet_region(self) -> None:
+        """Test training execution and loss logging via train_model_region."""
         train_ds, val_ds = split_session_datasets(
             self.meta_df,
             self.ary_intensity,
@@ -345,10 +346,11 @@ class TestTrainingAndInference(unittest.TestCase):
             config={"region": "Al2p", "source_tool": "J4", "target_tool": "H1"},
         )
 
-        res = train_baseline_region(
+        res = train_model_region(
             train_ds,
             val_ds,
             config={
+                "model_type": "resnet",
                 "epochs": 5,
                 "batch_size": 8,
                 "hidden_channels": 8,
@@ -361,7 +363,7 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertIn("model", res)
         self.assertIn("best_val_loss", res)
         self.assertEqual(len(res["history"]["train_loss"]), 5)
-        self.assertIsInstance(res["model"], Residual1DCNN)
+        self.assertIsInstance(res["model"], ResNet1D)
 
     def test_format_predicted_measurement_id_uniqueness(self) -> None:
         """Verify unique ID generation without collision for different session names."""
@@ -385,10 +387,10 @@ class TestTrainingAndInference(unittest.TestCase):
             self.ary_energy,
             config={"region": "Al2p", "source_tool": "J4", "target_tool": "H1"},
         )
-        model_al2p = train_baseline_region(
+        model_al2p = train_model_region(
             train_ds,
             val_ds,
-            config={"epochs": 2, "batch_size": 8, "hidden_channels": 8, "kernel_size": 3},
+            config={"model_type": "resnet", "epochs": 2, "batch_size": 8, "hidden_channels": 8, "kernel_size": 3},
         )["model"]
 
         models = {"Al2p": model_al2p}
@@ -414,10 +416,11 @@ class TestTrainingAndInference(unittest.TestCase):
             config={"region": "Al2p", "source_tool": "J4", "target_tool": "H1"},
         )
 
-        ax_res = optimize_baseline_hyperparameters(
+        ax_res = optimize_model_hyperparameters(
             train_ds,
             val_ds,
             config={
+                "model_type": "resnet",
                 "num_trials": 2,
                 "epochs_per_trial": 2,
                 "kernel_sizes": [3, 5],
@@ -432,9 +435,9 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertEqual(len(ax_res["trials_data"]), 2)
         self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
 
-    def test_run_baseline_pipeline(self) -> None:
-        """Test full root pipeline execution."""
-        pipeline_res = run_baseline_pipeline(
+    def test_run_resnet_pipeline(self) -> None:
+        """Test full ResNet pipeline execution."""
+        pipeline_res = run_resnet_pipeline(
             self.meta_df,
             self.ary_intensity,
             self.ary_energy,

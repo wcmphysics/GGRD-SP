@@ -8,21 +8,19 @@ import numpy as np
 import pandas as pd
 import torch
 
+from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
-from models.dataset import split_session_datasets
-from models.resnet import ResNet1D, Residual1DCNN
-from models.sliding_window import (
-    SpectrumPatchDataset,
-    calculate_window_points,
-    evaluate_sliding_window,
-    extract_sliding_windows,
-    optimize_sliding_window_hyperparameters,
-    predict_sliding_window_spectrum,
-    reconstruct_from_patches,
-    run_sliding_window_pipeline,
-    train_sliding_window_region,
-)
+from models.dataset import SpectrumPatchDataset, split_session_datasets
+from models.inference import predict_sliding_window_spectrum
+from models.orchestration import run_spectral_pipeline
+from models.resnet import ResNet1D
+from models.trainer import evaluate_sliding_window, train_model_region
 from utility.pairing import pair_source_target_spectra
+from utility.patching import (
+    calculate_window_points,
+    extract_sliding_windows,
+    reconstruct_from_patches,
+)
 from utility.pseudo_measurement import generate_pseudo_measurements
 
 
@@ -203,31 +201,34 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_predict_sliding_window_spectrum(self) -> None:
         """Test single spectrum prediction and full length reconstruction."""
-        model = Residual1DCNN(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
         spectrum = self.train_ds[0]["x"].cpu().numpy()
-        pred = predict_sliding_window_spectrum(model, spectrum, window_size=15, stride=5)
+        pred = predict_sliding_window_spectrum(
+            model, spectrum, config={"window_size": 15, "stride": 5}
+        )
         self.assertEqual(len(pred), len(spectrum))
 
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
-        model = Residual1DCNN(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
         crit = NormalizedMSELoss(l2_weight=0.0)
         loss = evaluate_sliding_window(
             model=model,
             full_val_dataset=self.val_ds,
-            window_size=15,
-            stride=5,
             criterion=crit,
+            config={"window_size": 15, "stride": 5},
         )
         self.assertIsInstance(loss, float)
         self.assertGreater(loss, 0.0)
 
     def test_train_sliding_window_region(self) -> None:
-        """Test regional sliding window training."""
-        train_res = train_sliding_window_region(
+        """Test regional sliding window training via train_model_region."""
+        train_res = train_model_region(
             self.train_ds,
             self.val_ds,
             config={
+                "model_type": "resnet",
+                "use_sliding_window": True,
                 "window_size": 15,
                 "stride": 5,
                 "hidden_channels": 8,
@@ -244,10 +245,12 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_optimize_sliding_window_hyperparameters(self) -> None:
         """Test Ax Bayesian optimization for sliding window model."""
-        ax_res = optimize_sliding_window_hyperparameters(
+        ax_res = optimize_model_hyperparameters(
             self.train_ds,
             self.val_ds,
             config={
+                "model_type": "resnet",
+                "use_sliding_window": True,
                 "num_trials": 2,
                 "epochs_per_trial": 2,
                 "window_size_choices": [11, 15],
@@ -261,11 +264,11 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         self.assertEqual(len(ax_res["trials_data"]), 2)
 
     def test_run_sliding_window_pipeline(self) -> None:
-        """Test full sliding window root pipeline execution."""
-        pipeline_res = run_sliding_window_pipeline(
-            self.meta_df,
-            self.ary_intensity,
-            self.ary_energy,
+        """Test full sliding window spectral pipeline execution."""
+        pipeline_res = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.meta_df),
+            model_type="resnet",
+            use_sliding_window=True,
             config={
                 "regions": ["Al2p"],
                 "source_tool": "J4",
@@ -287,21 +290,27 @@ class TestSlidingWindowPipeline(unittest.TestCase):
     def test_optimize_sliding_window_invalid_parameters(self) -> None:
         """Verify that Ax optimization raises ValueError on invalid parameters."""
         with self.assertRaises(ValueError):
-            optimize_sliding_window_hyperparameters(
-                self.train_ds, self.val_ds, config={"kernel_sizes": [4]}  # even
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "kernel_sizes": [4]},  # even
             )
         with self.assertRaises(ValueError):
-            optimize_sliding_window_hyperparameters(
-                self.train_ds, self.val_ds, config={"lr_bounds": (0.01, 0.001)}  # min > max
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "lr_bounds": (0.01, 0.001)},  # min > max
             )
         with self.assertRaises(ValueError):
-            optimize_sliding_window_hyperparameters(
-                self.train_ds, self.val_ds, config={"l2_bounds": (-1e-4, 1e-2)}  # min <= 0
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "l2_bounds": (-1e-4, 1e-2)},  # min <= 0
             )
 
     def test_parameter_packaging_config_dict(self) -> None:
         """Verify predict and evaluate functions with config dictionaries adhering to Rule 7."""
-        model = Residual1DCNN(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
         spectrum = self.train_ds[0]["x"].cpu().numpy()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5, "batch_size": 32}
