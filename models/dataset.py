@@ -27,8 +27,14 @@ class SpectrumPairDataset(Dataset):
         List of metadata dictionaries per sample.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'normalize_by_source' (bool): Whether to divide both x and y by max(|x|) per sample (default True).
+        - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default),
+          'die_total_flux' (Tier 1 canonical die flux normalization), or 'none'.
+        - 'normalize_by_source' (bool): Legacy flag for backward compatibility (default True).
         - 'eps' (float): Epsilon floor to prevent division by zero (default 1e-4).
+    scale_x : np.ndarray | torch.Tensor | None, optional
+        Precomputed source scale factors of shape (N_samples, 1) or (N_samples,).
+    scale_y : np.ndarray | torch.Tensor | None, optional
+        Precomputed target scale factors of shape (N_samples, 1) or (N_samples,).
     **kwargs : Any
         Optional keyword arguments for backward compatibility.
 
@@ -45,6 +51,8 @@ class SpectrumPairDataset(Dataset):
         energy: np.ndarray | torch.Tensor | None = None,
         metadata: list[dict[str, Any]] | None = None,
         config: dict[str, Any] | None = None,
+        scale_x: np.ndarray | torch.Tensor | None = None,
+        scale_y: np.ndarray | torch.Tensor | None = None,
         **kwargs: Any,
     ) -> None:
         if len(x_data) != len(y_data):
@@ -64,23 +72,61 @@ class SpectrumPairDataset(Dataset):
 
         cfg = dict(config or {})
         cfg.update(kwargs)
-        self.normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+        raw_mode = cfg.get("normalization_mode")
+        if raw_mode is not None:
+            norm_mode = str(raw_mode).lower()
+        else:
+            norm_mode = "source_referenced" if cfg.get("normalize_by_source", True) else "none"
+
+        self.normalization_mode = norm_mode
+        self.normalize_by_source: bool = bool(cfg.get("normalize_by_source", norm_mode != "none"))
         eps: float = float(cfg.get("eps", 1e-4))
 
-        if self.normalize_by_source and len(self.x) > 0:
+        if norm_mode in ("die_total_flux", "die_flux") and scale_x is not None:
+            # Tier 1 canonical die total flux normalization
+            if isinstance(scale_x, np.ndarray):
+                self.scale_x = torch.from_numpy(scale_x.astype(np.float32))
+            elif isinstance(scale_x, torch.Tensor):
+                self.scale_x = scale_x.float()
+            else:
+                self.scale_x = torch.full((len(self.x), 1), float(scale_x), dtype=torch.float32)
+
+            if self.scale_x.dim() == 1:
+                self.scale_x = self.scale_x.unsqueeze(-1)
+            self.scale_x = torch.clamp(self.scale_x, min=eps)
+
+            if scale_y is not None:
+                if isinstance(scale_y, np.ndarray):
+                    self.scale_y = torch.from_numpy(scale_y.astype(np.float32))
+                elif isinstance(scale_y, torch.Tensor):
+                    self.scale_y = scale_y.float()
+                else:
+                    self.scale_y = torch.full((len(self.y), 1), float(scale_y), dtype=torch.float32)
+                if self.scale_y.dim() == 1:
+                    self.scale_y = self.scale_y.unsqueeze(-1)
+                self.scale_y = torch.clamp(self.scale_y, min=eps)
+            else:
+                self.scale_y = self.scale_x.clone()
+
+            self.x = self.x / self.scale_x
+            self.y = self.y / self.scale_y
+        elif self.normalize_by_source and norm_mode != "none" and len(self.x) > 0:
             if self.x.dim() == 1:
                 scales = torch.clamp(torch.max(torch.abs(self.x)), min=eps)
             else:
                 scales, _ = torch.max(torch.abs(self.x), dim=-1, keepdim=True)
                 scales = torch.clamp(scales, min=eps)
             self.scale_x = scales
+            self.scale_y = scales.clone()
             self.x = self.x / scales
             self.y = self.y / scales
         else:
             if self.x.dim() > 1:
                 self.scale_x = torch.ones((len(self.x), 1), dtype=torch.float32)
+                self.scale_y = torch.ones((len(self.y), 1), dtype=torch.float32)
             else:
                 self.scale_x = torch.tensor(1.0, dtype=torch.float32)
+                self.scale_y = torch.tensor(1.0, dtype=torch.float32)
 
         if energy is not None:
             if isinstance(energy, np.ndarray):
@@ -96,11 +142,13 @@ class SpectrumPairDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        scale_val = self.scale_x[idx] if self.scale_x.dim() > 1 else self.scale_x
+        scale_val_x = self.scale_x[idx] if self.scale_x.dim() > 1 else self.scale_x
+        scale_val_y = self.scale_y[idx] if hasattr(self, "scale_y") and self.scale_y.dim() > 1 else scale_val_x
         item: dict[str, Any] = {
             "x": self.x[idx],
             "y": self.y[idx],
-            "scale_x": scale_val,
+            "scale_x": scale_val_x,
+            "scale_y": scale_val_y,
         }
         if self.energy is not None:
             item["energy"] = self.energy[idx] if self.energy.dim() > 1 else self.energy
@@ -113,6 +161,14 @@ class SpectrumPairDataset(Dataset):
         if self.scale_x.dim() > 1:
             return float(self.scale_x[idx].item())
         return float(self.scale_x.item())
+
+    def get_target_scale(self, idx: int) -> float:
+        """Return the target normalization scalar for a given sample index."""
+        if hasattr(self, "scale_y"):
+            if self.scale_y.dim() > 1:
+                return float(self.scale_y[idx].item())
+            return float(self.scale_y.item())
+        return self.get_scale(idx)
 
     def unnormalize_y(
         self, y_norm: torch.Tensor | np.ndarray, idx: int
@@ -305,6 +361,48 @@ def partition_measurement_sessions(
     return splits_dict
 
 
+def compute_die_total_flux(
+    meta_df: pd.DataFrame,
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray | None = None,
+) -> dict[tuple[str, int], float]:
+    """Calculate the total integrated spectral flux for each (measurement_id, die) across all its measured regions.
+
+    Parameters
+    ----------
+    meta_df : pd.DataFrame
+        Metadata DataFrame containing 'measurement_id', 'die', and 'spectrum_index'.
+    ary_intensity : np.ndarray
+        2D intensity array of shape (N_total, N_points).
+    ary_energy : np.ndarray | None, optional
+        2D binding energy array of shape (N_total, N_points). If provided, integrates over eV.
+
+    Returns
+    -------
+    dict[tuple[str, int], float]
+        Dictionary mapping (measurement_id, die) to total integrated flux.
+    """
+    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+    flux_map: dict[tuple[str, int], float] = {}
+
+    for (meas_id, die), group in meta_df.groupby(["measurement_id", "die"]):
+        total_flux = 0.0
+        for _, row in group.iterrows():
+            idx = int(row["spectrum_index"])
+            if idx < 0 or idx >= len(ary_intensity):
+                continue
+            y_arr = ary_intensity[idx]
+            if ary_energy is not None and idx < len(ary_energy):
+                x_arr = ary_energy[idx]
+                area = abs(float(trapz_fn(y_arr, x_arr)))
+            else:
+                area = float(np.sum(y_arr))
+            total_flux += area
+        flux_map[(str(meas_id), int(die))] = max(total_flux, 1e-4)
+
+    return flux_map
+
+
 def split_session_datasets(
     meta_df: pd.DataFrame,
     ary_intensity: np.ndarray,
@@ -329,6 +427,8 @@ def split_session_datasets(
         - 'region' (str): Spectral region to extract (e.g., 'Al2p').
         - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
         - 'return_test' (bool): Whether to return test_dataset as 3rd tuple element (default False).
+        - 'normalization_mode' (str): 'source_referenced' (default), 'die_total_flux', or 'none'.
+        - 'normalize_by_source' (bool): Legacy flag for backward compatibility (default True).
         - 'train_ratio' (float): Fraction of sessions for training (default 0.5).
         - 'val_ratio' (float): Fraction of sessions for validation (default 0.2).
         - 'test_ratio' (float): Fraction of sessions for test (default 0.3).
@@ -347,7 +447,12 @@ def split_session_datasets(
     source_tool: str | None = cfg.get("source_tool")
     target_tool: str | None = cfg.get("target_tool")
     return_test: bool = bool(cfg.get("return_test", False))
-    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+    raw_mode = cfg.get("normalization_mode")
+    if raw_mode is not None:
+        norm_mode = str(raw_mode).lower()
+    else:
+        norm_mode = "source_referenced" if cfg.get("normalize_by_source", True) else "none"
+    normalize_by_source: bool = bool(cfg.get("normalize_by_source", norm_mode != "none"))
     eps_val: float = float(cfg.get("eps", 1e-4))
 
     if len(ary_intensity) != len(ary_energy):
@@ -389,6 +494,10 @@ def split_session_datasets(
 
     n_spectra = len(ary_intensity)
 
+    flux_map: dict[tuple[str, int], float] = {}
+    if norm_mode in ("die_total_flux", "die_flux"):
+        flux_map = compute_die_total_flux(meta_df, ary_intensity, ary_energy)
+
     def _build_dataset(df_subset: pd.DataFrame) -> SpectrumPairDataset:
         x_indices = df_subset["spectrum_index"].astype(int).to_numpy()
         y_indices = df_subset["spectrum_index_target"].astype(int).to_numpy()
@@ -405,12 +514,40 @@ def split_session_datasets(
                     f"min={y_indices.min()}, max={y_indices.max()}"
                 )
 
+        scale_x_arr = None
+        scale_y_arr = None
+        if norm_mode in ("die_total_flux", "die_flux") and flux_map and len(df_subset) > 0:
+            scale_x_list: list[float] = []
+            scale_y_list: list[float] = []
+            for _, row in df_subset.iterrows():
+                m_src = str(row["measurement_id"])
+                die_val = int(row["die"])
+                m_tgt = str(row["measurement_id_target"])
+                s_x = flux_map.get(
+                    (m_src, die_val),
+                    max(float(np.max(np.abs(ary_intensity[int(row["spectrum_index"])]))), eps_val),
+                )
+                s_y = flux_map.get(
+                    (m_tgt, die_val),
+                    max(float(np.max(np.abs(ary_intensity[int(row["spectrum_index_target"])]))), eps_val),
+                )
+                scale_x_list.append(s_x)
+                scale_y_list.append(s_y)
+            scale_x_arr = np.array(scale_x_list, dtype=np.float32)[:, None]
+            scale_y_arr = np.array(scale_y_list, dtype=np.float32)[:, None]
+
         return SpectrumPairDataset(
             ary_intensity[x_indices],
             ary_intensity[y_indices],
             energy=ary_energy[x_indices],
             metadata=df_subset.to_dict(orient="records"),
-            config={"normalize_by_source": normalize_by_source, "eps": eps_val},
+            config={
+                "normalization_mode": norm_mode,
+                "normalize_by_source": normalize_by_source,
+                "eps": eps_val,
+            },
+            scale_x=scale_x_arr,
+            scale_y=scale_y_arr,
         )
 
     train_ds = _build_dataset(train_df)

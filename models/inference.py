@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from utility.patching import extract_sliding_windows, reconstruct_from_patches
+from models.dataset import compute_die_total_flux
 
 
 def predict_sliding_window_spectrum(
@@ -62,7 +63,11 @@ def predict_sliding_window_spectrum(
     batch_size = int(cfg.get("batch_size", 64))
 
     spectrum_1d = np.asarray(spectrum).ravel()
-    if normalize_by_source:
+    scale_factor = cfg.get("scale_factor")
+    if scale_factor is not None:
+        scale_x = max(float(scale_factor), eps)
+        spectrum_in = spectrum_1d / scale_x
+    elif normalize_by_source:
         scale_x = max(float(np.max(np.abs(spectrum_1d))), eps)
         spectrum_in = spectrum_1d / scale_x
     else:
@@ -306,6 +311,16 @@ def predict_spectra(
     source_indices = source_df["spectrum_index"].astype(int).to_numpy()
     predicted_energies[:] = ary_energy[source_indices]
 
+    raw_mode = cfg.get("normalization_mode")
+    if raw_mode is not None:
+        norm_mode = str(raw_mode).lower()
+    else:
+        norm_mode = "source_referenced" if normalize_by_source else "none"
+
+    source_flux_map: dict[tuple[str, int], float] = {}
+    if norm_mode in ("die_total_flux", "die_flux"):
+        source_flux_map = compute_die_total_flux(source_df, ary_intensity, ary_energy)
+
     # Process region-by-region in batches for vectorization speedup
     for region, group in source_df.groupby("region"):
         group_new_indices = np.arange(len(source_df))[(source_df["region"] == region).to_numpy()]
@@ -314,6 +329,23 @@ def predict_spectra(
         if region in models:
             model_entry = models[str(region)]
             region_x = ary_intensity[orig_indices]
+
+            if norm_mode in ("die_total_flux", "die_flux") and source_flux_map:
+                scales = np.array([
+                    source_flux_map.get(
+                        (str(r_row["measurement_id"]), int(r_row["die"])),
+                        max(float(np.max(np.abs(ary_intensity[int(r_row["spectrum_index"])]))), eps),
+                    )
+                    for _, r_row in group.iterrows()
+                ], dtype=np.float32)[:, None]
+                region_x_in = region_x / scales
+            elif normalize_by_source and norm_mode != "none":
+                scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
+                region_x_in = region_x / scales
+            else:
+                scales = np.ones((len(region_x), 1), dtype=np.float32)
+                region_x_in = region_x
+
             is_sw = bool(cfg.get("use_sliding_window", False)) or isinstance(model_entry, (tuple, list))
 
             if is_sw:
@@ -330,7 +362,7 @@ def predict_spectra(
                 m_dev = m_params[0].device if m_params else device
 
                 sw_preds = []
-                for x_single in region_x:
+                for idx_in_region, x_single in enumerate(region_x):
                     recon = predict_sliding_window_spectrum(
                         model=m_obj,
                         spectrum=x_single,
@@ -338,6 +370,7 @@ def predict_spectra(
                             "window_size": w_size,
                             "stride": s_step,
                             "device": m_dev,
+                            "scale_factor": float(scales[idx_in_region, 0]),
                             "normalize_by_source": normalize_by_source,
                             "clamp_non_negative": clamp_non_negative,
                             "eps": eps,
@@ -347,13 +380,6 @@ def predict_spectra(
                 pred_arr = np.vstack(sw_preds)
             else:
                 model = model_entry
-                if normalize_by_source:
-                    scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
-                    region_x_in = region_x / scales
-                else:
-                    scales = 1.0
-                    region_x_in = region_x
-
                 # Batch forward pass
                 preds = []
                 for i in range(0, len(region_x_in), batch_size):
@@ -364,8 +390,7 @@ def predict_spectra(
                     preds.append(y_pred)
 
                 pred_arr = np.vstack(preds)
-                if normalize_by_source:
-                    pred_arr = pred_arr * scales
+                pred_arr = pred_arr * scales
 
                 # Zero clamping at final full spectrum reconstruction level
                 if clamp_non_negative:

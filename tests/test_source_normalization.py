@@ -248,7 +248,101 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         self.assertGreaterEqual(p_clamped[0, 0], 0.0)
         self.assertEqual(p_clamped[0, 0], 0.0)
 
+    def test_compute_die_total_flux(self) -> None:
+        """Verify compute_die_total_flux sums integrated areas across regions for each die."""
+        from models.dataset import compute_die_total_flux
+        import pandas as pd
+
+        n_points = 10
+        ary_int = np.ones((4, n_points), dtype=np.float32) * 5.0
+        ary_ene = np.tile(np.linspace(10.0, 20.0, n_points, dtype=np.float32), (4, 1))
+
+        # 2 regions for M1 on Die 0, 2 regions for M1 on Die 1
+        meta_df = pd.DataFrame([
+            {"spectrum_index": 0, "measurement_id": "M1", "die": 0, "region": "Al2p"},
+            {"spectrum_index": 1, "measurement_id": "M1", "die": 0, "region": "Ti2p"},
+            {"spectrum_index": 2, "measurement_id": "M1", "die": 1, "region": "Al2p"},
+            {"spectrum_index": 3, "measurement_id": "M1", "die": 1, "region": "Ti2p"},
+        ])
+
+        flux_map = compute_die_total_flux(meta_df, ary_int, ary_ene)
+        # Each spectrum integral over [10, 20] with height 5 is 50.0. 2 regions = 100.0.
+        self.assertIn(("M1", 0), flux_map)
+        self.assertIn(("M1", 1), flux_map)
+        self.assertAlmostEqual(flux_map[("M1", 0)], 100.0, places=2)
+        self.assertAlmostEqual(flux_map[("M1", 1)], 100.0, places=2)
+
+    def test_split_session_datasets_die_total_flux_mode(self) -> None:
+        """Verify split_session_datasets with normalization_mode='die_total_flux' self-normalizes both x and y."""
+        from utility.pairing import pair_source_target_spectra
+        from utility.pseudo_measurement import generate_pseudo_measurements
+
+        config_data = {
+            "measurements_per_tool": {"J4": 6, "J5": 6},
+            "n_die": 3,
+            "regions": ["Al2p", "Ti2p"],
+            "seed": 42,
+        }
+        ary_i, ary_e, meta_df = generate_pseudo_measurements(config_data)
+        paired_meta = pair_source_target_spectra(meta_df, config={"source_tool": "J4", "target_tool": "J5"})
+
+        train_ds, val_ds = split_session_datasets(
+            paired_meta,
+            ary_i,
+            ary_e,
+            config={
+                "region": "Al2p",
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "normalization_mode": "die_total_flux",
+            },
+        )
+
+        item = train_ds[0]
+        self.assertIn("scale_x", item)
+        self.assertIn("scale_y", item)
+        # In die_total_flux mode, scale_x and scale_y are the respective die total integrated areas
+        self.assertGreater(float(item["scale_x"].item()), 0.0)
+        self.assertGreater(float(item["scale_y"].item()), 0.0)
+
+        # Unnormalizing with Option A scales by scale_x
+        unnorm_y = train_ds.unnormalize_y(item["y"], idx=0)
+        self.assertIsNotNone(unnorm_y)
+
+    def test_predict_spectra_die_total_flux_recovery(self) -> None:
+        """Verify predict_spectra in die_total_flux mode reconstructs Option A physical counts."""
+        import pandas as pd
+
+        n_points = 20
+        # Source die flux = integral over regions
+        ary_int = np.ones((2, n_points), dtype=np.float32) * 10.0
+        ary_ene = np.tile(np.linspace(10.0, 20.0, n_points, dtype=np.float32), (2, 1))
+
+        meta_df = pd.DataFrame([
+            {"spectrum_index": 0, "measurement_id": "M_0", "tool": "J4", "region": "Al2p", "die": 0},
+            {"spectrum_index": 1, "measurement_id": "M_0", "tool": "J4", "region": "Ti2p", "die": 0},
+        ])
+
+        class PassThrough(torch.nn.Module):
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return x
+
+        models = {"Al2p": PassThrough(), "Ti2p": PassThrough()}
+        pred_i, _, _ = predict_spectra(
+            models=models,
+            data=(ary_int, ary_ene, meta_df),
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "normalization_mode": "die_total_flux",
+                "clamp_non_negative": True,
+            },
+        )
+        # PassThrough in die_total_flux mode: x / F_die * F_die = x
+        np.testing.assert_allclose(pred_i, ary_int, rtol=1e-4)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
