@@ -342,6 +342,8 @@ def run_spectral_pipeline(
             "target_tool": target_tool,
             "session_splits": session_splits,
             "return_test": True,
+            "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
+            "normalize_by_source": cfg.get("normalize_by_source", True),
         }
         train_full_ds, val_full_ds, test_full_ds = split_session_datasets(
             meta_df, ary_intensity, ary_energy, config=split_cfg
@@ -389,7 +391,27 @@ def run_spectral_pipeline(
         # =====================================================================
         l2_weight = float(region_train_cfg.get("l2_weight", 1e-4))
         region_weights = cfg.get("region_weights")
-        criterion = NormalizedMSELoss(l2_weight=l2_weight, region_weights=region_weights)
+        cost_type = str(cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))).lower()
+        if cost_type in ("composite", "composite_spectral"):
+            from models.cost import CompositeSpectralLoss
+            criterion = CompositeSpectralLoss(
+                w_shape=float(cfg.get("w_shape", 0.5)),
+                w_mse=float(cfg.get("w_mse", 0.5)),
+                w_scale=float(cfg.get("w_scale", 0.0)),
+                l2_weight=l2_weight,
+                region_weights=region_weights,
+            )
+        else:
+            w_shape = float(cfg.get("w_shape", 0.0))
+            w_scale = float(cfg.get("w_scale", 0.0))
+            w_mse = float(cfg.get("w_mse", 1.0))
+            criterion = NormalizedMSELoss(
+                l2_weight=l2_weight,
+                region_weights=region_weights,
+                w_mse=w_mse,
+                w_shape=w_shape,
+                w_scale=w_scale,
+            )
 
         # =====================================================================
         # STEP 5: MODEL DEFINITION
@@ -401,6 +423,7 @@ def run_spectral_pipeline(
                 "window_size": w_size,
                 "stride": s_step,
                 "n_points": seq_len,
+                "use_film": bool(cfg.get("use_film", False)),
             }
         )
         model = instantiate_model(m_type, seq_len=seq_len, config=region_train_cfg)
@@ -508,7 +531,8 @@ def run_spectral_pipeline(
             "target_tool": target_tool,
             "session_splits": session_splits,
             "use_sliding_window": use_sw,
-            "normalize_by_source": True,
+            "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
+            "normalize_by_source": cfg.get("normalize_by_source", True),
             "clamp_non_negative": True,
         }
         predictions = predict_spectra(

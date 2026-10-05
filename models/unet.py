@@ -13,6 +13,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+from models.film import FiLMGenerator
+
+
 class UNetConvBlock1D(nn.Module):
     """Double 1D convolutional block with normalization and non-linear activations."""
 
@@ -59,13 +62,14 @@ class UNetConvBlock1D(nn.Module):
 
 
 class UNet1D(nn.Module):
-    """1D U-Net architecture with multi-scale contracting and expanding paths.
+    """1D U-Net architecture with multi-scale contracting and expanding paths and optional FiLM.
 
     Features:
     - Multi-scale hierarchical feature extraction.
     - Long skip connections preserving high-frequency peak boundaries.
     - Robust linear interpolation in the decoder supporting arbitrary/odd sequence lengths.
     - Optional global residual connection y = x + UNet(x) for stable inter-tool delta learning.
+    - Optional FiLM feature-wise linear modulation conditioning at the bottleneck.
     - Explicit L2 penalty computation on convolutional weights for NormalizedMSELoss compatibility.
 
     Parameters
@@ -81,6 +85,7 @@ class UNet1D(nn.Module):
         - 'use_batch_norm' (bool): Whether to use BatchNorm1d (default True).
         - 'residual' (bool): Whether to apply global residual shortcut y = x + delta (default True).
         - 'activation' (str): Activation function 'relu' or 'leaky_relu' (default 'relu').
+        - 'use_film' (bool): Whether to enable FiLM conditioning at the bottleneck (default False).
     """
 
     def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
@@ -94,6 +99,7 @@ class UNet1D(nn.Module):
         self.use_batch_norm = bool(cfg.get("use_batch_norm", True))
         self.residual = bool(cfg.get("residual", True))
         self.activation = str(cfg.get("activation", "relu"))
+        self.use_film = bool(cfg.get("use_film", False))
 
         if self.depth < 1:
             raise ValueError(f"depth must be >= 1, got {self.depth}")
@@ -140,6 +146,11 @@ class UNet1D(nn.Module):
             config=block_cfg,
         )
 
+        if self.use_film:
+            self.film_gen = FiLMGenerator(channels_list=[bottleneck_ch], config=cfg)
+        else:
+            self.film_gen = None
+
         # Decoder stages
         self.up_convs = nn.ModuleList()
         self.decoders = nn.ModuleList()
@@ -161,13 +172,19 @@ class UNet1D(nn.Module):
         # Final projection to 1 channel
         self.final_conv = nn.Conv1d(dec_current, 1, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Forward pass through 1D U-Net.
 
         Parameters
         ----------
         x : torch.Tensor
             Input tensor of shape (batch_size, n_points) or (batch_size, 1, n_points).
+        cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
+            Optional metadata conditioning features for FiLM modulation.
 
         Returns
         -------
@@ -193,6 +210,9 @@ class UNet1D(nn.Module):
 
         # Bottleneck
         feat = self.bottleneck(feat)
+        if self.use_film and cond is not None and self.film_gen is not None:
+            gamma, beta = self.film_gen(cond)[0]
+            feat = gamma.unsqueeze(-1) * feat + beta.unsqueeze(-1)
 
         # Expanding path
         for i in range(self.depth):

@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from models.cost import NormalizedMSELoss, format_loss_log10
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders
 from models.deeplabv3 import DeepLabV3
+from models.film import prepare_film_condition_tensor
 from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
 from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
@@ -66,8 +67,17 @@ def train_one_epoch(
         if max_v is not None and isinstance(max_v, torch.Tensor):
             max_v = max_v.to(device)
 
+        cond = None
+        if getattr(model, "use_film", False):
+            cond = prepare_film_condition_tensor(
+                metadata=batch.get("meta"),
+                scale_x=batch.get("scale_x"),
+                device=device,
+                num_samples=len(x),
+            )
+
         optimizer.zero_grad()
-        y_pred = model(x)
+        y_pred = model(x, cond=cond) if cond is not None else model(x)
         loss = criterion(y_pred, y, model=model, max_val=max_v)
         loss.backward()
         optimizer.step()
@@ -125,7 +135,16 @@ def evaluate(
             if max_v is not None and isinstance(max_v, torch.Tensor):
                 max_v = max_v.to(device)
 
-            y_pred = model(x)
+            cond = None
+            if getattr(model, "use_film", False):
+                cond = prepare_film_condition_tensor(
+                    metadata=batch.get("meta"),
+                    scale_x=batch.get("scale_x"),
+                    device=device,
+                    num_samples=len(x),
+                )
+
+            y_pred = model(x, cond=cond) if cond is not None else model(x)
             loss = criterion(y_pred, y, model=None, max_val=max_v)
             total_loss += loss.item()
             num_batches += 1

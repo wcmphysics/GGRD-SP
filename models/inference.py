@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from utility.patching import extract_sliding_windows, reconstruct_from_patches
 from models.dataset import compute_die_total_flux
+from models.film import prepare_film_condition_tensor
 
 
 def predict_sliding_window_spectrum(
@@ -385,8 +386,18 @@ def predict_spectra(
                 for i in range(0, len(region_x_in), batch_size):
                     batch_x = region_x_in[i : i + batch_size]
                     x_tensor = torch.from_numpy(batch_x.astype(np.float32)).to(device)
+                    cond = None
+                    if getattr(model, "use_film", False):
+                        batch_meta = group.iloc[i : i + batch_size].to_dict(orient="records")
+                        batch_scale = scales[i : i + batch_size]
+                        cond = prepare_film_condition_tensor(
+                            metadata=batch_meta,
+                            scale_x=batch_scale,
+                            device=device,
+                            num_samples=len(batch_x),
+                        )
                     with torch.no_grad():
-                        y_pred = model(x_tensor).cpu().numpy()
+                        y_pred = model(x_tensor, cond=cond).cpu().numpy() if cond is not None else model(x_tensor).cpu().numpy()
                     preds.append(y_pred)
 
                 pred_arr = np.vstack(preds)
