@@ -106,7 +106,7 @@ def main() -> None:
             "hidden_channels": 32,
             "base_channels": 16,
             "depth": 3,
-            "kernel_size": 5,
+            "kernel_size": 9,
             "l2_weight": 1e-6,
             "early_stopping_patience": 10,
             "verbose": True,
