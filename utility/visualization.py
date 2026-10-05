@@ -1002,8 +1002,16 @@ def plot_prediction_comparison(
     data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     config: dict[str, Any] | None = None,
-) -> tuple[plt.Figure, np.ndarray]:
-    """Plot an overlay comparison of Source, True Target, and Model Predicted Target spectra.
+) -> tuple[plt.Figure, Any]:
+    """Plot an overlay comparison of Source, True Target, and Model Transformed Target spectra.
+
+    Color scheme:
+    - Source tool spectrum: solid black line
+    - Target tool spectrum: solid red line
+    - Transformed source spectrum: blue dotted line
+
+    When 'region' is None (default), plots all available spectral regions for the measurement
+    in a clean multi-panel subplot grid. Defaults to a test split measurement session if available.
 
     Parameters
     ----------
@@ -1013,125 +1021,318 @@ def plot_prediction_comparison(
         Tuple of (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'measurement_id' (str | None): Source measurement session ID (default first paired session).
-        - 'region' (str | None): Target region (default 'Al2p' or first available).
+        - 'measurement_id' (str | None): Source measurement session ID. If None, auto-selects
+          a test split measurement (or first paired session).
+        - 'region' (str | None): Specific region to plot (e.g. 'Al2p'). If None (default),
+          all regions for the session are displayed in subplots.
         - 'die' (int): Die index (default 0).
-        - 'show_residual' (bool): Whether to include a residual subplot below (default True).
+        - 'show_residual' (bool): Whether to include a residual subplot in single-region mode (default True).
         - 'invert_x' (bool): Whether to invert binding energy axis (default True).
+        - 'figsize' (tuple[float, float] | None): Custom figure size.
+        - 'session_splits' (dict[str, set[str]] | None): Train/val/test session sets for test split resolution.
         - 'show' (bool): Whether to invoke plt.show() (default False).
 
     Returns
     -------
-    tuple[plt.Figure, np.ndarray]
-        Figure and axes array.
+    tuple[plt.Figure, Any]
+        Figure and axes (array of Axes for multi-region grid, or list/array of Axes for single region).
     """
     ary_intensity_orig, ary_energy_orig, meta_df_orig = data_original
     ary_intensity_pred, ary_energy_pred, meta_df_pred = data_predicted
 
     cfg = config or {}
     meas_id: str | None = cfg.get("measurement_id")
-    region: str | None = cfg.get("region")
+    target_region: str | None = cfg.get("region")
     die: int = int(cfg.get("die", 0))
     show_residual: bool = bool(cfg.get("show_residual", True))
     invert_x: bool = bool(cfg.get("invert_x", True))
     show: bool = bool(cfg.get("show", False))
 
-    # Auto-detect paired source measurement if not provided
+    # Auto-detect test split measurement if not provided
     if meas_id is None:
-        paired_sources = meta_df_orig[meta_df_orig["measurement_id_target"].notna()]
-        if paired_sources.empty:
-            raise ValueError("No paired source measurements found in meta_df_orig.")
-        meas_id = str(paired_sources["measurement_id"].iloc[0])
+        session_splits = cfg.get("session_splits")
+        if session_splits and session_splits.get("test"):
+            for candidate in session_splits["test"]:
+                c_str = str(candidate)
+                if (
+                    "source_measurement_id" in meta_df_pred.columns
+                    and (meta_df_pred["source_measurement_id"] == c_str).any()
+                ):
+                    meas_id = c_str
+                    break
+                elif (
+                    "measurement_id" in meta_df_orig.columns
+                    and (meta_df_orig["measurement_id"] == c_str).any()
+                ):
+                    meas_id = c_str
+                    break
+        if meas_id is None and "split" in meta_df_pred.columns:
+            test_preds = meta_df_pred[meta_df_pred["split"].astype(str).str.lower() == "test"]
+            if not test_preds.empty:
+                meas_id = str(test_preds["source_measurement_id"].iloc[0])
+        if meas_id is None and "split" in meta_df_orig.columns:
+            test_origs = meta_df_orig[meta_df_orig["split"].astype(str).str.lower() == "test"]
+            if not test_origs.empty:
+                if "measurement_id_target" in test_origs.columns:
+                    paired_test = test_origs[test_origs["measurement_id_target"].notna()]
+                    if not paired_test.empty:
+                        meas_id = str(paired_test["measurement_id"].iloc[0])
+                if meas_id is None:
+                    meas_id = str(test_origs["measurement_id"].iloc[0])
+        # Fallback to first paired source measurement
+        if meas_id is None:
+            if "measurement_id_target" in meta_df_orig.columns:
+                paired_sources = meta_df_orig[meta_df_orig["measurement_id_target"].notna()]
+                if not paired_sources.empty:
+                    meas_id = str(paired_sources["measurement_id"].iloc[0])
+            if meas_id is None and "source_measurement_id" in meta_df_pred.columns:
+                meas_id = str(meta_df_pred["source_measurement_id"].iloc[0])
+            if meas_id is None:
+                raise ValueError("No paired source measurements found in meta_df_orig.")
 
-    # Filter source row
     src_rows = meta_df_orig[
         (meta_df_orig["measurement_id"] == meas_id)
         & (meta_df_orig["die"] == die)
     ]
-    if region is not None:
-        src_rows = src_rows[src_rows["region"] == region]
-
     if src_rows.empty:
-        raise ValueError(f"No source spectrum matching meas_id='{meas_id}', die={die}, region='{region}'.")
+        raise ValueError(f"No source spectrum matching meas_id='{meas_id}', die={die}.")
 
-    src_row = src_rows.iloc[0]
-    actual_region = str(src_row["region"])
-    if pd.isna(src_row.get("measurement_id_target")):
-        raise ValueError(f"Source measurement '{meas_id}' is not paired with a target measurement.")
-    tgt_meas_id = str(src_row.get("measurement_id_target"))
-    src_tool = str(src_row.get("tool"))
-    tgt_tool = str(src_row.get("tool_target"))
+    # =========================================================================
+    # SINGLE REGION MODE (explicit region passed)
+    # =========================================================================
+    if target_region is not None:
+        src_reg_rows = src_rows[src_rows["region"] == target_region]
+        if src_reg_rows.empty:
+            raise ValueError(
+                f"No source spectrum matching meas_id='{meas_id}', die={die}, region='{target_region}'."
+            )
+        src_row = src_reg_rows.iloc[0]
+        actual_region = str(src_row["region"])
+        if pd.isna(src_row.get("measurement_id_target")):
+            raise ValueError(f"Source measurement '{meas_id}' is not paired with a target measurement.")
+        tgt_meas_id = str(src_row.get("measurement_id_target"))
+        src_tool = str(src_row.get("tool"))
+        tgt_tool = str(src_row.get("tool_target"))
 
-    # Filter target row
-    tgt_rows = meta_df_orig[
-        (meta_df_orig["measurement_id"] == tgt_meas_id)
-        & (meta_df_orig["die"] == die)
-        & (meta_df_orig["region"] == actual_region)
-    ]
-    if tgt_rows.empty:
-        raise ValueError(f"Target spectrum matching meas_id='{tgt_meas_id}' not found.")
-    tgt_row = tgt_rows.iloc[0]
+        tgt_rows = meta_df_orig[
+            (meta_df_orig["measurement_id"] == tgt_meas_id)
+            & (meta_df_orig["die"] == die)
+            & (meta_df_orig["region"] == actual_region)
+        ]
+        if tgt_rows.empty:
+            raise ValueError(f"Target spectrum matching meas_id='{tgt_meas_id}' not found.")
+        tgt_row = tgt_rows.iloc[0]
 
-    # Filter predicted row
-    pred_rows = meta_df_pred[
-        (meta_df_pred["source_measurement_id"] == meas_id)
-        & (meta_df_pred["die"] == die)
-        & (meta_df_pred["region"] == actual_region)
-    ]
-    if pred_rows.empty:
-        raise ValueError(f"Predicted spectrum for source meas_id='{meas_id}', die={die}, region='{actual_region}' not found.")
-    pred_row = pred_rows.iloc[0]
+        pred_rows = meta_df_pred[
+            (meta_df_pred["source_measurement_id"] == meas_id)
+            & (meta_df_pred["die"] == die)
+            & (meta_df_pred["region"] == actual_region)
+        ]
+        if pred_rows.empty:
+            raise ValueError(
+                f"Predicted spectrum for source meas_id='{meas_id}', die={die}, region='{actual_region}' not found."
+            )
+        pred_row = pred_rows.iloc[0]
 
-    # Extract vectors
-    energy = ary_energy_orig[int(src_row["spectrum_index"])]
-    i_src = ary_intensity_orig[int(src_row["spectrum_index"])]
-    i_tgt = ary_intensity_orig[int(tgt_row["spectrum_index"])]
-    i_pred = ary_intensity_pred[int(pred_row["spectrum_index"])]
-    residual = i_tgt - i_pred
+        e_src = ary_energy_orig[int(src_row["spectrum_index"])]
+        i_src = ary_intensity_orig[int(src_row["spectrum_index"])]
+        e_tgt = ary_energy_orig[int(tgt_row["spectrum_index"])]
+        i_tgt = ary_intensity_orig[int(tgt_row["spectrum_index"])]
+        e_pred = ary_energy_pred[int(pred_row["spectrum_index"])]
+        i_pred = ary_intensity_pred[int(pred_row["spectrum_index"])]
+        residual = i_tgt - i_pred
 
-    if show_residual:
-        fig, axes = plt.subplots(
-            2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+        if show_residual:
+            fig, axes = plt.subplots(
+                2, 1, figsize=cfg.get("figsize", (8, 6)), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+            )
+            ax_main, ax_res = axes[0], axes[1]
+        else:
+            fig, ax_main = plt.subplots(1, 1, figsize=cfg.get("figsize", (8, 4.5)))
+            axes = np.array([ax_main])
+            ax_res = None
+
+        # Color scheme:
+        # source tool spectrum -> solid black line
+        # target tool spectrum -> solid red line
+        # source tool spectrum transformed -> blue dotted line
+        ax_main.plot(
+            e_src,
+            i_src,
+            label=f"Source Measured ({src_tool})",
+            color="black",
+            linestyle="-",
+            linewidth=1.5,
         )
-        ax_main, ax_res = axes[0], axes[1]
-    else:
-        fig, ax_main = plt.subplots(1, 1, figsize=(8, 4.5))
-        axes = np.array([ax_main])
-        ax_res = None
-
-    # Main spectral plot
-    ax_main.plot(energy, i_src, label=f"Source Measured ({src_tool})", color="slategray", linestyle="--", linewidth=1.5)
-    ax_main.plot(energy, i_tgt, label=f"True Target ({tgt_tool})", color="forestgreen", linewidth=1.8)
-    ax_main.plot(energy, i_pred, label=f"Predicted Target ({src_tool} -> {tgt_tool})", color="crimson", linewidth=1.8)
-    ax_main.legend(loc="best", fontsize="small")
-    _finalize_plot(
-        ax_main,
-        title=(
-            f"Spectral Transfer Comparison | Region: {actual_region} | Die {die}\n"
-            f"Source: {meas_id} ({src_tool}) -> Target: {tgt_meas_id} ({tgt_tool})"
-        ),
-        ylabel="Intensity (counts)",
-        invert_x=invert_x,
-        grid_alpha=0.6,
-        show=False,
-    )
-
-    # Residual plot
-    if ax_res is not None:
-        ax_res.plot(energy, residual, color="purple", linewidth=1.4, label="Target - Predicted")
-        ax_res.axhline(0, color="black", linestyle=":", linewidth=1.0, alpha=0.7)
-        ax_res.legend(loc="best", fontsize="x-small")
+        ax_main.plot(
+            e_tgt,
+            i_tgt,
+            label=f"True Target ({tgt_tool})",
+            color="red",
+            linestyle="-",
+            linewidth=1.8,
+        )
+        ax_main.plot(
+            e_pred,
+            i_pred,
+            label=f"Transformed Source ({src_tool} -> {tgt_tool})",
+            color="blue",
+            linestyle=":",
+            linewidth=2.0,
+        )
+        ax_main.legend(loc="best", fontsize="small")
         _finalize_plot(
-            ax_res,
-            xlabel="Binding Energy (eV)",
-            ylabel="Residual",
+            ax_main,
+            title=(
+                f"Spectral Transfer Comparison | Region: {actual_region} | Die {die}\n"
+                f"Source: {meas_id} ({src_tool}) -> Target: {tgt_meas_id} ({tgt_tool})"
+            ),
+            ylabel="Intensity (counts)",
             invert_x=invert_x,
             grid_alpha=0.6,
             show=False,
         )
-    else:
-        ax_main.set_xlabel("Binding Energy (eV)")
 
+        if ax_res is not None:
+            ax_res.plot(e_tgt, residual, color="purple", linewidth=1.4, label="Target - Transformed")
+            ax_res.axhline(0, color="black", linestyle=":", linewidth=1.0, alpha=0.7)
+            ax_res.legend(loc="best", fontsize="x-small")
+            _finalize_plot(
+                ax_res,
+                xlabel="Binding Energy (eV)",
+                ylabel="Residual",
+                invert_x=invert_x,
+                grid_alpha=0.6,
+                show=False,
+            )
+        else:
+            ax_main.set_xlabel("Binding Energy (eV)")
+
+        plt.tight_layout()
+        if show:
+            plt.show()
+
+        return fig, axes
+
+    # =========================================================================
+    # MULTI-REGION SUBPLOT GRID MODE (region=None, default)
+    # =========================================================================
+    regions = list(src_rows["region"].unique())
+    n_regs = len(regions)
+    if n_regs == 0:
+        raise ValueError(f"No regions found for source measurement '{meas_id}', die={die}.")
+
+    n_cols = min(n_regs, 3)
+    n_rows = (n_regs + n_cols - 1) // n_cols
+    figsize = tuple(cfg.get("figsize", (5.2 * n_cols, 3.8 * n_rows)))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    axes_flat = axes.flatten()
+
+    src_tool = str(src_rows["tool"].iloc[0])
+    has_tgt_col = "measurement_id_target" in src_rows.columns
+    first_tgt_id = str(src_rows["measurement_id_target"].iloc[0]) if has_tgt_col else ""
+    tgt_tool = str(src_rows["tool_target"].iloc[0]) if "tool_target" in src_rows.columns else ""
+
+    plotted_count = 0
+    for idx, reg in enumerate(regions):
+        ax = axes_flat[idx]
+        reg_src_row = src_rows[src_rows["region"] == reg].iloc[0]
+        tgt_meas_id = str(reg_src_row.get("measurement_id_target", first_tgt_id))
+        reg_src_tool = str(reg_src_row.get("tool", src_tool))
+        reg_tgt_tool = str(reg_src_row.get("tool_target", tgt_tool))
+
+        tgt_match = meta_df_orig[
+            (meta_df_orig["measurement_id"] == tgt_meas_id)
+            & (meta_df_orig["die"] == die)
+            & (meta_df_orig["region"] == reg)
+        ]
+        pred_match = meta_df_pred[
+            (meta_df_pred["source_measurement_id"] == meas_id)
+            & (meta_df_pred["die"] == die)
+            & (meta_df_pred["region"] == reg)
+        ]
+
+        if tgt_match.empty or pred_match.empty:
+            ax.set_visible(False)
+            continue
+
+        tgt_row = tgt_match.iloc[0]
+        pred_row = pred_match.iloc[0]
+
+        e_src = ary_energy_orig[int(reg_src_row["spectrum_index"])]
+        i_src = ary_intensity_orig[int(reg_src_row["spectrum_index"])]
+        e_tgt = ary_energy_orig[int(tgt_row["spectrum_index"])]
+        i_tgt = ary_intensity_orig[int(tgt_row["spectrum_index"])]
+        e_pred = ary_energy_pred[int(pred_row["spectrum_index"])]
+        i_pred = ary_intensity_pred[int(pred_row["spectrum_index"])]
+
+        # Color scheme:
+        # source tool spectrum -> solid black line
+        # target tool spectrum -> solid red line
+        # source tool spectrum transformed -> blue dotted line
+        ax.plot(
+            e_src,
+            i_src,
+            label=f"Source ({reg_src_tool})",
+            color="black",
+            linestyle="-",
+            linewidth=1.5,
+        )
+        ax.plot(
+            e_tgt,
+            i_tgt,
+            label=f"Target ({reg_tgt_tool})",
+            color="red",
+            linestyle="-",
+            linewidth=1.8,
+        )
+        ax.plot(
+            e_pred,
+            i_pred,
+            label=f"Transformed ({reg_src_tool}->{reg_tgt_tool})",
+            color="blue",
+            linestyle=":",
+            linewidth=2.0,
+        )
+
+        _finalize_plot(
+            ax,
+            title=f"Region: {reg}",
+            xlabel="Binding Energy (eV)",
+            ylabel="Intensity (counts)",
+            invert_x=invert_x,
+            grid_alpha=0.5,
+            show=False,
+        )
+        ax.legend(loc="best", fontsize="x-small")
+        plotted_count += 1
+
+    if plotted_count == 0:
+        raise ValueError(
+            f"No matching target or predicted spectra found for source measurement '{meas_id}', die={die}."
+        )
+
+    # Hide unused panels
+    for empty_idx in range(n_regs, len(axes_flat)):
+        axes_flat[empty_idx].set_visible(False)
+
+    split_str = ""
+    session_splits = cfg.get("session_splits")
+    if session_splits:
+        for split_key in ["test", "val", "train"]:
+            if meas_id in session_splits.get(split_key, set()):
+                split_str = f" [{split_key.capitalize()} Split]"
+                break
+    if not split_str and "split" in meta_df_pred.columns:
+        sp_matches = meta_df_pred[meta_df_pred["source_measurement_id"] == meas_id]
+        if not sp_matches.empty and pd.notna(sp_matches["split"].iloc[0]):
+            split_str = f" [{str(sp_matches['split'].iloc[0]).capitalize()} Split]"
+
+    suptitle = cfg.get(
+        "title",
+        f"Spectral Transfer Comparison (All Regions){split_str} | Session: {meas_id} (Die {die})",
+    )
+    fig.suptitle(suptitle, fontsize=13)
     plt.tight_layout()
     if show:
         plt.show()
