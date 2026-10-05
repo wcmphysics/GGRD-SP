@@ -129,6 +129,7 @@ class NormalizedMSELoss(nn.Module):
             pred_norm = torch.norm(norm_pred, p=2, dim=-1, keepdim=True).clamp(min=self.eps)
             true_norm = torch.norm(norm_true, p=2, dim=-1, keepdim=True).clamp(min=self.eps)
             cosine_sim = torch.sum((norm_pred / pred_norm) * (norm_true / true_norm), dim=-1)
+            cosine_sim = torch.clamp(cosine_sim, -1.0, 1.0)
             shape_loss = torch.mean(1.0 - cosine_sim)
             total_loss = total_loss + self.w_shape * shape_loss
 

@@ -356,6 +356,23 @@ class TestVisualization(unittest.TestCase):
                 plot_config={"filters": {"tool": "NonExistentTool"}},
             )
 
+    def test_maintenance_jump_negative_noise_handled_safely(self) -> None:
+        """Verify negative maintenance jump noise std is clamped without raising ValueError."""
+        from datetime import datetime
+        from utility.pseudo_measurement import calculate_time_decay_factor
+
+        t0 = datetime(2026, 1, 1, 0, 0, 0)
+        t1 = datetime(2026, 2, 15, 0, 0, 0)
+        rng = np.random.default_rng(42)
+        factor = calculate_time_decay_factor(
+            meas_time=t1,
+            base_time=t0,
+            rng=rng,
+            config={"maintenance_jump_noise_std": -0.05, "maintenance_interval_days": 30.0},
+        )
+        self.assertGreater(factor, 0.0)
+        self.assertLessEqual(factor, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -88,6 +88,40 @@ class TestCostFunctions(unittest.TestCase):
         self.assertIn("log10: N/A", format_loss_log10(0.0))
         self.assertIn("log10: N/A", format_loss_log10(-0.5))
 
+    def test_cosine_sim_clamp_non_negative(self) -> None:
+        """Verify loss is non-negative even with exact identical tensors."""
+        criterion = CompositeSpectralLoss(w_shape=1.0, w_mse=0.0)
+        y = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0]])
+        loss = criterion(y, y)
+        self.assertGreaterEqual(loss.item(), 0.0)
+        self.assertAlmostEqual(loss.item(), 0.0, places=6)
+
+    def test_train_model_region_respects_composite_loss(self) -> None:
+        """Verify train_model_region accepts cost_type='composite' and trains without errors."""
+        from models.dataset import SpectrumPairDataset
+        from models.trainer import train_model_region
+        import numpy as np
+
+        x = np.ones((4, 20), dtype=np.float32)
+        y = np.ones((4, 20), dtype=np.float32) * 1.1
+        ds = SpectrumPairDataset(x, y)
+
+        res = train_model_region(
+            train_dataset=ds,
+            val_dataset=ds,
+            config={
+                "cost_type": "composite",
+                "w_shape": 0.5,
+                "w_mse": 0.5,
+                "epochs": 1,
+                "batch_size": 2,
+                "model_type": "resnet",
+                "hidden_channels": 4,
+            },
+        )
+        self.assertIn("best_val_loss", res)
+        self.assertFalse(np.isnan(res["best_val_loss"]))
+
 
 if __name__ == "__main__":
     unittest.main()

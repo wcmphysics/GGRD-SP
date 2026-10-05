@@ -173,7 +173,7 @@ def calculate_time_decay_factor(
     interval_days = float(config.get("maintenance_interval_days", 30.0))
     if interval_days <= 0.0:
         interval_days = 30.0
-    jump_std = float(config.get("maintenance_jump_noise_std", 0.03))
+    jump_std = max(0.0, float(config.get("maintenance_jump_noise_std", 0.03)))
     decay_floor = float(config.get("decay_floor", 0.2))
 
     delta_days = max(0.0, (meas_time - base_time).total_seconds() / 86400.0)
@@ -182,7 +182,7 @@ def calculate_time_decay_factor(
 
     if cycle_cache is not None:
         if cycle_idx not in cycle_cache:
-            reset_level = 1.0 if cycle_idx == 0 else float(rng.normal(1.0, jump_std))
+            reset_level = 1.0 if (cycle_idx == 0 or jump_std == 0.0) else float(rng.normal(1.0, jump_std))
             cycle_cache[cycle_idx] = float(np.clip(reset_level, 0.8, 1.3))
         base_level = cycle_cache[cycle_idx]
     else:
