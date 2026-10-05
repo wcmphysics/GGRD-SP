@@ -17,6 +17,8 @@ from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.visualization import (
     calculate_prediction_metrics,
+    plot_max_intensity_vs_time,
+    plot_normalized_max_intensity_vs_time,
     plot_prediction_comparison,
     plot_sliding_window_slices,
     plot_training_history,
@@ -212,6 +214,189 @@ class TestModelPerformanceObservation(unittest.TestCase):
             plot_sliding_window_slices(np.array([]))
         with self.assertRaises(ValueError):
             plot_sliding_window_slices(np.ones(20), energy=np.ones(15))
+
+
+    def test_plot_max_intensity_vs_time(self) -> None:
+        """Test plot_max_intensity_vs_time across hue options and filters."""
+        for hue_opt in ["tool", "die", "region"]:
+            fig, ax = plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                plot_config={"hue": hue_opt, "show": False},
+            )
+            self.assertIsInstance(fig, plt.Figure)
+            self.assertIsInstance(ax, plt.Axes)
+            plt.close(fig)
+
+        # Test with filters
+        fig, ax = plot_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            plot_config={"hue": "region", "filters": {"die": 0}, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        plt.close(fig)
+
+        # Test error on invalid filter or empty df
+        with self.assertRaises(KeyError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                plot_config={"filters": {"nonexistent_col": 1}},
+            )
+        with self.assertRaises(ValueError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.iloc[:0],
+            )
+
+    def test_plot_normalized_max_intensity_vs_time(self) -> None:
+        """Test plot_normalized_max_intensity_vs_time with die flux and spectrum area modes."""
+        # Mode 1: die_total_flux
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=self.ary_energy,
+            plot_config={"hue": "tool", "normalization_mode": "die_total_flux", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertIsInstance(ax, plt.Axes)
+        plt.close(fig)
+
+        # Mode 2: spectrum_area
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=self.ary_energy,
+            plot_config={"hue": "die", "normalization_mode": "spectrum_area", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        plt.close(fig)
+
+        # Test ary_energy=None for both modes (summation fallback)
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=None,
+            plot_config={"normalization_mode": "die_total_flux", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        plt.close(fig)
+
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=None,
+            plot_config={"normalization_mode": "spectrum_area", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        plt.close(fig)
+
+        # Test unsupported normalization_mode raises ValueError
+        with self.assertRaises(ValueError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                plot_config={"normalization_mode": "unsupported_mode"},
+            )
+
+        # Test missing required column in die_total_flux raises KeyError
+        with self.assertRaises(KeyError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.drop(columns=["die"]),
+                plot_config={"normalization_mode": "die_total_flux"},
+            )
+
+        # Test empty dataframe
+        with self.assertRaises(ValueError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.iloc[:0],
+            )
+
+    def test_plot_prediction_comparison_multi_region_subplots_and_colors(self) -> None:
+        """Test multi-region subplots, test split default, and strict color scheme."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        # Default region=None -> subplots for all regions
+        fig, axes = plot_prediction_comparison(
+            data_original=data_orig,
+            data_predicted=data_pred,
+            config={
+                "die": 0,
+                "session_splits": self.pipeline_res["session_splits"],
+                "show": False,
+            },
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        axes_flat = axes.flatten()
+        self.assertGreaterEqual(len(axes_flat), 2)
+
+        # Inspect the first active subplot for lines and color scheme:
+        # source -> solid black line
+        # target -> solid red line
+        # transformed -> blue dotted line
+        first_ax = axes_flat[0]
+        lines = first_ax.get_lines()
+        self.assertEqual(len(lines), 3)
+
+        import matplotlib.colors as mcolors
+        src_line, tgt_line, pred_line = lines[0], lines[1], lines[2]
+        self.assertEqual(mcolors.to_hex(src_line.get_color()), mcolors.to_hex("black"))
+        self.assertEqual(src_line.get_linestyle(), "-")
+
+        self.assertEqual(mcolors.to_hex(tgt_line.get_color()), mcolors.to_hex("red"))
+        self.assertEqual(tgt_line.get_linestyle(), "-")
+
+        self.assertEqual(mcolors.to_hex(pred_line.get_color()), mcolors.to_hex("blue"))
+        self.assertEqual(pred_line.get_linestyle(), ":")
+
+        plt.close(fig)
+
+    def test_plot_prediction_comparison_single_region_colors(self) -> None:
+        """Test single-region mode also follows the strict color scheme."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        fig, axes = plot_prediction_comparison(
+            data_original=data_orig,
+            data_predicted=data_pred,
+            config={"region": "Al2p", "die": 0, "show_residual": True, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        ax_main = axes[0]
+        lines = ax_main.get_lines()
+        self.assertEqual(len(lines), 3)
+
+        import matplotlib.colors as mcolors
+        self.assertEqual(mcolors.to_hex(lines[0].get_color()), mcolors.to_hex("black"))
+        self.assertEqual(lines[0].get_linestyle(), "-")
+
+        self.assertEqual(mcolors.to_hex(lines[1].get_color()), mcolors.to_hex("red"))
+        self.assertEqual(lines[1].get_linestyle(), "-")
+
+        self.assertEqual(mcolors.to_hex(lines[2].get_color()), mcolors.to_hex("blue"))
+        self.assertEqual(lines[2].get_linestyle(), ":")
+
+        plt.close(fig)
+
+
+    def test_plot_prediction_comparison_multi_region_no_match_raises(self) -> None:
+        """Test that multi-region mode raises ValueError if no predicted matches exist."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        ary_p, ary_e, meta_p = self.pipeline_res["predictions"]
+        broken_meta_p = meta_p.copy()
+        broken_meta_p["source_measurement_id"] = "NON_EXISTENT_ID"
+        data_pred_broken = (ary_p, ary_e, broken_meta_p)
+
+        with self.assertRaises(ValueError):
+            plot_prediction_comparison(
+                data_original=data_orig,
+                data_predicted=data_pred_broken,
+                config={"die": 0, "show": False},
+            )
 
 
 if __name__ == "__main__":
