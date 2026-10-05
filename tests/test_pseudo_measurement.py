@@ -211,6 +211,79 @@ class TestPseudoMeasurement(unittest.TestCase):
         with self.assertRaises(ValueError):
             generate_pseudo_measurements({"measurements_per_t7_code": -3})
 
+    def test_scale_columns_and_decay_tracking(self) -> None:
+        """Verify scale tracking metadata columns exist and satisfy scale_total."""
+        _, _, meta_df = generate_pseudo_measurements()
+        for col in ("scale_tool", "scale_time", "scale_die", "scale_total"):
+            self.assertIn(col, meta_df.columns)
+            self.assertTrue(np.all(meta_df[col] > 0.0))
+
+        # scale_total should equal scale_tool * scale_time * scale_die
+        computed = meta_df["scale_tool"] * meta_df["scale_time"] * meta_df["scale_die"]
+        np.testing.assert_allclose(meta_df["scale_total"], computed, rtol=1e-5)
+
+    def test_time_decay_and_maintenance_jump(self) -> None:
+        """Verify linear time decay over days and jump up at maintenance interval."""
+        config = {
+            "measurements_per_tool": {"J4": 20},
+            "interval_hours_range": (36.0, 48.0),  # ~1.5 to 2 days per measurement
+            "time_decay_rate": 0.01,  # 1% decay per day
+            "maintenance_interval_days": 15.0,  # Maintenance every 15 days
+            "maintenance_jump_noise_std": 0.0,
+            "seed": 42,
+        }
+        _, _, meta_df = generate_pseudo_measurements(config)
+        j4_meas = meta_df.drop_duplicates(subset=["measurement_id"]).sort_values("time")
+
+        times = j4_meas["time"].values
+        scales = j4_meas["scale_time"].values
+
+        # Find pair across maintenance event (~15 days)
+        base_time = pd.Timestamp(times[0])
+        elapsed_days = [(pd.Timestamp(t) - base_time).total_seconds() / 86400.0 for t in times]
+
+        decay_observed = False
+        jump_observed = False
+        for i in range(1, len(scales)):
+            # If within same 15-day cycle and time progressed, scale should decay
+            if int(elapsed_days[i] // 15.0) == int(elapsed_days[i - 1] // 15.0):
+                if scales[i] < scales[i - 1]:
+                    decay_observed = True
+            # If crossed maintenance boundary, scale should jump up
+            elif int(elapsed_days[i] // 15.0) > int(elapsed_days[i - 1] // 15.0):
+                if scales[i] > scales[i - 1]:
+                    jump_observed = True
+
+        self.assertTrue(decay_observed, "Expected gradual linear time decay within maintenance cycle")
+        self.assertTrue(jump_observed, "Expected intensity jump up across maintenance boundary")
+
+    def test_die_zone_illumination_hierarchy(self) -> None:
+        """Verify die illumination hierarchy: Center (Die 0) > Mid (Die 5-8) > Edge (Die 1-4)."""
+        config = {
+            "measurements_per_tool": {"J4": 1},
+            "die_repeatability_std": 0.0,
+            "seed": 42,
+        }
+        _, _, meta_df = generate_pseudo_measurements(config)
+        j4_df = meta_df.drop_duplicates(subset=["die"]).set_index("die")
+
+        center_scale = j4_df.loc[0, "scale_die"]
+        mid_scales = [j4_df.loc[d, "scale_die"] for d in (5, 6, 7, 8)]
+        edge_scales = [j4_df.loc[d, "scale_die"] for d in (1, 2, 3, 4)]
+
+        # Center must be strictly greater than all mid and edge dies
+        self.assertTrue(all(center_scale > s for s in mid_scales))
+        self.assertTrue(all(center_scale > s for s in edge_scales))
+
+        # Every mid die must be greater than every edge die
+        for mid_s in mid_scales:
+            for edge_s in edge_scales:
+                self.assertGreater(mid_s, edge_s)
+
+        # Dies in edge group should have distinct values
+        self.assertNotEqual(j4_df.loc[1, "scale_die"], j4_df.loc[2, "scale_die"])
+
+
 
 class TestVisualization(unittest.TestCase):
     """Test suite for plotting utilities."""

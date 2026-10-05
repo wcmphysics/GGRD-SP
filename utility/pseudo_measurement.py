@@ -74,6 +74,20 @@ DEFAULT_REGION_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+# Default die-to-die spatial baseline factors for NMG (center > mid > edge with individual variation)
+DEFAULT_DIE_FACTORS_NMG: dict[int, float] = {
+    0: 1.20,  # Center (Die 0)
+    1: 0.82,  # Edge (Die 1)
+    2: 0.78,  # Edge (Die 2)
+    3: 0.81,  # Edge (Die 3)
+    4: 0.77,  # Edge (Die 4)
+    5: 1.02,  # Mid (Die 5)
+    6: 0.99,  # Mid (Die 6)
+    7: 1.01,  # Mid (Die 7)
+    8: 0.98,  # Mid (Die 8)
+}
+
+
 def pseudo_voigt(
     energy: np.ndarray,
     peak_params: dict[str, Any],
@@ -122,6 +136,62 @@ def pseudo_voigt(
     return amplitude * ((1.0 - eta) * gaussian + eta * lorentzian)
 
 
+def calculate_time_decay_factor(
+    meas_time: datetime,
+    base_time: datetime,
+    config: dict[str, Any],
+    rng: np.random.Generator,
+    cycle_cache: dict[int, float] | None = None,
+) -> float:
+    """Calculate the time decay scale factor with periodic maintenance jump resets.
+
+    Models linear decay over operating days with periodic maintenance resets,
+    capturing renewed intensity (jump up) after optics cleaning or filament replacement.
+
+    Parameters
+    ----------
+    meas_time : datetime
+        Timestamp of the measurement.
+    base_time : datetime
+        Reference start timestamp.
+    config : dict[str, Any]
+        Configuration dictionary with decay parameters.
+    rng : np.random.Generator
+        Random number generator.
+    cycle_cache : dict[int, float] | None, optional
+        Dictionary caching post-maintenance renewed intensity levels per cycle.
+
+    Returns
+    -------
+    float
+        Multiplicative time-dependent intensity scale factor.
+    """
+    decay_rate = float(config.get("time_decay_rate", 0.005))
+    if decay_rate <= 0.0:
+        return 1.0
+
+    interval_days = float(config.get("maintenance_interval_days", 30.0))
+    if interval_days <= 0.0:
+        interval_days = 30.0
+    jump_std = float(config.get("maintenance_jump_noise_std", 0.03))
+    decay_floor = float(config.get("decay_floor", 0.2))
+
+    delta_days = max(0.0, (meas_time - base_time).total_seconds() / 86400.0)
+    cycle_idx = int(delta_days // interval_days)
+    days_in_cycle = delta_days - (cycle_idx * interval_days)
+
+    if cycle_cache is not None:
+        if cycle_idx not in cycle_cache:
+            reset_level = 1.0 if cycle_idx == 0 else float(rng.normal(1.0, jump_std))
+            cycle_cache[cycle_idx] = float(np.clip(reset_level, 0.8, 1.3))
+        base_level = cycle_cache[cycle_idx]
+    else:
+        base_level = 1.0
+
+    scale = base_level - (decay_rate * days_in_cycle)
+    return float(np.clip(scale, decay_floor, 2.0))
+
+
 def get_default_measurement_config() -> dict[str, Any]:
     """Return the default configuration dictionary for pseudo-measurement generation.
 
@@ -143,7 +213,13 @@ def get_default_measurement_config() -> dict[str, Any]:
             "J4": {"shift_ev": 0.0, "scale": 1.0},
             "J5": {"shift_ev": 0.2, "scale": 1.1},
         },
-        "die_variation_std": 0.03,
+        "die_variation_std": 0.015,
+        "die_base_factors": DEFAULT_DIE_FACTORS_NMG,
+        "die_repeatability_std": 0.015,
+        "time_decay_rate": 0.005,
+        "maintenance_interval_days": 30.0,
+        "maintenance_jump_noise_std": 0.03,
+        "decay_floor": 0.2,
         "noise_relative_std": 0.015,
         "region_profiles": DEFAULT_REGION_PROFILES,
         "seed": 42,
@@ -315,6 +391,33 @@ def generate_pseudo_measurements(
         rng=rng,
     )
 
+    # Parse start time reference for time decay calculations
+    start_time_cfg = merged_config.get("start_time", "2026-01-01 00:00:00")
+    base_time = (
+        datetime.fromisoformat(start_time_cfg)
+        if isinstance(start_time_cfg, str)
+        else start_time_cfg
+    )
+
+    die_base_factors_cfg = merged_config.get("die_base_factors")
+    if die_base_factors_cfg is None:
+        if n_die == 9:
+            die_base_factors = DEFAULT_DIE_FACTORS_NMG
+        else:
+            die_base_factors = {i: 1.0 for i in range(n_die)}
+    else:
+        die_base_factors = {int(k): float(v) for k, v in die_base_factors_cfg.items()}
+
+    die_repeatability_std = float(
+        merged_config.get(
+            "die_repeatability_std",
+            merged_config.get("die_variation_std", 0.015),
+        )
+    )
+
+    # Tool maintenance reset cycle caches
+    tool_maint_caches: dict[str, dict[int, float]] = {t: {} for t in tools}
+
     # Calculate total spectra count
     total_measurements = sum(meas_per_tool.values())
     n_total = total_measurements * n_die * len(regions)
@@ -336,12 +439,23 @@ def generate_pseudo_measurements(
             t7_idx = (meas_num // meas_per_t7) + 1
             t7_code = f"T7_{t7_idx:03d}"
 
-            # Die-to-die spatial variation across the wafer
-            die_factors = rng.normal(1.0, die_variation_std, size=n_die)
-            die_factors = np.clip(die_factors, 0.5, 1.5)
+            time_scale = calculate_time_decay_factor(
+                meas_time=meas_time,
+                base_time=base_time,
+                config=merged_config,
+                rng=rng,
+                cycle_cache=tool_maint_caches[tool],
+            )
 
             for die_idx in range(n_die):
-                die_scale = float(die_factors[die_idx])
+                base_die = float(die_base_factors.get(die_idx, 1.0))
+                if die_repeatability_std > 0.0:
+                    die_noise = float(rng.normal(0.0, die_repeatability_std))
+                    die_scale = float(np.clip(base_die * (1.0 + die_noise), 0.1, 3.0))
+                else:
+                    die_scale = base_die
+
+                total_scale = float(tool_scale * time_scale * die_scale)
 
                 for region_name in regions:
                     e_grid = region_energy_grids[region_name]
@@ -352,14 +466,14 @@ def generate_pseudo_measurements(
                     for peak in profile["peaks"]:
                         peak_shifted = {
                             "center": peak["center"] + tool_shift,
-                            "amplitude": peak["amplitude"] * tool_scale * die_scale,
+                            "amplitude": peak["amplitude"] * total_scale,
                             "fwhm": peak["fwhm"],
                             "eta": peak.get("eta", 0.3),
                         }
                         intensity += pseudo_voigt(energy=e_grid, peak_params=peak_shifted)
 
-                    # Add baseline with die factor
-                    baseline = profile.get("baseline", 10.0) * tool_scale * die_scale
+                    # Add baseline with total scale factor
+                    baseline = profile.get("baseline", 10.0) * total_scale
                     intensity += baseline
 
                     # Add measurement noise (Poisson-like scaling + Gaussian detector floor)
@@ -387,6 +501,10 @@ def generate_pseudo_measurements(
                             "die": die_idx,
                             "region": region_name,
                             "n_points": n_points,
+                            "scale_tool": tool_scale,
+                            "scale_time": time_scale,
+                            "scale_die": die_scale,
+                            "scale_total": total_scale,
                         }
                     )
 
