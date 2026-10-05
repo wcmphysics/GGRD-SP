@@ -17,6 +17,8 @@ from utility import (
     format_side_by_side_metrics,
     generate_pseudo_measurements,
     pair_source_target_spectra,
+    plot_max_intensity_vs_time,
+    plot_normalized_max_intensity_vs_time,
     plot_pairing_timeline,
     plot_prediction_comparison,
     plot_shirley_background,
@@ -284,7 +286,26 @@ def main() -> None:
     # =========================================================================
     print("\nGenerating demonstration plots...")
 
-    # 1. Direct tool comparison between tools for a region (Die 0)
+    # 1. Maximum intensity vs. measurement time (hue=tool, die, or region)
+    plot_max_intensity_vs_time(
+        ary_intensity,
+        meta_df,
+        plot_config={"hue": "tool", "title": "Maximum Spectral Intensity vs. Measurement Time (hue=tool)"},
+    )
+
+    # 2. Maximum intensity normalized by total integrated area vs. measurement time
+    plot_normalized_max_intensity_vs_time(
+        ary_intensity,
+        meta_df,
+        ary_energy=ary_energy,
+        plot_config={
+            "hue": "tool",
+            "normalization_mode": "die_total_flux",
+            "title": "Normalized Maximum Intensity vs. Measurement Time (hue=tool, die_total_flux)",
+        },
+    )
+
+    # 3. Direct tool comparison between tools for a region (Die 0)
     plot_tool_comparison(
         ary_energy,
         ary_intensity,
@@ -292,10 +313,10 @@ def main() -> None:
         compare_config={"tools": (source_tool, target_tool), "region": example_region, "die": 0},
     )
 
-    # 2. 1-to-1 Measurement pairing timeline
+    # 4. 1-to-1 Measurement pairing timeline
     plot_pairing_timeline(meta_df, plot_config={"source_tool": source_tool, "target_tool": target_tool})
 
-    # 3. Shirley background subtraction in multi-region grid mode (all 5 regions for Die 0)
+    # 5. Shirley background subtraction in multi-region grid mode (all 5 regions for Die 0)
     plot_shirley_background(
         ary_energy,
         ary_intensity,
@@ -303,7 +324,7 @@ def main() -> None:
         plot_config={"measurement_id": sample_meas_id, "die": 0},
     )
 
-    # 4. Training loss history curves across all regions (Part 4)
+    # 6. Training loss history curves across all regions (Part 4)
     model_labels = {
         "resnet": "1D ResNet",
         "residual_unet": "1D Residual U-Net",
@@ -318,7 +339,7 @@ def main() -> None:
         plot_config={"title": f"Part 4: {model_name_label} Neural Network Training & Validation Loss"},
     )
 
-    # 5. Sliding window decomposition (Original vs Sliced Spectra) if sliding window chosen
+    # 7. Sliding window decomposition (Original vs Sliced Spectra) if sliding window chosen
     if use_sliding_window:
         example_subset = meta_df[
             (meta_df["measurement_id"] == sample_meas_id)
@@ -342,15 +363,14 @@ def main() -> None:
                 },
             )
 
-    # 6. Spectral transfer comparison: Source vs. True Target vs. Predicted Target with Residual (Part 4)
+    # 8. Spectral transfer comparison: Source vs. Target vs. Transformed across all regions in sub-plots
+    # Defaults to test split measurement session; strict color scheme: source=black, target=red, transformed=blue dotted
     plot_prediction_comparison(
         data_orig,
         data_pred,
         config={
-            "measurement_id": sample_meas_id,
-            "region": example_region,
+            "session_splits": model_results.get("session_splits"),
             "die": 0,
-            "show_residual": True,
         },
     )
 
