@@ -341,6 +341,30 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         # PassThrough in die_total_flux mode: x / F_die * F_die = x
         np.testing.assert_allclose(pred_i, ary_int, rtol=1e-4)
 
+    def test_predict_sliding_window_with_scale_factor_recovery(self) -> None:
+        """Verify predict_sliding_window_spectrum restores scale when scale_factor is passed."""
+        n_points = 30
+        x = np.ones(n_points, dtype=np.float32) * 50.0
+
+        class PassThrough(torch.nn.Module):
+            def forward(self, patch: torch.Tensor) -> torch.Tensor:
+                return patch
+
+        model = PassThrough()
+        # Explicit scale_factor of 200.0, normalize_by_source=False
+        pred = predict_sliding_window_spectrum(
+            model=model,
+            spectrum=x,
+            config={
+                "scale_factor": 200.0,
+                "normalize_by_source": False,
+                "window_size": 10,
+                "stride": 5,
+            },
+        )
+        # Should be (x / 200.0) * 200.0 = x
+        np.testing.assert_allclose(pred, x, rtol=1e-4)
+
 
 if __name__ == "__main__":
     unittest.main()

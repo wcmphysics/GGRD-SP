@@ -428,6 +428,7 @@ def run_spectral_pipeline(
         )
         model = instantiate_model(m_type, seq_len=seq_len, config=region_train_cfg)
         region_train_cfg["model"] = model
+        region_train_cfg["criterion"] = criterion
 
         # =====================================================================
         # STEP 6: BAYESIAN OPTIMIZATION SETUP
@@ -441,6 +442,7 @@ def run_spectral_pipeline(
                     "use_sliding_window": use_sw,
                     "window_size": w_size,
                     "stride": s_step,
+                    "criterion": criterion,
                 }
             )
             # When sliding window is active, pass train_full_ds to Ax so trials can slice

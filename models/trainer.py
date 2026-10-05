@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from models.cost import NormalizedMSELoss, format_loss_log10
+from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders
 from models.deeplabv3 import DeepLabV3
 from models.film import prepare_film_condition_tensor
@@ -338,7 +338,15 @@ def train_model_region(
     else:
         model = model.to(device)
 
-    criterion = NormalizedMSELoss(l2_weight=l2_weight)
+    criterion: nn.Module | None = cfg.get("criterion")
+    if criterion is None:
+        cost_type = str(cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))).lower()
+        loss_cfg = dict(cfg)
+        loss_cfg.setdefault("l2_weight", l2_weight)
+        if cost_type in ("composite", "composite_spectral"):
+            criterion = CompositeSpectralLoss(config=loss_cfg)
+        else:
+            criterion = NormalizedMSELoss(config=loss_cfg)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}

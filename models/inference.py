@@ -96,7 +96,11 @@ def predict_sliding_window_spectrum(
     )
 
     # Rescale to physical counts
-    reconstructed_phys = reconstructed_norm * scale_x if normalize_by_source else reconstructed_norm
+    reconstructed_phys = (
+        reconstructed_norm * scale_x
+        if (normalize_by_source or scale_factor is not None)
+        else reconstructed_norm
+    )
 
     # Zero clamping at the final full spectrum reconstruction level
     if clamp_non_negative:
@@ -389,6 +393,8 @@ def predict_spectra(
                     cond = None
                     if getattr(model, "use_film", False):
                         batch_meta = group.iloc[i : i + batch_size].to_dict(orient="records")
+                        for r in batch_meta:
+                            r.setdefault("tool_target", target_tool)
                         batch_scale = scales[i : i + batch_size]
                         cond = prepare_film_condition_tensor(
                             metadata=batch_meta,
