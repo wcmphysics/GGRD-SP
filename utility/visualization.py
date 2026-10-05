@@ -11,6 +11,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from utility.evaluation import calculate_prediction_metrics
 from utility.patching import calculate_window_points, extract_sliding_windows
@@ -203,7 +204,7 @@ def plot_tool_comparison(
         raise ValueError(f"At least 2 tools are required for comparison, got {tools}")
 
     fig, ax = _prepare_canvas(ax, figsize=(8, 5))
-    palette = ["tab:blue", "tab:red", "tab:green", "tab:purple"]
+    palette = ["black", "red", "tab:blue", "tab:green", "tab:purple"]
     color_map = {tool: palette[i % len(palette)] for i, tool in enumerate(tools)}
 
     plotted_count = 0
@@ -441,6 +442,333 @@ def plot_pairing_timeline(
     return fig, ax
 
 
+def plot_max_intensity_vs_time(
+    ary_intensity: np.ndarray,
+    meta_df: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot maximum spectral intensity vs measurement time using a Seaborn scatter plot.
+
+    Parameters
+    ----------
+    ary_intensity : np.ndarray
+        2D array of measured spectral intensities, shape (N_spectra, N_points).
+    meta_df : pd.DataFrame
+        Metadata DataFrame containing 'spectrum_index', 'time', and metadata columns
+        such as 'tool', 'die', and 'region'.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary bundling plotting options:
+        - 'hue' (str): Column to group/color by ('tool', 'die', or 'region'; default 'tool').
+        - 'filters' (dict[str, Any] | None): Optional key-value filter mapping on metadata
+          (e.g., {'region': 'Al2p'} or {'die': 0}).
+        - 'style' (str | None): Optional column to vary marker style by.
+        - 'palette' (str | list | dict | None): Seaborn color palette.
+        - 'alpha' (float): Marker transparency (default 0.75).
+        - 's' (float): Marker size in points**2 (default 45.0).
+        - 'title' (str | None): Custom figure title.
+        - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 5.5)).
+        - 'ax' (plt.Axes | None): Existing matplotlib Axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib Figure and Axes objects.
+
+    Raises
+    ------
+    ValueError
+        If meta_df is empty or no records match the specified filters.
+    KeyError
+        If required columns ('time', 'spectrum_index', or specified 'hue') are missing.
+    """
+    cfg = plot_config or {}
+    hue: str = str(cfg.get("hue", "tool"))
+    filters = cfg.get("filters")
+    style: str | None = cfg.get("style")
+    palette = cfg.get("palette")
+    alpha: float = float(cfg.get("alpha", 0.75))
+    s: float = float(cfg.get("s", 45.0))
+    title: str | None = cfg.get("title")
+    figsize: tuple[float, float] = tuple(cfg.get("figsize", (10, 5.5)))
+    custom_ax: plt.Axes | None = cfg.get("ax")
+    show: bool = bool(cfg.get("show", False))
+
+    if meta_df.empty:
+        raise ValueError("meta_df cannot be empty")
+
+    plot_df = meta_df.copy()
+    if filters:
+        for k, v in filters.items():
+            if k not in plot_df.columns:
+                raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
+            plot_df = plot_df[plot_df[k] == v]
+
+    if plot_df.empty:
+        raise ValueError(f"No spectra match specified filters: {filters}")
+
+    if "time" not in plot_df.columns:
+        raise KeyError("meta_df must contain a 'time' column for time-series plotting.")
+    if "spectrum_index" not in plot_df.columns:
+        raise KeyError("meta_df must contain a 'spectrum_index' column.")
+    if hue not in plot_df.columns:
+        raise KeyError(f"Hue column '{hue}' not found in meta_df columns: {list(plot_df.columns)}")
+
+    indices = plot_df["spectrum_index"].astype(int).values
+    plot_df["max_intensity"] = np.max(ary_intensity[indices], axis=1)
+
+    try:
+        plot_df["time"] = pd.to_datetime(plot_df["time"], format="mixed")
+    except (ValueError, TypeError):
+        plot_df["time"] = pd.to_datetime(plot_df["time"])
+
+    # Discrete formatting for hue
+    plot_hue = hue
+    hue_order = None
+    if hue == "die":
+        dies = sorted(plot_df["die"].dropna().unique())
+        plot_df["die_formatted"] = plot_df["die"].apply(lambda d: f"Die {int(d)}" if pd.notna(d) else "N/A")
+        plot_hue = "die_formatted"
+        hue_order = [f"Die {int(d)}" for d in dies]
+    elif hue == "tool":
+        hue_order = sorted(plot_df["tool"].dropna().unique())
+    elif hue == "region":
+        hue_order = sorted(plot_df["region"].dropna().unique())
+
+    fig, ax = _prepare_canvas(custom_ax, figsize=figsize)
+
+    sns.scatterplot(
+        data=plot_df,
+        x="time",
+        y="max_intensity",
+        hue=plot_hue,
+        hue_order=hue_order,
+        style=style,
+        palette=palette,
+        alpha=alpha,
+        s=s,
+        ax=ax,
+    )
+
+    if not title:
+        filt_str = f" | Filtered: {filters}" if filters else ""
+        title = f"Maximum Intensity vs. Time (hue={hue}){filt_str}"
+
+    ax.set_title(title)
+    ax.set_xlabel("Measurement Time")
+    ax.set_ylabel("Maximum Intensity (counts)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    plt.setp(ax.get_xticklabels(), rotation=25, ha="right")
+    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.0)
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    return fig, ax
+
+
+def plot_normalized_max_intensity_vs_time(
+    ary_intensity: np.ndarray,
+    meta_df: pd.DataFrame,
+    ary_energy: np.ndarray | None = None,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot maximum intensity normalized by total integrated area vs time using Seaborn.
+
+    Normalizing by total integrated area cancels common power and illumination drifts
+    across time, tools, and wafer dies, exposing the true normalized peak behavior.
+
+    Parameters
+    ----------
+    ary_intensity : np.ndarray
+        2D array of measured spectral intensities, shape (N_spectra, N_points).
+    meta_df : pd.DataFrame
+        Metadata DataFrame containing 'spectrum_index', 'time', 'tool', 'die', 'region',
+        and 'measurement_id'.
+    ary_energy : np.ndarray | None, optional
+        2D array of binding energies. If provided, trapezoidal numerical integration in eV
+        is performed. If None, sum across intensity points is used.
+    plot_config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'hue' (str): Column to group/color by ('tool', 'die', or 'region'; default 'tool').
+        - 'normalization_mode' (str): Normalization strategy:
+          * 'die_total_flux' (default): Normalizes by the sum of integrated areas across
+            all measured regions on that die (Tier 1 physical reference).
+          * 'spectrum_area': Normalizes by each individual regional spectrum's integrated area.
+        - 'filters' (dict[str, Any] | None): Optional key-value filter mapping on metadata.
+        - 'style' (str | None): Optional column for scatter marker style.
+        - 'palette' (str | list | dict | None): Seaborn color palette.
+        - 'alpha' (float): Marker transparency (default 0.75).
+        - 's' (float): Marker size in points**2 (default 45.0).
+        - 'title' (str | None): Custom figure title.
+        - 'ylabel' (str | None): Custom y-axis label.
+        - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 5.5)).
+        - 'ax' (plt.Axes | None): Existing matplotlib Axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib Figure and Axes objects.
+
+    Raises
+    ------
+    ValueError
+        If meta_df is empty or no records match the specified filters.
+    KeyError
+        If required columns are missing from meta_df.
+    """
+    cfg = plot_config or {}
+    hue: str = str(cfg.get("hue", "tool"))
+    norm_mode: str = str(cfg.get("normalization_mode", "die_total_flux")).lower()
+    filters = cfg.get("filters")
+    style: str | None = cfg.get("style")
+    palette = cfg.get("palette")
+    alpha: float = float(cfg.get("alpha", 0.75))
+    s: float = float(cfg.get("s", 45.0))
+    title: str | None = cfg.get("title")
+    ylabel: str | None = cfg.get("ylabel")
+    figsize: tuple[float, float] = tuple(cfg.get("figsize", (10, 5.5)))
+    custom_ax: plt.Axes | None = cfg.get("ax")
+    show: bool = bool(cfg.get("show", False))
+
+    if meta_df.empty:
+        raise ValueError("meta_df cannot be empty")
+
+    # Upfront column validation
+    if "time" not in meta_df.columns:
+        raise KeyError("meta_df must contain a 'time' column for time-series plotting.")
+    if "spectrum_index" not in meta_df.columns:
+        raise KeyError("meta_df must contain a 'spectrum_index' column.")
+    if hue not in meta_df.columns:
+        raise KeyError(f"Hue column '{hue}' not found in meta_df columns: {list(meta_df.columns)}")
+
+    valid_die_flux_modes = {"die_total_flux", "die_flux", "die", "canonical"}
+    valid_spec_area_modes = {"spectrum_area", "spectrum", "regional"}
+
+    if norm_mode not in (valid_die_flux_modes | valid_spec_area_modes):
+        raise ValueError(
+            f"Unsupported normalization_mode '{norm_mode}'. "
+            f"Must be 'die_total_flux' or 'spectrum_area'."
+        )
+
+    if norm_mode in valid_die_flux_modes:
+        for req_col in ("measurement_id", "die"):
+            if req_col not in meta_df.columns:
+                raise KeyError(
+                    f"Column '{req_col}' is required in meta_df for 'die_total_flux' normalization."
+                )
+
+        from models.dataset import compute_die_total_flux
+
+        # Compute die total flux across the full meta_df before filtering
+        flux_map = compute_die_total_flux(meta_df, ary_intensity, ary_energy)
+
+        plot_df = meta_df.copy()
+        if filters:
+            for k, v in filters.items():
+                if k not in plot_df.columns:
+                    raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
+                plot_df = plot_df[plot_df[k] == v]
+
+        if plot_df.empty:
+            raise ValueError(f"No spectra match specified filters: {filters}")
+
+        indices = plot_df["spectrum_index"].astype(int).values
+        max_vals = np.max(ary_intensity[indices], axis=1)
+
+        norm_vals: list[float] = []
+        for max_val, (_, row) in zip(max_vals, plot_df.iterrows()):
+            key = (str(row["measurement_id"]), int(row["die"]))
+            f_die = flux_map.get(key, 1.0)
+            norm_vals.append(float(max_val) / max(float(f_die), 1e-4))
+        plot_df["normalized_max"] = norm_vals
+        default_ylabel = "Max Intensity / Die Total Integrated Area (1/eV)"
+
+    else:  # 'spectrum_area'
+        plot_df = meta_df.copy()
+        if filters:
+            for k, v in filters.items():
+                if k not in plot_df.columns:
+                    raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
+                plot_df = plot_df[plot_df[k] == v]
+
+        if plot_df.empty:
+            raise ValueError(f"No spectra match specified filters: {filters}")
+
+        indices = plot_df["spectrum_index"].astype(int).values
+        max_vals = np.max(ary_intensity[indices], axis=1)
+
+        trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+        areas: list[float] = []
+        for idx in indices:
+            i_vec = ary_intensity[idx]
+            if ary_energy is not None:
+                e_vec = ary_energy[idx]
+                a = float(abs(trapz_fn(i_vec, x=e_vec)))
+            else:
+                a = float(np.sum(i_vec))
+            areas.append(max(a, 1e-4))
+
+        plot_df["normalized_max"] = max_vals / np.array(areas)
+        default_ylabel = "Max Intensity / Spectrum Integrated Area (1/eV)"
+
+    if "time" not in plot_df.columns:
+        raise KeyError("meta_df must contain a 'time' column for time-series plotting.")
+    if hue not in plot_df.columns:
+        raise KeyError(f"Hue column '{hue}' not found in meta_df columns: {list(plot_df.columns)}")
+
+    try:
+        plot_df["time"] = pd.to_datetime(plot_df["time"], format="mixed")
+    except (ValueError, TypeError):
+        plot_df["time"] = pd.to_datetime(plot_df["time"])
+
+    plot_hue = hue
+    hue_order = None
+    if hue == "die":
+        dies = sorted(plot_df["die"].dropna().unique())
+        plot_df["die_formatted"] = plot_df["die"].apply(lambda d: f"Die {int(d)}" if pd.notna(d) else "N/A")
+        plot_hue = "die_formatted"
+        hue_order = [f"Die {int(d)}" for d in dies]
+    elif hue == "tool":
+        hue_order = sorted(plot_df["tool"].dropna().unique())
+    elif hue == "region":
+        hue_order = sorted(plot_df["region"].dropna().unique())
+
+    fig, ax = _prepare_canvas(custom_ax, figsize=figsize)
+
+    sns.scatterplot(
+        data=plot_df,
+        x="time",
+        y="normalized_max",
+        hue=plot_hue,
+        hue_order=hue_order,
+        style=style,
+        palette=palette,
+        alpha=alpha,
+        s=s,
+        ax=ax,
+    )
+
+    if not title:
+        filt_str = f" | Filtered: {filters}" if filters else ""
+        title = f"Normalized Maximum Intensity vs. Time (hue={hue}){filt_str}"
+
+    ax.set_title(title)
+    ax.set_xlabel("Measurement Time")
+    ax.set_ylabel(ylabel or default_ylabel)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    plt.setp(ax.get_xticklabels(), rotation=25, ha="right")
+    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.0)
+
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    return fig, ax
+
+
 def plot_shirley_background(
     ary_energy: np.ndarray,
     ary_intensity: np.ndarray,
@@ -516,8 +844,18 @@ def plot_shirley_background(
 
         fig, ax = _prepare_canvas(custom_ax, figsize=(7, 4.5))
         ax.plot(e_arr, i_arr, label="Raw Spectrum", color="navy", linewidth=1.8)
-        ax.plot(e_arr, b_arr, label="Shirley Background", color="crimson", linestyle="--", linewidth=1.6)
-        ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Net Area: {net_area:.1f}")
+        ax.plot(
+            e_arr, b_arr, label="Shirley Background", color="crimson", linestyle="--", linewidth=1.6
+        )
+        ax.fill_between(
+            e_arr,
+            b_arr,
+            i_arr,
+            where=(i_arr > b_arr),
+            color="skyblue",
+            alpha=0.35,
+            label=f"Net Area: {net_area:.1f}",
+        )
         ax.legend(loc="best")
 
         _finalize_plot(
@@ -551,7 +889,15 @@ def plot_shirley_background(
 
         ax.plot(e_arr, i_arr, label="Raw", color="navy", linewidth=1.5)
         ax.plot(e_arr, b_arr, label="Shirley", color="crimson", linestyle="--", linewidth=1.4)
-        ax.fill_between(e_arr, b_arr, i_arr, where=(i_arr > b_arr), color="skyblue", alpha=0.35, label=f"Area: {net_area:.1f}")
+        ax.fill_between(
+            e_arr,
+            b_arr,
+            i_arr,
+            where=(i_arr > b_arr),
+            color="skyblue",
+            alpha=0.35,
+            label=f"Area: {net_area:.1f}",
+        )
         ax.legend(loc="best", fontsize="x-small")
 
         _finalize_plot(
@@ -793,18 +1139,6 @@ def plot_prediction_comparison(
     return fig, axes
 
 
-__all__ = [
-    "plot_regional_spectra",
-    "plot_tool_comparison",
-    "plot_pairing_timeline",
-    "plot_shirley_background",
-    "plot_training_history",
-    "plot_prediction_comparison",
-    "calculate_prediction_metrics",
-    "plot_sliding_window_slices",
-]
-
-
 def plot_sliding_window_slices(
     spectrum: np.ndarray,
     energy: np.ndarray | None = None,
@@ -975,3 +1309,17 @@ def plot_sliding_window_slices(
         plt.show()
 
     return fig, (ax_top, ax_bottom)
+
+
+__all__ = [
+    "plot_regional_spectra",
+    "plot_tool_comparison",
+    "plot_pairing_timeline",
+    "plot_max_intensity_vs_time",
+    "plot_normalized_max_intensity_vs_time",
+    "plot_shirley_background",
+    "plot_training_history",
+    "plot_prediction_comparison",
+    "calculate_prediction_metrics",
+    "plot_sliding_window_slices",
+]

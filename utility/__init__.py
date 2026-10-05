@@ -24,6 +24,8 @@ from utility.quantification import (
     get_default_quantification_config,
 )
 from utility.visualization import (
+    plot_max_intensity_vs_time,
+    plot_normalized_max_intensity_vs_time,
     plot_pairing_timeline,
     plot_prediction_comparison,
     plot_regional_spectra,
@@ -51,6 +53,8 @@ __all__ = [
     "plot_regional_spectra",
     "plot_tool_comparison",
     "plot_pairing_timeline",
+    "plot_max_intensity_vs_time",
+    "plot_normalized_max_intensity_vs_time",
     "plot_shirley_background",
     "plot_training_history",
     "plot_prediction_comparison",
