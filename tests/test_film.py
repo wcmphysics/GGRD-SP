@@ -134,6 +134,50 @@ class TestFiLMModulation(unittest.TestCase):
         loss.backward()
         self.assertIsNotNone(model.film_gen.die_embedding.weight.grad)
 
+    def test_prepare_film_condition_tensor_dict_and_scalar_edge_cases(self) -> None:
+        """Verify robust handling of scalar tool strings, None values, single timestamps, and scalar scale_x."""
+        # 1. Dict metadata with scalar string tool, None target, and scalar scale_x with num_samples=3
+        cond1 = prepare_film_condition_tensor(
+            metadata={"die": [0, 1, 2], "tool": "J4", "tool_target": None},
+            scale_x=torch.tensor(100.0),
+            num_samples=3,
+        )
+        self.assertEqual(cond1["die"].shape, (3,))
+        self.assertEqual(cond1["tool_src"].shape, (3,))
+        self.assertEqual(cond1["tool_tgt"].shape, (3,))
+        self.assertEqual(cond1["log_flux_src"].shape, (3, 1))
+        # Ensure 'J4' mapped to index 0, not UNKNOWN
+        self.assertEqual(cond1["tool_src"][0].item(), 0)
+
+        # 2. Single timestamp strings in dict
+        cond2 = prepare_film_condition_tensor(
+            metadata={
+                "die": [0, 1],
+                "tool": ["J4", "J4"],
+                "time": "2026-01-01 00:00:00",
+                "time_target": "2026-01-01 12:00:00",
+            },
+            num_samples=2,
+        )
+        self.assertEqual(cond2["delta_time_days"].shape, (2, 1))
+        self.assertAlmostEqual(cond2["delta_time_days"][0, 0].item(), 0.5, places=3)
+
+        # 3. List of dicts with None values
+        cond3 = prepare_film_condition_tensor(
+            metadata=[{"die": None, "tool": None, "tool_target": None, "time": None}],
+            num_samples=1,
+        )
+        self.assertEqual(cond3["die"][0].item(), 0)
+        self.assertEqual(cond3["tool_src"][0].item(), 0)
+        self.assertEqual(cond3["tool_tgt"][0].item(), 1)
+
+        # 4. Pandas DataFrame input
+        df = pd.DataFrame([{"die": 3, "tool": "J4", "tool_target": "J5"}])
+        cond4 = prepare_film_condition_tensor(metadata=df, scale_x=np.array([500.0]))
+        self.assertEqual(cond4["die"][0].item(), 3)
+        self.assertEqual(cond4["tool_src"][0].item(), 0)
+        self.assertEqual(cond4["tool_tgt"][0].item(), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

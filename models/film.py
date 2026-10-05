@@ -58,11 +58,19 @@ def prepare_film_condition_tensor(
         - 'log_flux_src': FloatTensor (B, 1)
         - 'delta_time_days': FloatTensor (B, 1)
     """
+    if isinstance(metadata, pd.DataFrame):
+        metadata = metadata.to_dict(orient="records")
+
+    # Determine batch size n_items
     if metadata is not None and isinstance(metadata, list):
-        n_items = len(metadata)
+        n_items = len(metadata) if len(metadata) > 0 else num_samples
     elif metadata is not None and isinstance(metadata, dict):
-        die_field = metadata.get("die")
-        n_items = len(die_field) if die_field is not None else num_samples
+        seq_lens = [
+            len(v)
+            for v in metadata.values()
+            if isinstance(v, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(v, (str, bytes))
+        ]
+        n_items = seq_lens[0] if seq_lens else num_samples
     else:
         n_items = num_samples
 
@@ -71,80 +79,104 @@ def prepare_film_condition_tensor(
     tool_tgt_list: list[int] = []
     delta_time_list: list[float] = []
 
+    def _safe_die(d: Any) -> int:
+        if d is None or pd.isna(d):
+            return 0
+        try:
+            return min(max(int(d), 0), 8)
+        except Exception:
+            return 0
+
+    def _safe_tool(t: Any, default: str) -> int:
+        if t is None or pd.isna(t):
+            t_str = default
+        else:
+            t_str = str(t).upper()
+        return TOOL_INDEX_MAP.get(t_str, TOOL_INDEX_MAP.get(str(t), TOOL_INDEX_MAP["UNKNOWN"]))
+
+    def _safe_delta_time(t1: Any, t2: Any) -> float:
+        if t1 is None or t2 is None or pd.isna(t1) or pd.isna(t2):
+            return 0.0
+        try:
+            ts1 = pd.Timestamp(t1)
+            ts2 = pd.Timestamp(t2)
+            return abs((ts2 - ts1).total_seconds()) / 86400.0
+        except Exception:
+            return 0.0
+
     if metadata is not None and isinstance(metadata, dict):
-        # PyTorch default_collate collated list of dicts into dict of lists/tensors
+        # 1. Die
         raw_dies = metadata.get("die")
         if raw_dies is not None:
-            if isinstance(raw_dies, torch.Tensor):
-                die_list = [min(max(int(d.item()), 0), 8) for d in raw_dies]
+            if isinstance(raw_dies, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(raw_dies, (str, bytes)):
+                die_list = [_safe_die(d.item() if hasattr(d, "item") else d) for d in raw_dies]
             else:
-                die_list = [min(max(int(d), 0), 8) for d in raw_dies]
+                die_list = [_safe_die(raw_dies)] * n_items
         else:
             die_list = [0] * n_items
 
-        raw_src = metadata.get("tool", ["J4"] * n_items)
-        tool_src_list = [TOOL_INDEX_MAP.get(str(t), TOOL_INDEX_MAP["UNKNOWN"]) for t in raw_src]
+        # 2. Source Tool
+        raw_src = metadata.get("tool")
+        if raw_src is not None:
+            if isinstance(raw_src, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(raw_src, (str, bytes)):
+                tool_src_list = [_safe_tool(t, "J4") for t in raw_src]
+            else:
+                tool_src_list = [_safe_tool(raw_src, "J4")] * n_items
+        else:
+            tool_src_list = [_safe_tool("J4", "J4")] * n_items
 
-        raw_tgt = metadata.get("tool_target", metadata.get("target_tool", ["J5"] * n_items))
-        tool_tgt_list = [TOOL_INDEX_MAP.get(str(t), TOOL_INDEX_MAP["UNKNOWN"]) for t in raw_tgt]
+        # 3. Target Tool
+        raw_tgt = metadata.get("tool_target", metadata.get("target_tool"))
+        if raw_tgt is not None:
+            if isinstance(raw_tgt, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(raw_tgt, (str, bytes)):
+                tool_tgt_list = [_safe_tool(t, "J5") for t in raw_tgt]
+            else:
+                tool_tgt_list = [_safe_tool(raw_tgt, "J5")] * n_items
+        else:
+            tool_tgt_list = [_safe_tool("J5", "J5")] * n_items
 
-        raw_time_src = metadata.get("time")
-        raw_time_tgt = metadata.get("time_target")
-        if raw_time_src is not None and raw_time_tgt is not None:
-            for t1, t2 in zip(raw_time_src, raw_time_tgt):
-                try:
-                    ts1 = pd.Timestamp(t1)
-                    ts2 = pd.Timestamp(t2)
-                    delta_time_list.append(abs((ts2 - ts1).total_seconds()) / 86400.0)
-                except Exception:
-                    delta_time_list.append(0.0)
+        # 4. Delta Time
+        raw_t1 = metadata.get("time")
+        raw_t2 = metadata.get("time_target")
+        is_seq_t1 = isinstance(raw_t1, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(raw_t1, (str, bytes))
+        is_seq_t2 = isinstance(raw_t2, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(raw_t2, (str, bytes))
+
+        if is_seq_t1 and is_seq_t2:
+            delta_time_list = [_safe_delta_time(t1, t2) for t1, t2 in zip(raw_t1, raw_t2)]
+        elif raw_t1 is not None and raw_t2 is not None:
+            dt_val = _safe_delta_time(raw_t1, raw_t2)
+            delta_time_list = [dt_val] * n_items
         else:
             delta_time_list = [0.0] * n_items
+
     elif metadata is not None and isinstance(metadata, list) and len(metadata) > 0:
         for m in metadata:
             if isinstance(m, dict):
-                # Die index (0 to 8)
-                d = int(m.get("die", 0))
-                die_list.append(min(max(d, 0), 8))
-
-                # Source tool
-                t_src = str(m.get("tool", "J4"))
-                tool_src_list.append(TOOL_INDEX_MAP.get(t_src, TOOL_INDEX_MAP["UNKNOWN"]))
-
-                # Target tool
-                t_tgt = str(m.get("tool_target", m.get("target_tool", "J5")))
-                tool_tgt_list.append(TOOL_INDEX_MAP.get(t_tgt, TOOL_INDEX_MAP["UNKNOWN"]))
-
-                # Delta time in days
-                t_src_dt = m.get("time")
-                t_tgt_dt = m.get("time_target")
-                if t_src_dt is not None and t_tgt_dt is not None:
-                    try:
-                        ts1 = pd.Timestamp(t_src_dt)
-                        ts2 = pd.Timestamp(t_tgt_dt)
-                        dt_days = abs((ts2 - ts1).total_seconds()) / 86400.0
-                    except Exception:
-                        dt_days = 0.0
-                else:
-                    dt_days = 0.0
-                delta_time_list.append(dt_days)
+                die_list.append(_safe_die(m.get("die")))
+                tool_src_list.append(_safe_tool(m.get("tool"), "J4"))
+                tool_tgt_list.append(_safe_tool(m.get("tool_target", m.get("target_tool")), "J5"))
+                delta_time_list.append(_safe_delta_time(m.get("time"), m.get("time_target")))
             else:
                 die_list.append(0)
-                tool_src_list.append(0)
-                tool_tgt_list.append(1)
+                tool_src_list.append(_safe_tool("J4", "J4"))
+                tool_tgt_list.append(_safe_tool("J5", "J5"))
                 delta_time_list.append(0.0)
     else:
         die_list = [0] * n_items
-        tool_src_list = [0] * n_items
-        tool_tgt_list = [1] * n_items
+        tool_src_list = [_safe_tool("J4", "J4")] * n_items
+        tool_tgt_list = [_safe_tool("J5", "J5")] * n_items
         delta_time_list = [0.0] * n_items
 
     # Parse source integrated flux
     if scale_x is not None:
         if isinstance(scale_x, torch.Tensor):
-            s_tensor = scale_x.float().view(n_items, 1)
+            s_tensor = scale_x.float()
         else:
-            s_tensor = torch.from_numpy(np.asarray(scale_x, dtype=np.float32)).view(n_items, 1)
+            s_tensor = torch.from_numpy(np.asarray(scale_x, dtype=np.float32))
+        if s_tensor.numel() == 1 and n_items > 1:
+            s_tensor = s_tensor.view(1, 1).expand(n_items, 1)
+        else:
+            s_tensor = s_tensor.view(n_items, 1)
         log_flux = torch.log10(torch.clamp(s_tensor, min=1e-4))
     else:
         log_flux = torch.zeros((n_items, 1), dtype=torch.float32)
