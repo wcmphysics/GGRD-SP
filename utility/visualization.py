@@ -580,10 +580,109 @@ def plot_pairing_timeline(
     return fig, ax
 
 
+
+def _apply_metadata_filters(
+    meta_df: pd.DataFrame,
+    filters: dict[str, Any] | None = None,
+    target_region: str | None = None,
+    target_die: int | None = None,
+) -> pd.DataFrame:
+    """Filter metadata DataFrame by column-value criteria, region, and die.
+
+    Parameters
+    ----------
+    meta_df : pd.DataFrame
+        Input metadata DataFrame.
+    filters : dict[str, Any] | None, optional
+        Dictionary mapping column names to target values.
+    target_region : str | None, optional
+        Optional regional filter.
+    target_die : int | None, optional
+        Optional die filter.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered subset of meta_df.
+
+    Raises
+    ------
+    ValueError
+        If meta_df is empty or no spectra match the filtering criteria.
+    KeyError
+        If a filter key is missing from meta_df columns.
+    """
+    if meta_df.empty:
+        raise ValueError("meta_df cannot be empty")
+
+    combined_filters: dict[str, Any] = dict(filters) if filters is not None else {}
+    if target_region is not None:
+        combined_filters["region"] = target_region
+    if target_die is not None:
+        try:
+            combined_filters["die"] = int(target_die)
+        except (ValueError, TypeError):
+            combined_filters["die"] = target_die
+
+    plot_df = meta_df.copy()
+    if not combined_filters:
+        return plot_df
+
+    for k, v in combined_filters.items():
+        if k not in plot_df.columns:
+            raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
+        if k == "die":
+            try:
+                v_int = int(v)
+                mask = (plot_df["die"] == v_int) | (plot_df["die"] == str(v_int))
+            except (ValueError, TypeError):
+                mask = plot_df["die"] == v
+            plot_df = plot_df[mask]
+        else:
+            plot_df = plot_df[plot_df[k] == v]
+
+    if plot_df.empty:
+        raise ValueError(
+            f"No spectra match specified filters (region={target_region!r}, die={target_die!r}, filters={combined_filters})."
+        )
+    return plot_df
+
+
+def _build_filter_tag_string(
+    target_region: str | None,
+    target_die: int | None,
+    filters: dict[str, Any] | None,
+) -> str:
+    """Build a concise formatted filter descriptor string for plot titles."""
+    tags: list[str] = []
+    if target_region is not None:
+        tags.append(f"Region: {target_region}")
+    if target_die is not None:
+        tags.append(f"Die: {target_die}")
+    if filters:
+        other_filters = {k: v for k, v in filters.items() if k not in ("region", "die")}
+        for k, v in other_filters.items():
+            tags.append(f"{str(k).capitalize()}: {v}")
+    return f" ({', '.join(tags)})" if tags else ""
+
+
+def _format_die_label(d: Any) -> str:
+    """Format die identifier into a discrete label string."""
+    if pd.isna(d):
+        return "N/A"
+    try:
+        return f"Die {int(d)}"
+    except (ValueError, TypeError):
+        return f"Die {d}"
+
+
 def plot_max_intensity_vs_time(
     ary_intensity: np.ndarray,
     meta_df: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
+    *,
+    region: str | None = None,
+    die: int | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot maximum spectral intensity vs measurement time using a Seaborn scatter plot.
 
@@ -596,6 +695,8 @@ def plot_max_intensity_vs_time(
         such as 'tool', 'die', and 'region'.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
+        - 'region' (str | None): Target spectral region (e.g., 'Al2p' or 'Ti2p').
+        - 'die' (int | None): Target wafer die index (e.g., 0).
         - 'hue' (str): Column to group/color by ('tool', 'die', or 'region'; default 'tool').
         - 'filters' (dict[str, Any] | None): Optional key-value filter mapping on metadata
           (e.g., {'region': 'Al2p'} or {'die': 0}).
@@ -607,6 +708,10 @@ def plot_max_intensity_vs_time(
         - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 5.5)).
         - 'ax' (plt.Axes | None): Existing matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
+    region : str | None, optional
+        Target spectral region to plot. Takes precedence over plot_config['region'].
+    die : int | None, optional
+        Target wafer die index to plot. Takes precedence over plot_config['die'].
 
     Returns
     -------
@@ -620,9 +725,47 @@ def plot_max_intensity_vs_time(
     KeyError
         If required columns ('time', 'spectrum_index', or specified 'hue') are missing.
     """
+    if isinstance(plot_config, str):
+        region = plot_config
+        plot_config = None
+    elif isinstance(plot_config, (int, np.integer)):
+        die = int(plot_config)
+        plot_config = None
+
     cfg = plot_config or {}
     hue: str = str(cfg.get("hue", "tool"))
-    filters = cfg.get("filters")
+    raw_filters = cfg.get("filters")
+    filters: dict[str, Any] = dict(raw_filters) if raw_filters is not None else {}
+
+    # Resolve target_region and target_die with precedence: kwarg > cfg key > cfg['filters']
+    if region is not None:
+        target_region: str | None = str(region)
+    elif "region" in cfg:
+        target_region = str(cfg["region"]) if cfg["region"] is not None else None
+    elif "region" in filters:
+        target_region = str(filters["region"]) if filters["region"] is not None else None
+    else:
+        target_region = None
+
+    if die is not None:
+        target_die: int | None = die
+    elif "die" in cfg:
+        target_die = cfg["die"]
+    elif "die" in filters:
+        target_die = filters["die"]
+    else:
+        target_die = None
+
+    if target_region is not None:
+        filters["region"] = target_region
+
+    if target_die is not None:
+        try:
+            target_die = int(target_die)
+            filters["die"] = target_die
+        except (ValueError, TypeError):
+            filters["die"] = target_die
+
     style: str | None = cfg.get("style")
     palette = cfg.get("palette")
     alpha: float = float(cfg.get("alpha", 0.75))
@@ -632,18 +775,7 @@ def plot_max_intensity_vs_time(
     custom_ax: plt.Axes | None = cfg.get("ax")
     show: bool = bool(cfg.get("show", False))
 
-    if meta_df.empty:
-        raise ValueError("meta_df cannot be empty")
-
-    plot_df = meta_df.copy()
-    if filters:
-        for k, v in filters.items():
-            if k not in plot_df.columns:
-                raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
-            plot_df = plot_df[plot_df[k] == v]
-
-    if plot_df.empty:
-        raise ValueError(f"No spectra match specified filters: {filters}")
+    plot_df = _apply_metadata_filters(meta_df, filters, target_region, target_die)
 
     if "time" not in plot_df.columns:
         raise KeyError("meta_df must contain a 'time' column for time-series plotting.")
@@ -665,9 +797,9 @@ def plot_max_intensity_vs_time(
     hue_order = None
     if hue == "die":
         dies = sorted(plot_df["die"].dropna().unique())
-        plot_df["die_formatted"] = plot_df["die"].apply(lambda d: f"Die {int(d)}" if pd.notna(d) else "N/A")
+        plot_df["die_formatted"] = plot_df["die"].apply(_format_die_label)
         plot_hue = "die_formatted"
-        hue_order = [f"Die {int(d)}" for d in dies]
+        hue_order = [_format_die_label(d) for d in dies]
     elif hue == "tool":
         hue_order = sorted(plot_df["tool"].dropna().unique())
     elif hue == "region":
@@ -689,7 +821,7 @@ def plot_max_intensity_vs_time(
     )
 
     if not title:
-        filt_str = f" | Filtered: {filters}" if filters else ""
+        filt_str = _build_filter_tag_string(target_region, target_die, filters)
         title = f"Maximum Intensity vs. Time (hue={hue}){filt_str}"
 
     ax.set_title(title)
@@ -711,6 +843,9 @@ def plot_normalized_max_intensity_vs_time(
     meta_df: pd.DataFrame,
     ary_energy: np.ndarray | None = None,
     plot_config: dict[str, Any] | None = None,
+    *,
+    region: str | None = None,
+    die: int | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot maximum intensity normalized by total integrated area vs time using Seaborn.
 
@@ -729,6 +864,8 @@ def plot_normalized_max_intensity_vs_time(
         is performed. If None, sum across intensity points is used.
     plot_config : dict[str, Any] | None, optional
         Configuration dictionary:
+        - 'region' (str | None): Target spectral region (e.g., 'Al2p' or 'Ti2p').
+        - 'die' (int | None): Target wafer die index (e.g., 0).
         - 'hue' (str): Column to group/color by ('tool', 'die', or 'region'; default 'tool').
         - 'normalization_mode' (str): Normalization strategy:
           * 'die_total_flux' (default): Normalizes by the sum of integrated areas across
@@ -744,6 +881,10 @@ def plot_normalized_max_intensity_vs_time(
         - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 5.5)).
         - 'ax' (plt.Axes | None): Existing matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
+    region : str | None, optional
+        Target spectral region to plot. Takes precedence over plot_config['region'].
+    die : int | None, optional
+        Target wafer die index to plot. Takes precedence over plot_config['die'].
 
     Returns
     -------
@@ -757,10 +898,55 @@ def plot_normalized_max_intensity_vs_time(
     KeyError
         If required columns are missing from meta_df.
     """
+    if isinstance(ary_energy, dict) and plot_config is None:
+        plot_config = ary_energy
+        ary_energy = None
+    elif isinstance(ary_energy, str) and region is None:
+        region = ary_energy
+        ary_energy = None
+
+    if isinstance(plot_config, str):
+        region = plot_config
+        plot_config = None
+    elif isinstance(plot_config, (int, np.integer)):
+        die = int(plot_config)
+        plot_config = None
+
     cfg = plot_config or {}
     hue: str = str(cfg.get("hue", "tool"))
     norm_mode: str = str(cfg.get("normalization_mode", "die_total_flux")).lower()
-    filters = cfg.get("filters")
+    raw_filters = cfg.get("filters")
+    filters: dict[str, Any] = dict(raw_filters) if raw_filters is not None else {}
+
+    # Resolve target_region and target_die with precedence: kwarg > cfg key > cfg['filters']
+    if region is not None:
+        target_region: str | None = str(region)
+    elif "region" in cfg:
+        target_region = str(cfg["region"]) if cfg["region"] is not None else None
+    elif "region" in filters:
+        target_region = str(filters["region"]) if filters["region"] is not None else None
+    else:
+        target_region = None
+
+    if die is not None:
+        target_die: int | None = die
+    elif "die" in cfg:
+        target_die = cfg["die"]
+    elif "die" in filters:
+        target_die = filters["die"]
+    else:
+        target_die = None
+
+    if target_region is not None:
+        filters["region"] = target_region
+
+    if target_die is not None:
+        try:
+            target_die = int(target_die)
+            filters["die"] = target_die
+        except (ValueError, TypeError):
+            filters["die"] = target_die
+
     style: str | None = cfg.get("style")
     palette = cfg.get("palette")
     alpha: float = float(cfg.get("alpha", 0.75))
@@ -803,15 +989,7 @@ def plot_normalized_max_intensity_vs_time(
         # Compute die total flux across the full meta_df before filtering
         flux_map = compute_die_total_flux(meta_df, ary_intensity, ary_energy)
 
-        plot_df = meta_df.copy()
-        if filters:
-            for k, v in filters.items():
-                if k not in plot_df.columns:
-                    raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
-                plot_df = plot_df[plot_df[k] == v]
-
-        if plot_df.empty:
-            raise ValueError(f"No spectra match specified filters: {filters}")
+        plot_df = _apply_metadata_filters(meta_df, filters, target_region, target_die)
 
         indices = plot_df["spectrum_index"].astype(int).values
         max_vals = np.max(ary_intensity[indices], axis=1)
@@ -825,15 +1003,7 @@ def plot_normalized_max_intensity_vs_time(
         default_ylabel = "Max Intensity / Die Total Integrated Area (1/eV)"
 
     else:  # 'spectrum_area'
-        plot_df = meta_df.copy()
-        if filters:
-            for k, v in filters.items():
-                if k not in plot_df.columns:
-                    raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(plot_df.columns)}")
-                plot_df = plot_df[plot_df[k] == v]
-
-        if plot_df.empty:
-            raise ValueError(f"No spectra match specified filters: {filters}")
+        plot_df = _apply_metadata_filters(meta_df, filters, target_region, target_die)
 
         indices = plot_df["spectrum_index"].astype(int).values
         max_vals = np.max(ary_intensity[indices], axis=1)
@@ -866,9 +1036,9 @@ def plot_normalized_max_intensity_vs_time(
     hue_order = None
     if hue == "die":
         dies = sorted(plot_df["die"].dropna().unique())
-        plot_df["die_formatted"] = plot_df["die"].apply(lambda d: f"Die {int(d)}" if pd.notna(d) else "N/A")
+        plot_df["die_formatted"] = plot_df["die"].apply(_format_die_label)
         plot_hue = "die_formatted"
-        hue_order = [f"Die {int(d)}" for d in dies]
+        hue_order = [_format_die_label(d) for d in dies]
     elif hue == "tool":
         hue_order = sorted(plot_df["tool"].dropna().unique())
     elif hue == "region":
@@ -890,7 +1060,7 @@ def plot_normalized_max_intensity_vs_time(
     )
 
     if not title:
-        filt_str = f" | Filtered: {filters}" if filters else ""
+        filt_str = _build_filter_tag_string(target_region, target_die, filters)
         title = f"Normalized Maximum Intensity vs. Time (hue={hue}){filt_str}"
 
     ax.set_title(title)
