@@ -25,6 +25,7 @@ from utility import (
     plot_sliding_window_slices,
     plot_tool_comparison,
     plot_training_history,
+    plot_atomic_percentage_distributions,
 )
 
 
@@ -39,7 +40,7 @@ def main() -> None:
     # "unet": Conventional 1D U-Net without shortcut (y = UNet(x))
     # "deeplabv3": 1D DeepLabV3 (Multi-Grid ResNet backbone + ASPP with global pooling)
     model_type = "resnet"  # Options: "resnet", "residual_unet", "unet", or "deeplabv3"
-    use_sliding_window = True  # Toggle available to all models (True for patch data augmentation)
+    use_sliding_window = False  # Toggle available to all models (True for patch data augmentation)
 
     source_tool = "J4"
     target_tool = "J5"
@@ -77,7 +78,7 @@ def main() -> None:
     pipeline_config = {
         "model_type": model_type,
         "use_sliding_window": use_sliding_window,
-        "use_film": True, 
+        "use_film": False, 
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
         "source_tool": source_tool,
         "target_tool": target_tool,
@@ -377,6 +378,16 @@ def main() -> None:
             "die": 0,
         },
     )
+
+    # 9. Atomic percentage distributions for Target, Predicted, and Difference in Train and Test sets
+    if not df_at_samples.empty:
+        plot_atomic_percentage_distributions(
+            df_at_samples,
+            plot_config={
+                "splits": ["train", "test"],
+                "title": "Atomic Percentage Distributions (Target vs. Predicted and Difference)",
+            },
+        )
 
     if show_plots:
         print("Showing plots (close plot windows to finish execution)...")
