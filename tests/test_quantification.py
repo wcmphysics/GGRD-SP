@@ -545,7 +545,140 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
             self.assertTrue(any("No paired sessions found" in str(item.message) for item in w))
 
 
+class TestAtomicPercentageVisualization(unittest.TestCase):
+    """Test suite for atomic percentage distribution visualization."""
+
+    def setUp(self) -> None:
+        # Create a synthetic df_samples table
+        self.df_samples = pd.DataFrame([
+            {
+                "split": "train",
+                "element": "Al",
+                "die": 0,
+                "target_at%": 30.5,
+                "pred_at%": 31.0,
+                "diff_at%": 0.5,
+            },
+            {
+                "split": "train",
+                "element": "Al",
+                "die": 1,
+                "target_at%": 29.5,
+                "pred_at%": 29.8,
+                "diff_at%": 0.3,
+            },
+            {
+                "split": "test",
+                "element": "Al",
+                "die": 0,
+                "target_at%": 30.0,
+                "pred_at%": 30.2,
+                "diff_at%": 0.2,
+            },
+            {
+                "split": "train",
+                "element": "Ti",
+                "die": 0,
+                "target_at%": 69.5,
+                "pred_at%": 69.0,
+                "diff_at%": -0.5,
+            },
+            {
+                "split": "test",
+                "element": "Ti",
+                "die": 0,
+                "target_at%": 70.0,
+                "pred_at%": 69.8,
+                "diff_at%": -0.2,
+            },
+        ])
+
+    def test_plot_atomic_percentage_distributions_success(self) -> None:
+        """Verify successful generation of 2-panel figure with box and stripplots."""
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        fig, (ax_abs, ax_diff) = plot_atomic_percentage_distributions(
+            self.df_samples,
+            plot_config={
+                "title": "Atomic Percentage Distributions",
+                "show": False,
+            },
+        )
+        self.assertIsNotNone(fig)
+        self.assertIsNotNone(ax_abs)
+        self.assertIsNotNone(ax_diff)
+
+        # Check titles
+        self.assertIn("Atomic % Distribution: Target vs. Predicted", ax_abs.get_title())
+        self.assertIn("Atomic % Difference Distribution (Pred - Target)", ax_diff.get_title())
+
+        # Check axis labels
+        self.assertEqual(ax_abs.get_xlabel(), "Element")
+        self.assertEqual(ax_diff.get_xlabel(), "Element")
+        self.assertIn("Percentage", ax_abs.get_ylabel())
+        self.assertIn("Difference", ax_diff.get_ylabel())
+
+        # Check that ax_diff contains the zero reference line
+        lines = [line.get_ydata() for line in ax_diff.get_lines()]
+        has_zero_line = any(np.allclose(y, 0.0) for y in lines if len(y) > 0)
+        self.assertTrue(has_zero_line)
+
+    def test_plot_atomic_percentage_distributions_filter(self) -> None:
+        """Verify filtering by splits and elements works properly."""
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        fig, (ax_abs, ax_diff) = plot_atomic_percentage_distributions(
+            self.df_samples,
+            plot_config={
+                "splits": ["train"],
+                "elements": ["Al"],
+                "show": False,
+            },
+        )
+        self.assertIsNotNone(fig)
+
+    def test_plot_atomic_percentage_distributions_empty_raises(self) -> None:
+        """Verify ValueError when df_at_samples is empty."""
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        with self.assertRaises(ValueError):
+            plot_atomic_percentage_distributions(pd.DataFrame())
+
+    def test_plot_atomic_percentage_distributions_missing_cols_raises(self) -> None:
+        """Verify KeyError when required columns are missing."""
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        with self.assertRaises(KeyError):
+            plot_atomic_percentage_distributions(pd.DataFrame({"split": ["train"], "dummy": [1]}))
+
+    def test_plot_atomic_percentage_distributions_filter_empty_raises(self) -> None:
+        """Verify ValueError when no records match filter."""
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        with self.assertRaises(ValueError):
+            plot_atomic_percentage_distributions(
+                self.df_samples,
+                plot_config={"splits": ["non_existent_split"]},
+            )
+
+    def test_plot_atomic_percentage_distributions_custom_axes(self) -> None:
+        """Verify passing existing axes tuple into plot_config works cleanly."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_distributions
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        returned_fig, (ret_ax1, ret_ax2) = plot_atomic_percentage_distributions(
+            self.df_samples,
+            plot_config={"ax": (ax1, ax2), "show": False},
+        )
+        self.assertEqual(ret_ax1, ax1)
+        self.assertEqual(ret_ax2, ax2)
+        plt.close(fig)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

@@ -392,11 +392,80 @@ class TestPairingVisualization(unittest.TestCase):
         self.assertIsNotNone(ax)
         self.assertEqual(len(ax.get_yticklabels()), 2)
 
+    def test_plot_pairing_timeline_annotations_and_collision_avoidance(self) -> None:
+        """Verify measurement_id annotations are rendered with collision avoidance."""
+        fig, ax = plot_pairing_timeline(
+            self.paired_df,
+            plot_config={
+                "show": False,
+                "annotate_measurements": True,
+                "stagger_levels": 3,
+                "label_fontsize": 9,
+            },
+        )
+        # Check that annotations contain measurement IDs
+        annot_texts = [child.get_text() for child in ax.texts]
+        unique_meas_ids = set(self.paired_df["measurement_id"])
+        # At least some of the unique measurement IDs must be in the annotation texts
+        found_ids = [m for m in unique_meas_ids if m in annot_texts]
+        self.assertGreater(len(found_ids), 0)
+
+        # When annotate_measurements=False, measurement IDs should not be in ax.texts
+        fig_no_annot, ax_no_annot = plot_pairing_timeline(
+            self.paired_df,
+            plot_config={"show": False, "annotate_measurements": False},
+        )
+        no_annot_texts = [child.get_text() for child in ax_no_annot.texts]
+        found_in_no_annot = [m for m in unique_meas_ids if m in no_annot_texts]
+        self.assertEqual(len(found_in_no_annot), 0)
+
+    def test_calculate_staggered_levels_logic(self) -> None:
+        """Verify staggered level assignment correctly separates close timestamps."""
+        from utility.visualization import _calculate_staggered_levels
+
+        base = pd.Timestamp("2026-01-01 12:00:00")
+        # 3 points very close together within 1 minute of each other in a 10-hour span
+        times = [
+            base,
+            base + pd.Timedelta(minutes=1),
+            base + pd.Timedelta(minutes=2),
+            base + pd.Timedelta(hours=10),
+        ]
+        levels = _calculate_staggered_levels(times, max_levels=3, proximity_ratio=0.1)
+        self.assertEqual(len(levels), 4)
+        # The first 3 close timestamps should receive distinct levels (0, 1, 2)
+        self.assertNotEqual(levels[0], levels[1])
+        self.assertNotEqual(levels[1], levels[2])
+        # The distant point (10 hours later) should reset back to level 0
+        self.assertEqual(levels[3], 0)
+
     def test_plot_pairing_timeline_missing_cols_raises(self) -> None:
         """Verify KeyError if required columns missing."""
         with self.assertRaises(KeyError):
             plot_pairing_timeline(pd.DataFrame({"dummy": [1, 2]}))
 
+    def test_plot_pairing_timeline_with_string_time_target(self) -> None:
+        """Verify string format in time_target column is cleanly converted without error."""
+        df_str = self.paired_df.copy()
+        if "time_target" in df_str.columns:
+            df_str["time_target"] = df_str["time_target"].astype(str)
+        fig, ax = plot_pairing_timeline(df_str, plot_config={"show": False})
+        self.assertIsNotNone(fig)
+
+    def test_plot_pairing_timeline_single_level_no_leaders(self) -> None:
+        """Verify plot renders cleanly with stagger_levels=1 and leader_lines=False."""
+        fig, ax = plot_pairing_timeline(
+            self.paired_df,
+            plot_config={
+                "show": False,
+                "stagger_levels": 1,
+                "leader_lines": False,
+            },
+        )
+        self.assertIsNotNone(fig)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
