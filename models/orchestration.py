@@ -109,6 +109,20 @@ def _normalize_config_aliases(config_dict: dict[str, Any]) -> dict[str, Any]:
         "sliding_stride_points": ("stride_points", "stride"),
         "window_size_points": ("window_points", "window_size"),
         "cost_type": ("loss_type",),
+        "use_lr_scheduler": (
+            "use_reduce_lr_on_plateau",
+            "reduce_lr_on_plateau",
+            "use_scheduler",
+            "lr_scheduler",
+        ),
+        "lr_reduce_factor": (
+            "lr_factor",
+            "factor",
+            "lr_scheduler_factor",
+            "reduction_factor",
+        ),
+        "lr_scheduler_patience": ("lr_patience", "scheduler_patience"),
+        "min_lr": ("lr_min", "lr_scheduler_min_lr"),
     }
 
     for canonical, aliases in alias_groups.items():

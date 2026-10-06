@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import math
 from typing import Any
+import warnings
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
 from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
@@ -228,7 +230,7 @@ def evaluate_sliding_window(
 
 def train_model_region(
     train_dataset: SpectrumPairDataset,
-    val_dataset: SpectrumPairDataset,
+    val_dataset: SpectrumPairDataset | None,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Train a neural network model for a single spectral region.
@@ -240,8 +242,8 @@ def train_model_region(
     ----------
     train_dataset : SpectrumPairDataset
         Training dataset for this region.
-    val_dataset : SpectrumPairDataset
-        Validation dataset for this region.
+    val_dataset : SpectrumPairDataset | None
+        Validation dataset for this region. If None or empty, training monitors train_loss.
     config : dict[str, Any] | None, optional
         Configuration dictionary containing:
         - 'model_type' (str): Architecture 'resnet', 'residual_unet', or 'unet' (default 'resnet').
@@ -253,6 +255,10 @@ def train_model_region(
         - 'learning_rate' (float): Optimizer learning rate (default 1e-3).
         - 'l2_weight' (float): L2 regularization weight (default 1e-4).
         - 'early_stopping_patience' (int): Patience epochs before stopping (default 10).
+        - 'use_lr_scheduler' (bool): Whether to use ReduceLROnPlateau dynamic LR scheduling (default True).
+        - 'lr_reduce_factor' (float): Multiplicative factor of LR reduction (default 0.9).
+        - 'lr_scheduler_patience' (int): Epochs of no improvement before reducing LR (default 10).
+        - 'min_lr' (float): Lower bound on learning rate (default learning_rate / 1000.0).
         - 'verbose' (bool): Whether to print progress in log10 scale (default False).
         - 'device' (str | torch.device | None): Device to use.
         - 'model' (nn.Module | None): Pre-instantiated model instance if available.
@@ -261,16 +267,15 @@ def train_model_region(
     -------
     dict[str, Any]
         Dictionary containing:
-        - 'model': Trained model (weights restored to lowest validation loss epoch).
-        - 'best_val_loss': Lowest validation loss achieved.
-        - 'best_epoch': Epoch index with lowest validation loss.
-        - 'history': Dictionary of 'train_loss' and 'val_loss' histories.
+        - 'model': Trained model (weights restored to lowest validation loss epoch, or lowest train loss if no val).
+        - 'best_val_loss': Lowest monitored loss achieved (validation loss if present, otherwise training loss).
+        - 'best_epoch': Epoch index with lowest monitored loss.
+        - 'history': Dictionary containing 'train_loss', 'val_loss', and 'lr' histories.
         - 'config': Resolved configuration dictionary.
     """
     if len(train_dataset) == 0:
         raise ValueError("Cannot train on an empty train_dataset.")
-    if len(val_dataset) == 0:
-        raise ValueError("Cannot evaluate on an empty val_dataset.")
+    has_val: bool = val_dataset is not None and len(val_dataset) > 0
 
     cfg = config or {}
     model_type: str = str(cfg.get("model_type", cfg.get("model", "resnet"))).lower()
@@ -282,13 +287,83 @@ def train_model_region(
     lr: float = float(cfg.get("learning_rate", cfg.get("lr", 1e-3)))
     weight_decay: float = float(cfg.get("weight_decay", 0.0))
     l2_weight: float = float(cfg.get("l2_weight", cfg.get("l2", cfg.get("l2_reg", 1e-4))))
+    verbose: bool = bool(cfg.get("verbose", False))
+
+    # Scheduler configuration
+    use_lr_scheduler: bool = bool(
+        cfg.get(
+            "use_lr_scheduler",
+            cfg.get(
+                "use_reduce_lr_on_plateau",
+                cfg.get(
+                    "reduce_lr_on_plateau",
+                    cfg.get("use_scheduler", cfg.get("lr_scheduler", True)),
+                ),
+            ),
+        )
+    )
+    lr_reduce_factor: float = float(
+        cfg.get(
+            "lr_reduce_factor",
+            cfg.get(
+                "lr_factor",
+                cfg.get(
+                    "factor",
+                    cfg.get("reduction_factor", cfg.get("lr_scheduler_factor", 0.9)),
+                ),
+            ),
+        )
+    )
+    lr_scheduler_patience: int = int(
+        cfg.get(
+            "lr_scheduler_patience",
+            cfg.get("lr_patience", cfg.get("scheduler_patience", 10)),
+        )
+    )
+    # min_lr defaults to one thousandth of initial learning rate
+    default_min_lr = lr / 1000.0
+    min_lr: float = float(
+        cfg.get("min_lr", cfg.get("lr_min", cfg.get("lr_scheduler_min_lr", default_min_lr)))
+    )
+
+    # Validate scheduler parameters
+    if not (0.0 < lr_reduce_factor < 1.0):
+        raise ValueError(
+            f"lr_reduce_factor must be strictly between 0 and 1, got {lr_reduce_factor}"
+        )
+    if lr_scheduler_patience < 1:
+        raise ValueError(
+            f"lr_scheduler_patience must be an integer >= 1, got {lr_scheduler_patience}"
+        )
+    if min_lr < 0.0:
+        raise ValueError(f"min_lr cannot be negative, got {min_lr}")
+
+    # Early stopping patience defaults to 2 * lr_scheduler_patience when scheduler is active,
+    # ensuring ReduceLROnPlateau has opportunities to adapt before training aborts.
+    default_early_stop_patience = (lr_scheduler_patience * 2) if use_lr_scheduler else 10
+    explicit_patience = any(
+        k in cfg for k in ("early_stopping_patience", "patience", "early_stop_patience")
+    )
     patience: int = int(
         cfg.get(
             "early_stopping_patience",
-            cfg.get("patience", cfg.get("early_stop_patience", 10)),
+            cfg.get("patience", cfg.get("early_stop_patience", default_early_stop_patience)),
         )
     )
-    verbose: bool = bool(cfg.get("verbose", False))
+
+    if (
+        use_lr_scheduler
+        and explicit_patience
+        and patience <= lr_scheduler_patience
+        and epochs > lr_scheduler_patience
+    ):
+        warnings.warn(
+            f"early_stopping_patience ({patience}) is <= lr_scheduler_patience ({lr_scheduler_patience}) "
+            f"while epochs ({epochs}) > lr_scheduler_patience. Early stopping may abort training "
+            f"before ReduceLROnPlateau has a chance to reduce the learning rate.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Synchronize canonical and alias keys in cfg dictionary
     cfg["epochs"] = epochs
@@ -298,6 +373,10 @@ def train_model_region(
     cfg["early_stopping_patience"] = patience
     cfg["model_type"] = model_type
     cfg["use_sliding_window"] = use_sw
+    cfg["use_lr_scheduler"] = use_lr_scheduler
+    cfg["lr_reduce_factor"] = lr_reduce_factor
+    cfg["lr_scheduler_patience"] = lr_scheduler_patience
+    cfg["min_lr"] = min_lr
 
     device_str = cfg.get("device")
     if device_str is None:
@@ -332,9 +411,15 @@ def train_model_region(
         seq_len = full_len
         w_size = full_len
         s_step = full_len
-        train_loader, val_loader = create_dataloaders(
-            train_dataset, val_dataset, config={"batch_size": batch_size, "shuffle_train": True}
-        )
+        if has_val:
+            train_loader, val_loader = create_dataloaders(
+                train_dataset, val_dataset, config={"batch_size": batch_size, "shuffle_train": True}
+            )
+        else:
+            train_loader, _ = create_dataloaders(
+                train_dataset, train_dataset, config={"batch_size": batch_size, "shuffle_train": True}
+            )
+            val_loader = None
 
     # Instantiate model if not provided
     model: nn.Module | None = cfg.get("model")
@@ -365,8 +450,19 @@ def train_model_region(
             criterion = NormalizedMSELoss(config=loss_cfg)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
-    best_val_loss = float("inf")
+    # Initialize ReduceLROnPlateau scheduler
+    scheduler = None
+    if use_lr_scheduler:
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=lr_reduce_factor,
+            patience=lr_scheduler_patience,
+            min_lr=min_lr,
+        )
+
+    history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
+    best_monitored_loss = float("inf")
     best_epoch = 0
     best_state_dict: dict[str, Any] | None = None
     patience_counter = 0
@@ -377,35 +473,62 @@ def train_model_region(
     for epoch in range(1, epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config=run_cfg)
 
-        if use_sw:
-            val_loss = evaluate_sliding_window(model, val_dataset, criterion, config=eval_cfg)
+        if has_val:
+            if use_sw:
+                val_loss = evaluate_sliding_window(model, val_dataset, criterion, config=eval_cfg)
+            else:
+                assert val_loader is not None
+                val_loss = evaluate(model, val_loader, criterion, config=run_cfg)
+            monitored_loss = val_loss
         else:
-            assert val_loader is not None
-            val_loss = evaluate(model, val_loader, criterion, config=run_cfg)
+            val_loss = float("nan")
+            monitored_loss = train_loss
 
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
+        history["lr"].append(optimizer.param_groups[0]["lr"])
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if monitored_loss < best_monitored_loss:
+            best_monitored_loss = monitored_loss
             best_epoch = epoch
             best_state_dict = copy.deepcopy(model.state_dict())
             patience_counter = 0
         else:
             patience_counter += 1
 
+        # Dynamical learning rate adjustment
+        if scheduler is not None:
+            prev_lr = optimizer.param_groups[0]["lr"]
+            scheduler.step(monitored_loss)
+            current_lr = optimizer.param_groups[0]["lr"]
+            if current_lr < prev_lr:
+                if verbose:
+                    metric_label = "Val Loss" if has_val else "Train Loss"
+                    print(
+                        f"Epoch {epoch:3d}: ReduceLROnPlateau reduced learning rate from {prev_lr:.2e} to {current_lr:.2e} "
+                        f"(monitored {metric_label})."
+                    )
+                # Reset early stopping counter so model can adapt to newly reduced learning rate
+                patience_counter = 0
+
         if verbose and (epoch % 10 == 0 or epoch == epochs or epoch == 1):
             tr_str = format_loss_log10(train_loss)
-            val_str = format_loss_log10(val_loss)
-            print(
-                f"Epoch {epoch:3d}/{epochs:3d} - Train Loss: {tr_str}, Val Loss: {val_str}"
-            )
+            if has_val:
+                val_str = format_loss_log10(val_loss)
+                print(
+                    f"Epoch {epoch:3d}/{epochs:3d} - Train Loss: {tr_str}, Val Loss: {val_str}"
+                )
+            else:
+                print(
+                    f"Epoch {epoch:3d}/{epochs:3d} - Train Loss: {tr_str} (No validation set; monitoring Train Loss)"
+                )
 
         if patience_counter >= patience:
             if verbose:
-                b_str = format_loss_log10(best_val_loss)
+                b_str = format_loss_log10(best_monitored_loss)
+                target_str = "best val_loss" if has_val else "best train_loss"
                 print(
-                    f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, best val_loss: {b_str})"
+                    f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, {target_str}: {b_str})"
                 )
             break
 
@@ -417,7 +540,7 @@ def train_model_region(
 
     return {
         "model": model,
-        "best_val_loss": best_val_loss,
+        "best_val_loss": best_monitored_loss,
         "best_epoch": best_epoch,
         "history": history,
         "config": resolved_cfg,
