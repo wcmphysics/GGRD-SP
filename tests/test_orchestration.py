@@ -341,6 +341,162 @@ class TestOrchestrationPipeline(unittest.TestCase):
                 config=cfg,
             )
 
+    def test_resolve_region_config_singular_and_aliases(self) -> None:
+        """Verify that 'region_config' (singular) and alias keys like 'epoch', 'lr', 'l2', 'batch' are resolved."""
+        global_cfg = {
+            "train_config": {"epochs": 100, "learning_rate": 1e-4, "batch_size": 16, "l2_weight": 1e-6},
+            "region_config": {
+                "Ti2p": {
+                    "epoch": 200,
+                    "lr": 5e-3,
+                    "batch": 32,
+                    "l2": 1e-4,
+                    "patience": 7,
+                    "use_film": True,
+                    "model_type": "residual_unet",
+                },
+                "Al2p": {
+                    "train_config": {
+                        "epoch": 150,
+                    },
+                },
+            },
+        }
+
+        # Ti2p with flat aliases and singular 'region_config'
+        sw_ti, tr_ti, bo_ti = _resolve_region_config(global_cfg, "Ti2p")
+        self.assertEqual(tr_ti["epochs"], 200)
+        self.assertEqual(tr_ti["epoch"], 200)
+        self.assertEqual(tr_ti["learning_rate"], 5e-3)
+        self.assertEqual(tr_ti["lr"], 5e-3)
+        self.assertEqual(tr_ti["batch_size"], 32)
+        self.assertEqual(tr_ti["batch"], 32)
+        self.assertEqual(tr_ti["l2_weight"], 1e-4)
+        self.assertEqual(tr_ti["early_stopping_patience"], 7)
+        self.assertTrue(tr_ti["use_film"])
+        self.assertEqual(tr_ti["model_type"], "residual_unet")
+
+        # Al2p with nested train_config using 'epoch'
+        sw_al, tr_al, bo_al = _resolve_region_config(global_cfg, "Al2p")
+        self.assertEqual(tr_al["epochs"], 150)
+        self.assertEqual(tr_al["epoch"], 150)
+        self.assertEqual(tr_al["learning_rate"], 1e-4)  # inherited from global train_config
+
+    def test_run_spectral_pipeline_with_regional_epoch_and_film(self) -> None:
+        """Verify pipeline respects per-region epoch, model_type, and use_film overrides."""
+        cfg = {
+            "source_tool": "J4",
+            "target_tool": "H1",
+            "regions": ["Al2p", "Ti2p"],
+            "model_type": "resnet",
+            "use_film": False,
+            "train_config": {"epochs": 2, "batch_size": 8, "hidden_channels": 8},
+            "region_config": {
+                "Ti2p": {
+                    "epoch": 3,
+                    "use_film": True,
+                },
+            },
+            "predict_source": False,
+        }
+        res = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.meta_df),
+            config=cfg,
+        )
+        self.assertIn("Al2p", res["models"])
+        self.assertIn("Ti2p", res["models"])
+
+        # Al2p model does not have FiLM
+        m_al = res["models"]["Al2p"]
+        self.assertFalse(getattr(m_al, "use_film", False))
+
+        # Ti2p model has FiLM active
+        m_ti = res["models"]["Ti2p"]
+        self.assertTrue(getattr(m_ti, "use_film", False))
+        self.assertIsNotNone(getattr(m_ti, "film_gen", None))
+
+        # Histories verify epochs
+        hist_al = res["histories"]["Al2p"]
+        hist_ti = res["histories"]["Ti2p"]
+        self.assertEqual(len(hist_al["train_loss"]), 2)
+        self.assertEqual(len(hist_ti["train_loss"]), 3)
+
+    def test_resolve_region_config_late_aliases_and_bo_aliases(self) -> None:
+        """Verify late aliases in alias groups and nested BO config aliases synchronize properly."""
+        global_cfg = {
+            "use_bayesian_opt": True,
+            "train_config": {"epochs": 50, "patience": 5, "l2": 1e-4},
+            "bayesian_opt_config": {"use_bo": True, "num_trials": 3},
+            "region_config": {
+                "Ti2p": {
+                    "max_epochs": 120,
+                    "early_stop_patience": 12,
+                    "weight_decay_l2": 2e-5,
+                    "bayesian_opt_config": {"use_bo": False},
+                },
+            },
+        }
+        _, tr_ti, bo_ti = _resolve_region_config(global_cfg, "Ti2p")
+        # Verify late aliases synchronize to all group members
+        self.assertEqual(tr_ti["epochs"], 120)
+        self.assertEqual(tr_ti["epoch"], 120)
+        self.assertEqual(tr_ti["max_epochs"], 120)
+        self.assertEqual(tr_ti["early_stopping_patience"], 12)
+        self.assertEqual(tr_ti["patience"], 12)
+        self.assertEqual(tr_ti["early_stop_patience"], 12)
+        self.assertEqual(tr_ti["l2_weight"], 2e-5)
+        self.assertEqual(tr_ti["l2"], 2e-5)
+        self.assertEqual(tr_ti["weight_decay_l2"], 2e-5)
+        # Verify BO config normalization
+        self.assertFalse(bo_ti["use_bo"])
+        self.assertFalse(bo_ti["use_bayesian_opt"])
+
+    def test_empty_region_configs_fallback(self) -> None:
+        """Verify that an empty 'region_configs: {}' cleanly falls back to 'region_config'."""
+        global_cfg = {
+            "region_configs": {},
+            "region_config": {
+                "Ti2p": {"epoch": 75},
+            },
+        }
+        _, tr_ti, _ = _resolve_region_config(global_cfg, "Ti2p")
+        self.assertEqual(tr_ti["epochs"], 75)
+
+    def test_pipeline_mixed_sliding_window_inference(self) -> None:
+        """Verify prediction runs smoothly when one region uses sliding window and another uses full spectrum."""
+        cfg = {
+            "source_tool": "J4",
+            "target_tool": "H1",
+            "regions": ["Al2p", "Ti2p"],
+            "use_sliding_window": True,  # global default True
+            "train_config": {"epochs": 2, "batch_size": 8, "hidden_channels": 8},
+            "region_config": {
+                "Al2p": {
+                    "window_size": 15,
+                    "stride": 7,
+                },
+                "Ti2p": {
+                    "use_sliding_window": False,  # Ti2p overrides to full spectrum
+                },
+            },
+            "predict_source": True,
+        }
+        res = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.meta_df),
+            config=cfg,
+        )
+        # Al2p model is saved as a tuple (model, w_size, stride)
+        self.assertIsInstance(res["models"]["Al2p"], tuple)
+        # Ti2p model is saved as a standalone nn.Module
+        self.assertNotIsInstance(res["models"]["Ti2p"], tuple)
+
+        # Predictions generated without dimension mismatch
+        pred_i, pred_e, pred_meta = res["predictions"]
+        self.assertEqual(pred_i.shape[1], 40)
+        self.assertTrue(len(pred_meta) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
