@@ -297,7 +297,9 @@ def main() -> None:
     plot_max_intensity_vs_time(
         ary_intensity,
         meta_df,
-        plot_config={"hue": "tool", "title": "Maximum Spectral Intensity vs. Measurement Time (hue=tool)"},
+        region=example_region,
+        die=0,
+        plot_config={"hue": "tool"},
     )
 
     # 2. Maximum intensity normalized by total integrated area vs. measurement time
@@ -305,10 +307,11 @@ def main() -> None:
         ary_intensity,
         meta_df,
         ary_energy=ary_energy,
+        region=example_region,
+        die=0,
         plot_config={
             "hue": "tool",
             "normalization_mode": "die_total_flux",
-            "title": "Normalized Maximum Intensity vs. Measurement Time (hue=tool, die_total_flux)",
         },
     )
 
