@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -46,7 +48,7 @@ def main() -> None:
     target_tool = "J5"
     example_region = "Ti2p"
     sample_meas_id = "NMG_M_J4_00000"  # session for at% calculation and comparison
-    show_plots = True  # Set to False to skip GUI plot display (useful in non-interactive/headless runs)
+    show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv  # Set False or pass --no-plots to skip GUI plot display
 
     # Part 1: Pseudo-measurement generation configuration
     pseudo_config = {
