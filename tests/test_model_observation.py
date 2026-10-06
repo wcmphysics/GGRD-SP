@@ -315,6 +315,181 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 self.meta_df.iloc[:0],
             )
 
+    def test_plot_max_intensity_vs_time_region_and_die_options(self) -> None:
+        """Test plot_max_intensity_vs_time with explicit region and die filtering."""
+        # 1. Kwarg filtering with both region and die
+        fig, ax = plot_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            region="Al2p",
+            die=0,
+            plot_config={"show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertIn("Die: 0", ax.get_title())
+        plt.close(fig)
+
+        # 2. Config dictionary filtering with region and die
+        fig, ax = plot_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            plot_config={"region": "Al2p", "die": 0, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertIn("Die: 0", ax.get_title())
+        plt.close(fig)
+
+        # 3. Only region specified
+        fig, ax = plot_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            region="Al2p",
+            plot_config={"show": False},
+        )
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertNotIn("Die:", ax.get_title())
+        plt.close(fig)
+
+        # 4. Only die specified
+        fig, ax = plot_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            die=0,
+            plot_config={"show": False},
+        )
+        self.assertIn("Die: 0", ax.get_title())
+        self.assertNotIn("Region:", ax.get_title())
+        plt.close(fig)
+
+        # 5. Non-existent region raises ValueError
+        with self.assertRaises(ValueError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                region="NonExistentRegion",
+                plot_config={"show": False},
+            )
+
+        # 6. Non-existent die raises ValueError
+        with self.assertRaises(ValueError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                die=999,
+                plot_config={"show": False},
+            )
+
+        # 7. Missing 'region' column in meta_df raises KeyError
+        with self.assertRaises(KeyError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.drop(columns=["region"]),
+                region="Al2p",
+                plot_config={"show": False},
+            )
+
+        # 8. Missing 'die' column in meta_df raises KeyError
+        with self.assertRaises(KeyError):
+            plot_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.drop(columns=["die"]),
+                die=0,
+                plot_config={"show": False},
+            )
+
+    def test_plot_normalized_max_intensity_vs_time_region_and_die_options(self) -> None:
+        """Test plot_normalized_max_intensity_vs_time with explicit region and die filtering."""
+        # 1. Kwarg filtering with both region and die in die_total_flux mode
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=self.ary_energy,
+            region="Al2p",
+            die=0,
+            plot_config={"normalization_mode": "die_total_flux", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertIn("Die: 0", ax.get_title())
+        plt.close(fig)
+
+        # 2. Config dictionary filtering with region and die in spectrum_area mode
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            ary_energy=self.ary_energy,
+            plot_config={
+                "region": "Al2p",
+                "die": 0,
+                "normalization_mode": "spectrum_area",
+                "show": False,
+            },
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertIn("Die: 0", ax.get_title())
+        plt.close(fig)
+
+        # 3. Only region specified
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            region="Al2p",
+            plot_config={"show": False},
+        )
+        self.assertIn("Region: Al2p", ax.get_title())
+        self.assertNotIn("Die:", ax.get_title())
+        plt.close(fig)
+
+        # 4. Only die specified
+        fig, ax = plot_normalized_max_intensity_vs_time(
+            self.ary_intensity,
+            self.meta_df,
+            die=0,
+            plot_config={"show": False},
+        )
+        self.assertIn("Die: 0", ax.get_title())
+        self.assertNotIn("Region:", ax.get_title())
+        plt.close(fig)
+
+        # 5. Non-existent region raises ValueError
+        with self.assertRaises(ValueError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                region="NonExistentRegion",
+                plot_config={"show": False},
+            )
+
+        # 6. Non-existent die raises ValueError
+        with self.assertRaises(ValueError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df,
+                die=999,
+                plot_config={"show": False},
+            )
+
+        # 7. Missing 'region' column in meta_df raises KeyError
+        with self.assertRaises(KeyError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.drop(columns=["region"]),
+                region="Al2p",
+                plot_config={"show": False},
+            )
+
+        # 8. Missing 'die' column in meta_df raises KeyError
+        with self.assertRaises(KeyError):
+            plot_normalized_max_intensity_vs_time(
+                self.ary_intensity,
+                self.meta_df.drop(columns=["die"]),
+                die=0,
+                plot_config={"show": False},
+            )
+
     def test_plot_prediction_comparison_multi_region_subplots_and_colors(self) -> None:
         """Test multi-region subplots, test split default, and strict color scheme."""
         data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
