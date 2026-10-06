@@ -273,15 +273,31 @@ def train_model_region(
         raise ValueError("Cannot evaluate on an empty val_dataset.")
 
     cfg = config or {}
-    model_type: str = str(cfg.get("model_type", "resnet")).lower()
-    use_sw: bool = bool(cfg.get("use_sliding_window", False))
-    epochs: int = int(cfg.get("epochs", 50))
-    batch_size: int = int(cfg.get("batch_size", 16))
-    lr: float = float(cfg.get("learning_rate", 1e-3))
+    model_type: str = str(cfg.get("model_type", cfg.get("model", "resnet"))).lower()
+    use_sw: bool = bool(cfg.get("use_sliding_window", cfg.get("use_sw", False)))
+    epochs: int = int(
+        cfg.get("epochs", cfg.get("epoch", cfg.get("num_epochs", cfg.get("n_epochs", 50))))
+    )
+    batch_size: int = int(cfg.get("batch_size", cfg.get("batch", cfg.get("batchsize", 16))))
+    lr: float = float(cfg.get("learning_rate", cfg.get("lr", 1e-3)))
     weight_decay: float = float(cfg.get("weight_decay", 0.0))
-    l2_weight: float = float(cfg.get("l2_weight", 1e-4))
-    patience: int = int(cfg.get("early_stopping_patience", 10))
+    l2_weight: float = float(cfg.get("l2_weight", cfg.get("l2", cfg.get("l2_reg", 1e-4))))
+    patience: int = int(
+        cfg.get(
+            "early_stopping_patience",
+            cfg.get("patience", cfg.get("early_stop_patience", 10)),
+        )
+    )
     verbose: bool = bool(cfg.get("verbose", False))
+
+    # Synchronize canonical and alias keys in cfg dictionary
+    cfg["epochs"] = epochs
+    cfg["batch_size"] = batch_size
+    cfg["learning_rate"] = lr
+    cfg["l2_weight"] = l2_weight
+    cfg["early_stopping_patience"] = patience
+    cfg["model_type"] = model_type
+    cfg["use_sliding_window"] = use_sw
 
     device_str = cfg.get("device")
     if device_str is None:

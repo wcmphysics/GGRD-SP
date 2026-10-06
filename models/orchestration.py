@@ -76,6 +76,62 @@ def instantiate_model(
         )
 
 
+def _normalize_config_aliases(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Normalize hyperparameter keys and aliases within a configuration dictionary.
+
+    Maps common aliases (e.g. 'epoch' -> 'epochs', 'lr' -> 'learning_rate',
+    'patience' -> 'early_stopping_patience', 'l2' -> 'l2_weight', 'batch' -> 'batch_size')
+    to their canonical forms and synchronizes all keys in the alias group.
+
+    Parameters
+    ----------
+    config_dict : dict[str, Any]
+        Raw input configuration dictionary.
+
+    Returns
+    -------
+    dict[str, Any]
+        Configuration dictionary with canonical and alias keys synchronized.
+    """
+    normalized = dict(config_dict)
+
+    alias_groups: dict[str, tuple[str, ...]] = {
+        "epochs": ("epoch", "num_epochs", "n_epochs", "max_epochs"),
+        "learning_rate": ("lr",),
+        "batch_size": ("batch", "batchsize"),
+        "early_stopping_patience": ("patience", "early_stop_patience"),
+        "l2_weight": ("l2", "l2_reg", "l2_penalty", "weight_decay_l2"),
+        "model_type": ("model", "architecture"),
+        "use_sliding_window": ("sliding_window", "use_sw"),
+        "use_bayesian_opt": ("bayesian_opt", "use_bo"),
+        "use_film": ("film",),
+        "sliding_stride_ev": ("stride_ev",),
+        "sliding_stride_points": ("stride_points", "stride"),
+        "window_size_points": ("window_points", "window_size"),
+        "cost_type": ("loss_type",),
+    }
+
+    for canonical, aliases in alias_groups.items():
+        val = None
+        has_val = False
+        if canonical in normalized:
+            val = normalized[canonical]
+            has_val = True
+        else:
+            for alias in aliases:
+                if alias in normalized:
+                    val = normalized[alias]
+                    has_val = True
+                    break
+
+        if has_val:
+            normalized[canonical] = val
+            for alias in aliases:
+                normalized[alias] = val
+
+    return normalized
+
+
 def _resolve_region_config(
     global_cfg: dict[str, Any],
     region: str,
@@ -84,7 +140,7 @@ def _resolve_region_config(
 
     Applies hierarchical fallback: global top-level settings provide defaults,
     which are optionally overridden by specific settings under
-    global_cfg['region_configs'][region].
+    global_cfg['region_configs'][region] or global_cfg['region_config'][region].
 
     Parameters
     ----------
@@ -98,7 +154,10 @@ def _resolve_region_config(
     tuple[dict[str, Any], dict[str, Any], dict[str, Any]]
         (sw_calc_cfg, region_train_cfg, region_bo_cfg)
     """
-    region_configs = global_cfg.get("region_configs", {})
+    region_configs = global_cfg.get("region_configs") or global_cfg.get("region_config") or {}
+    if not isinstance(region_configs, dict):
+        region_configs = {}
+
     reg_overrides = (
         dict(region_configs.get(region, {}))
         if isinstance(region_configs, dict) and region in region_configs
@@ -111,7 +170,11 @@ def _resolve_region_config(
             "window_size_ev", global_cfg.get("window_size_ev", 2.0)
         ),
         "sliding_stride_ev": reg_overrides.get(
-            "sliding_stride_ev", global_cfg.get("sliding_stride_ev", 1.0)
+            "sliding_stride_ev",
+            reg_overrides.get(
+                "stride_ev",
+                global_cfg.get("sliding_stride_ev", global_cfg.get("stride_ev", 1.0)),
+            ),
         ),
         "window_size_points": reg_overrides.get(
             "window_size_points",
@@ -130,38 +193,64 @@ def _resolve_region_config(
     }
 
     # 2. Training configuration (epochs, batch_size, lr, architecture params, l2_weight, etc.)
-    base_train_cfg = dict(global_cfg.get("train_config", {}))
-    if "train_config" in reg_overrides and isinstance(reg_overrides["train_config"], dict):
-        base_train_cfg.update(reg_overrides["train_config"])
-
-    train_param_keys = (
-        "batch_size",
-        "learning_rate",
-        "hidden_channels",
-        "base_channels",
-        "depth",
-        "backbone_channels",
-        "aspp_channels",
-        "multi_grid",
-        "aspp_rates",
-        "kernel_size",
-        "epochs",
-        "l2_weight",
-        "early_stopping_patience",
-        "dropout",
-        "weight_decay",
-        "verbose",
+    global_train_cfg = (
+        global_cfg.get("train_config")
+        or global_cfg.get("training_config")
+        or global_cfg.get("train_cfg")
+        or {}
     )
-    for k in train_param_keys:
-        if k in reg_overrides:
-            base_train_cfg[k] = reg_overrides[k]
+    base_train_cfg = _normalize_config_aliases(dict(global_train_cfg))
+
+    nested_train = (
+        reg_overrides.get("train_config")
+        or reg_overrides.get("training_config")
+        or reg_overrides.get("train_cfg")
+        or {}
+    )
+    if isinstance(nested_train, dict):
+        base_train_cfg.update(_normalize_config_aliases(nested_train))
+
+    # Flat overrides in reg_overrides:
+    # Any parameter not belonging strictly to nested sub-dictionaries or eV sliding window
+    excluded_from_flat = {
+        "train_config",
+        "training_config",
+        "train_cfg",
+        "bayesian_opt_config",
+        "bayesian_opt_configs",
+        "bo_config",
+        "bo_cfg",
+        "window_size_ev",
+        "sliding_stride_ev",
+        "stride_ev",
+    }
+    flat_overrides = {
+        k: v for k, v in reg_overrides.items() if k not in excluded_from_flat
+    }
+    if flat_overrides:
+        base_train_cfg.update(_normalize_config_aliases(flat_overrides))
+
+    base_train_cfg = _normalize_config_aliases(base_train_cfg)
 
     # 3. Bayesian optimization configuration
-    base_bo_cfg = dict(global_cfg.get("bayesian_opt_config", {}))
-    if "bayesian_opt_config" in reg_overrides and isinstance(
-        reg_overrides["bayesian_opt_config"], dict
-    ):
-        base_bo_cfg.update(reg_overrides["bayesian_opt_config"])
+    global_bo_cfg = (
+        global_cfg.get("bayesian_opt_config")
+        or global_cfg.get("bayesian_opt_configs")
+        or global_cfg.get("bo_config")
+        or global_cfg.get("bo_cfg")
+        or {}
+    )
+    base_bo_cfg = _normalize_config_aliases(dict(global_bo_cfg))
+
+    nested_bo = (
+        reg_overrides.get("bayesian_opt_config")
+        or reg_overrides.get("bayesian_opt_configs")
+        or reg_overrides.get("bo_config")
+        or reg_overrides.get("bo_cfg")
+        or {}
+    )
+    if isinstance(nested_bo, dict):
+        base_bo_cfg.update(_normalize_config_aliases(nested_bo))
 
     bo_param_keys = (
         "batch_sizes",
@@ -187,6 +276,8 @@ def _resolve_region_config(
     ):
         if arch_choice in reg_overrides and isinstance(reg_overrides[arch_choice], (list, tuple)):
             base_bo_cfg[arch_choice] = list(reg_overrides[arch_choice])
+
+    base_bo_cfg = _normalize_config_aliases(base_bo_cfg)
 
     return sw_calc_cfg, base_train_cfg, base_bo_cfg
 
@@ -336,6 +427,13 @@ def run_spectral_pipeline(
 
         sw_calc_cfg, region_train_cfg, region_bo_cfg = _resolve_region_config(cfg, region)
 
+        region_use_sw = bool(region_train_cfg.get("use_sliding_window", use_sw))
+        region_m_type = str(region_train_cfg.get("model_type", m_type)).lower()
+        region_use_film = bool(region_train_cfg.get("use_film", cfg.get("use_film", False)))
+        region_use_bo = bool(
+            region_bo_cfg.get("use_bayesian_opt", region_train_cfg.get("use_bayesian_opt", use_bo))
+        )
+
         split_cfg = {
             "region": region,
             "source_tool": source_tool,
@@ -355,7 +453,7 @@ def run_spectral_pipeline(
         # =====================================================================
         # STEP 2: SLIDING WINDOW SETUP (if enabled)
         # =====================================================================
-        if use_sw:
+        if region_use_sw:
             sample_energy = sample_item.get("energy")
             if sample_energy is not None:
                 e_grid = sample_energy.cpu().numpy()
@@ -377,7 +475,7 @@ def run_spectral_pipeline(
         # Note: train_full_ds and val_full_ds already implement source-referenced
         # normalization (dividing by max(|x|)). For patch training, SpectrumPatchDataset
         # extracts patches and inherits normalized scale.
-        if use_sw:
+        if region_use_sw:
             train_ds: Dataset = SpectrumPatchDataset(
                 train_full_ds, window_size=w_size, stride=s_step
             )
@@ -391,20 +489,25 @@ def run_spectral_pipeline(
         # =====================================================================
         l2_weight = float(region_train_cfg.get("l2_weight", 1e-4))
         region_weights = cfg.get("region_weights")
-        cost_type = str(cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))).lower()
+        cost_type = str(
+            region_train_cfg.get(
+                "cost_type",
+                region_train_cfg.get("loss_type", cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))),
+            )
+        ).lower()
         if cost_type in ("composite", "composite_spectral"):
             from models.cost import CompositeSpectralLoss
             criterion = CompositeSpectralLoss(
-                w_shape=float(cfg.get("w_shape", 0.5)),
-                w_mse=float(cfg.get("w_mse", 0.5)),
-                w_scale=float(cfg.get("w_scale", 0.0)),
+                w_shape=float(region_train_cfg.get("w_shape", cfg.get("w_shape", 0.5))),
+                w_mse=float(region_train_cfg.get("w_mse", cfg.get("w_mse", 0.5))),
+                w_scale=float(region_train_cfg.get("w_scale", cfg.get("w_scale", 0.0))),
                 l2_weight=l2_weight,
                 region_weights=region_weights,
             )
         else:
-            w_shape = float(cfg.get("w_shape", 0.0))
-            w_scale = float(cfg.get("w_scale", 0.0))
-            w_mse = float(cfg.get("w_mse", 1.0))
+            w_shape = float(region_train_cfg.get("w_shape", cfg.get("w_shape", 0.0)))
+            w_scale = float(region_train_cfg.get("w_scale", cfg.get("w_scale", 0.0)))
+            w_mse = float(region_train_cfg.get("w_mse", cfg.get("w_mse", 1.0)))
             criterion = NormalizedMSELoss(
                 l2_weight=l2_weight,
                 region_weights=region_weights,
@@ -418,28 +521,28 @@ def run_spectral_pipeline(
         # =====================================================================
         region_train_cfg.update(
             {
-                "model_type": m_type,
-                "use_sliding_window": use_sw,
+                "model_type": region_m_type,
+                "use_sliding_window": region_use_sw,
                 "window_size": w_size,
                 "stride": s_step,
                 "n_points": seq_len,
-                "use_film": bool(cfg.get("use_film", False)),
+                "use_film": region_use_film,
             }
         )
-        model = instantiate_model(m_type, seq_len=seq_len, config=region_train_cfg)
+        model = instantiate_model(region_m_type, seq_len=seq_len, config=region_train_cfg)
         region_train_cfg["model"] = model
         region_train_cfg["criterion"] = criterion
 
         # =====================================================================
         # STEP 6: BAYESIAN OPTIMIZATION SETUP
         # =====================================================================
-        if use_bo:
+        if region_use_bo:
             if verbose:
                 print(f"Running Ax Bayesian Optimization for {region}...")
             region_bo_cfg.update(
                 {
-                    "model_type": m_type,
-                    "use_sliding_window": use_sw,
+                    "model_type": region_m_type,
+                    "use_sliding_window": region_use_sw,
                     "window_size": w_size,
                     "stride": s_step,
                     "criterion": criterion,
@@ -448,7 +551,7 @@ def run_spectral_pipeline(
             # When sliding window is active, pass train_full_ds to Ax so trials can slice
             # candidate window_sizes without nesting or clamping
             bo_res = optimize_model_hyperparameters(
-                train_dataset=train_full_ds if use_sw else train_ds,
+                train_dataset=train_full_ds if region_use_sw else train_ds,
                 val_dataset=val_ds,
                 config=region_bo_cfg,
             )
@@ -456,7 +559,7 @@ def run_spectral_pipeline(
             best_params = bo_res.get("best_parameters", {})
             if best_params:
                 region_train_cfg.update(best_params)
-                if use_sw and "window_size" in best_params:
+                if region_use_sw and "window_size" in best_params:
                     w_size = int(best_params["window_size"])
                     s_step = max(1, w_size // 2)
                     seq_len = w_size
@@ -475,7 +578,7 @@ def run_spectral_pipeline(
                     "window_size",
                 )
                 if any(k in best_params for k in arch_keys):
-                    model = instantiate_model(m_type, seq_len=seq_len, config=region_train_cfg)
+                    model = instantiate_model(region_m_type, seq_len=seq_len, config=region_train_cfg)
                     region_train_cfg["model"] = model
             if verbose:
                 print(f"Ax optimal params for {region}: {best_params}")
@@ -489,7 +592,7 @@ def run_spectral_pipeline(
         train_result = train_model_region(train_ds, val_ds, config=region_train_cfg)
         trained_model = train_result["model"]
 
-        if use_sw:
+        if region_use_sw:
             models[region] = (trained_model, w_size, s_step)
         else:
             models[region] = trained_model
@@ -500,7 +603,7 @@ def run_spectral_pipeline(
 
         # Evaluate model generalization on held-out test dataset
         if len(test_full_ds) > 0:
-            if use_sw:
+            if region_use_sw:
                 t_loss = evaluate_sliding_window(
                     trained_model,
                     test_full_ds,
@@ -532,7 +635,6 @@ def run_spectral_pipeline(
             "source_tool": source_tool,
             "target_tool": target_tool,
             "session_splits": session_splits,
-            "use_sliding_window": use_sw,
             "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
             "normalize_by_source": cfg.get("normalize_by_source", True),
             "clamp_non_negative": True,
