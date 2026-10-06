@@ -245,6 +245,114 @@ def plot_tool_comparison(
     return fig, ax
 
 
+def _calculate_staggered_levels(
+    times: list[pd.Timestamp],
+    max_levels: int = 3,
+    proximity_ratio: float = 0.08,
+) -> list[int]:
+    """Calculate staggered vertical offset levels for a sorted list of timestamps to prevent label collision.
+
+    Parameters
+    ----------
+    times : list[pd.Timestamp]
+        Chronologically sorted list of timestamps.
+    max_levels : int
+        Maximum number of staggered vertical offset levels (default 3).
+    proximity_ratio : float
+        Fraction of total timeline span considered 'close' enough to cause label collision (default 0.08).
+
+    Returns
+    -------
+    list[int]
+        Assigned level indices (0 to max_levels - 1) for each timestamp.
+    """
+    max_levels = max(1, int(max_levels))
+    if not times:
+        return []
+    if len(times) == 1:
+        return [0]
+
+    t_start = min(times)
+    t_end = max(times)
+    t_span = (t_end - t_start).total_seconds()
+    if t_span <= 0:
+        return [i % max_levels for i in range(len(times))]
+
+    threshold_sec = t_span * proximity_ratio
+    assigned_levels: list[int] = []
+    # Track the last timestamp at which each level was used
+    last_time_at_level: dict[int, float] = {lvl: -1e18 for lvl in range(max_levels)}
+
+    for t in times:
+        t_sec = t.timestamp()
+        chosen_lvl = None
+        for lvl in range(max_levels):
+            if (t_sec - last_time_at_level[lvl]) >= threshold_sec:
+                chosen_lvl = lvl
+                break
+        if chosen_lvl is None:
+            # If all levels are within threshold, select the level least recently used
+            chosen_lvl = min(range(max_levels), key=lambda lvl: last_time_at_level[lvl])
+
+        assigned_levels.append(chosen_lvl)
+        last_time_at_level[chosen_lvl] = t_sec
+
+    return assigned_levels
+
+
+def _annotate_timeline_points(
+    ax: plt.Axes,
+    df_tool: pd.DataFrame,
+    y_val: float,
+    is_source: bool,
+    config: dict[str, Any],
+) -> None:
+    """Add collision-avoiding measurement_id annotations near timeline nodes."""
+    if df_tool.empty:
+        return
+
+    fontsize = int(config.get("label_fontsize", 8))
+    max_levels = max(1, int(config.get("stagger_levels", 3)))
+    use_leaders = bool(config.get("leader_lines", True))
+    color = "tab:blue" if is_source else "tab:green"
+
+    sorted_df = df_tool.sort_values("time")
+    times = [pd.Timestamp(t) for t in sorted_df["time"]]
+    meas_ids = [str(m) for m in sorted_df["measurement_id"]]
+
+    levels = _calculate_staggered_levels(times, max_levels=max_levels)
+
+    for t_val, m_id, lvl in zip(times, meas_ids, levels):
+        if is_source:
+            offset_y = 10.0 + lvl * 14.0
+            va = "bottom"
+        else:
+            offset_y = -12.0 - lvl * 14.0
+            va = "top"
+
+        arrowprops = None
+        if use_leaders and lvl > 0:
+            arrowprops = {
+                "arrowstyle": "-",
+                "color": "gray",
+                "alpha": 0.5,
+                "linewidth": 0.8,
+            }
+
+        ax.annotate(
+            m_id,
+            xy=(t_val, y_val),
+            xytext=(0, offset_y),
+            textcoords="offset points",
+            ha="center",
+            va=va,
+            fontsize=fontsize,
+            color=color,
+            arrowprops=arrowprops,
+            clip_on=False,
+        )
+
+
 def plot_pairing_timeline(
     meta_df: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
@@ -260,6 +368,10 @@ def plot_pairing_timeline(
         Dictionary bundling plotting options:
         - 'source_tool' (str): Name of the source tool (default 'J4').
         - 'target_tool' (str): Name of the target tool (default 'J5').
+        - 'annotate_measurements' (bool): Whether to label points with measurement_id (default True).
+        - 'label_fontsize' (int): Font size for measurement_id labels (default 8).
+        - 'stagger_levels' (int): Number of vertical levels for collision avoidance (default 3).
+        - 'leader_lines' (bool): Whether to draw leader lines for offset labels (default True).
         - 'title' (str | None): Custom title for the plot.
         - 'ax' (plt.Axes | None): Existing matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
@@ -279,6 +391,12 @@ def plot_pairing_timeline(
     cfg = plot_config or {}
     source_tool: str = cfg.get("source_tool", "J4")
     target_tool: str = cfg.get("target_tool", "J5")
+    annotate_measurements: bool = bool(
+        cfg.get("annotate_measurements", cfg.get("show_labels", True))
+    )
+    label_fontsize: int = int(cfg.get("label_fontsize", 8))
+    stagger_levels: int = max(1, int(cfg.get("stagger_levels", 3)))
+    leader_lines: bool = bool(cfg.get("leader_lines", True))
     title: str | None = cfg.get("title")
     ax: plt.Axes | None = cfg.get("ax")
     show: bool = cfg.get("show", False)
@@ -295,6 +413,12 @@ def plot_pairing_timeline(
             df["time"] = pd.to_datetime(df["time"], format="mixed")
         except ValueError:
             df["time"] = pd.to_datetime(df["time"], format="mixed", utc=True)
+
+    if "time_target" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["time_target"]):
+        try:
+            df["time_target"] = pd.to_datetime(df["time_target"], format="mixed")
+        except ValueError:
+            df["time_target"] = pd.to_datetime(df["time_target"], format="mixed", utc=True)
 
     src_df = (
         df[df["tool"] == source_tool]
@@ -422,9 +546,23 @@ def plot_pairing_timeline(
             label=f"{target_tool} (Unpaired)",
         )
 
+    # Annotate measurement_ids with collision avoidance if enabled
+    if annotate_measurements:
+        annot_cfg = {
+            "label_fontsize": label_fontsize,
+            "stagger_levels": stagger_levels,
+            "leader_lines": leader_lines,
+        }
+        _annotate_timeline_points(ax, src_df, y_val=y_src, is_source=True, config=annot_cfg)
+        _annotate_timeline_points(ax, tgt_df, y_val=y_tgt, is_source=False, config=annot_cfg)
+
     ax.set_yticks([y_tgt, y_src])
     ax.set_yticklabels([f"Target ({target_tool})", f"Source ({source_tool})"])
-    ax.set_ylim(-0.3, 1.3)
+    if annotate_measurements:
+        y_padding = 0.25 + (stagger_levels - 1) * 0.10
+        ax.set_ylim(-y_padding, 1.0 + y_padding)
+    else:
+        ax.set_ylim(-0.3, 1.3)
     ax.set_xlabel("Measurement Time")
 
     timeline_title = title or (
@@ -1512,6 +1650,215 @@ def plot_sliding_window_slices(
     return fig, (ax_top, ax_bottom)
 
 
+def plot_atomic_percentage_distributions(
+    df_at_samples: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
+    """Plot atomic percentage distributions for target, predicted, and their difference.
+
+    Creates a side-by-side 2-panel figure:
+    - Panel 1: Box plots with overlaid jittered points comparing Target vs. Predicted
+      atomic percentages across elements, grouped by dataset split (Train vs. Test).
+    - Panel 2: Box plots with overlaid jittered points showing the difference
+      (Predicted - Target) in atomic percentage across elements, comparing Train
+      vs. Test splits with a dashed zero-reference line.
+
+    Parameters
+    ----------
+    df_at_samples : pd.DataFrame
+        DataFrame containing per-sample atomic percentage records with columns:
+        'split', 'element', 'target_at%', 'pred_at%', and 'diff_at%'.
+        Typically produced by calculate_atomic_percentage_split_statistics.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary bundling plotting options:
+        - 'splits' (list[str] | None): Splits to include (e.g. ['train', 'test']). Defaults to all present.
+        - 'elements' (list[str] | None): Elements to include. Defaults to all present.
+        - 'title' (str | None): Overall figure suptitle.
+        - 'figsize' (tuple[float, float]): Figure size (default (14, 5.5)).
+        - 'ax' (tuple[plt.Axes, plt.Axes] | None): Existing pair of matplotlib Axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]
+        Matplotlib Figure and the pair of Axes objects (ax_abs, ax_diff).
+
+    Raises
+    ------
+    KeyError
+        If required columns are missing from df_at_samples.
+    ValueError
+        If df_at_samples is empty or contains no records matching filter criteria.
+    """
+    if df_at_samples.empty:
+        raise ValueError("df_at_samples is empty; cannot plot atomic percentage distributions.")
+
+    required_cols = {"split", "element", "target_at%", "pred_at%", "diff_at%"}
+    missing = required_cols - set(df_at_samples.columns)
+    if missing:
+        raise KeyError(f"df_at_samples is missing required columns: {sorted(missing)}")
+
+    cfg = plot_config or {}
+    df = df_at_samples.copy()
+
+    splits_filter = cfg.get("splits")
+    if splits_filter is not None:
+        target_splits = [str(s).lower() for s in splits_filter]
+        df = df[df["split"].str.lower().isin(target_splits)]
+
+    elements_filter = cfg.get("elements")
+    if elements_filter is not None:
+        df = df[df["element"].isin(elements_filter)]
+
+    if df.empty:
+        raise ValueError("No records in df_at_samples match the requested splits or elements filter.")
+
+    axes_tuple = cfg.get("ax")
+    figsize = cfg.get("figsize", (14, 5.5))
+    show: bool = bool(cfg.get("show", False))
+    title: str | None = cfg.get("title")
+
+    if axes_tuple is not None:
+        ax_abs, ax_diff = axes_tuple
+        fig = ax_abs.get_figure()
+    else:
+        fig, (ax_abs, ax_diff) = plt.subplots(1, 2, figsize=figsize)
+
+    # -------------------------------------------------------------------------
+    # Panel 1: Absolute Distributions (Target vs. Predicted across splits)
+    # -------------------------------------------------------------------------
+    df_abs = pd.melt(
+        df,
+        id_vars=["split", "element"],
+        value_vars=["target_at%", "pred_at%"],
+        var_name="spectrum_type",
+        value_name="atomic_percent",
+    )
+    df_abs["spectrum_type"] = df_abs["spectrum_type"].map({
+        "target_at%": "Target",
+        "pred_at%": "Predicted",
+    })
+    df_abs["group"] = (
+        df_abs["split"].str.capitalize() + " (" + df_abs["spectrum_type"] + ")"
+    )
+
+    palette_abs = {
+        "Train (Target)": "#1f77b4",
+        "Train (Predicted)": "#aec7e8",
+        "Test (Target)": "#2ca02c",
+        "Test (Predicted)": "#98df8a",
+        "Val (Target)": "#ff7f0e",
+        "Val (Predicted)": "#ffbb78",
+    }
+    groups_present = list(df_abs["group"].unique())
+    active_palette_abs = {g: palette_abs.get(g, "#7f7f7f") for g in groups_present}
+
+    sns.boxplot(
+        data=df_abs,
+        x="element",
+        y="atomic_percent",
+        hue="group",
+        hue_order=groups_present,
+        ax=ax_abs,
+        palette=active_palette_abs,
+        showfliers=False,
+        boxprops=dict(alpha=0.75),
+    )
+    sns.stripplot(
+        data=df_abs,
+        x="element",
+        y="atomic_percent",
+        hue="group",
+        hue_order=groups_present,
+        dodge=True,
+        jitter=0.2,
+        size=4,
+        alpha=0.6,
+        ax=ax_abs,
+        palette=active_palette_abs,
+        legend=False,
+    )
+
+    handles_abs, labels_abs = ax_abs.get_legend_handles_labels()
+    n_groups = len(groups_present)
+    ax_abs.legend(
+        handles_abs[:n_groups],
+        labels_abs[:n_groups],
+        title="Split (Spectrum)",
+        fontsize=8,
+        loc="upper right",
+        framealpha=0.9,
+    )
+    ax_abs.set_title("Atomic % Distribution: Target vs. Predicted", fontsize=11, fontweight="bold")
+    ax_abs.set_xlabel("Element")
+    ax_abs.set_ylabel("Atomic Percentage (%)")
+    ax_abs.grid(True, linestyle="--", alpha=0.5, axis="y")
+
+    # -------------------------------------------------------------------------
+    # Panel 2: Difference Distributions (Pred - Target across splits)
+    # -------------------------------------------------------------------------
+    palette_diff = {
+        "train": "#1f77b4",
+        "test": "#2ca02c",
+        "val": "#ff7f0e",
+    }
+    splits_present = list(df["split"].unique())
+    active_palette_diff = {s: palette_diff.get(str(s).lower(), "#7f7f7f") for s in splits_present}
+
+    sns.boxplot(
+        data=df,
+        x="element",
+        y="diff_at%",
+        hue="split",
+        hue_order=splits_present,
+        ax=ax_diff,
+        palette=active_palette_diff,
+        showfliers=False,
+        boxprops=dict(alpha=0.75),
+    )
+    sns.stripplot(
+        data=df,
+        x="element",
+        y="diff_at%",
+        hue="split",
+        hue_order=splits_present,
+        dodge=True,
+        jitter=0.2,
+        size=5,
+        alpha=0.65,
+        ax=ax_diff,
+        palette=active_palette_diff,
+        legend=False,
+    )
+
+    # Reference line at zero error
+    ax_diff.axhline(0.0, color="crimson", linestyle="--", linewidth=1.2, alpha=0.85, zorder=2)
+
+    handles_diff, labels_diff = ax_diff.get_legend_handles_labels()
+    n_splits = len(splits_present)
+    ax_diff.legend(
+        handles_diff[:n_splits],
+        [l.capitalize() for l in labels_diff[:n_splits]],
+        title="Split",
+        fontsize=8,
+        loc="upper right",
+        framealpha=0.9,
+    )
+    ax_diff.set_title("Atomic % Difference Distribution (Pred - Target)", fontsize=11, fontweight="bold")
+    ax_diff.set_xlabel("Element")
+    ax_diff.set_ylabel("Difference: Pred - Target (at. %)")
+    ax_diff.grid(True, linestyle="--", alpha=0.5, axis="y")
+
+    if title:
+        fig.suptitle(title, fontsize=12, fontweight="bold")
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+
+    return fig, (ax_abs, ax_diff)
+
+
 __all__ = [
     "plot_regional_spectra",
     "plot_tool_comparison",
@@ -1523,4 +1870,5 @@ __all__ = [
     "plot_prediction_comparison",
     "calculate_prediction_metrics",
     "plot_sliding_window_slices",
+    "plot_atomic_percentage_distributions",
 ]

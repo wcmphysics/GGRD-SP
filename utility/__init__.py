@@ -33,6 +33,7 @@ from utility.visualization import (
     plot_sliding_window_slices,
     plot_tool_comparison,
     plot_training_history,
+    plot_atomic_percentage_distributions,
 )
 
 __all__ = [
@@ -61,4 +62,5 @@ __all__ = [
     "calculate_prediction_metrics",
     "format_side_by_side_metrics",
     "plot_sliding_window_slices",
+    "plot_atomic_percentage_distributions",
 ]
