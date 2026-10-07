@@ -5,20 +5,17 @@ from __future__ import annotations
 import sys
 
 import matplotlib.pyplot as plt
-import pandas as pd
 
-from models import (
-    format_predicted_measurement_id,
-    run_spectral_pipeline,
-)
+from models import run_spectral_pipeline
 from utility import (
     calculate_atomic_percentage_split_statistics,
-    calculate_atomic_percentages,
     calculate_prediction_metrics,
     format_side_by_side_atomic_percentages,
     format_side_by_side_metrics,
     generate_pseudo_measurements,
     pair_source_target_spectra,
+    plot_atomic_percentage_distributions,
+    plot_atomic_percentage_mae,
     plot_max_intensity_vs_time,
     plot_normalized_max_intensity_vs_time,
     plot_pairing_timeline,
@@ -27,8 +24,6 @@ from utility import (
     plot_sliding_window_slices,
     plot_tool_comparison,
     plot_training_history,
-    plot_atomic_percentage_distributions,
-    plot_atomic_percentage_mae,
 )
 
 
@@ -140,269 +135,113 @@ def main() -> None:
     # =========================================================================
     # PART 1: GENERATE PSEUDO-MEASUREMENTS
     # =========================================================================
+    # Synthesize multi-die, multi-region regional spectra with physical binding energy
+    # calibration shifts and tool-specific intensity scaling factors.
     print("=== Part 1: Generating Pseudo-Measurements ===")
     ary_intensity, ary_energy, meta_df = generate_pseudo_measurements(pseudo_config)
-
-    print(f"Intensity array shape: {ary_intensity.shape}")
-    print(f"Energy array shape:    {ary_energy.shape}")
-    print(f"Total spectra:         {len(meta_df)}")
-    print(
-        f"Measurements per tool: {meta_df.groupby('tool')['measurement_id'].nunique().to_dict()}"
-    )
+    print(f"Intensity shape: {ary_intensity.shape} | Energy shape: {ary_energy.shape} | Total spectra: {len(meta_df)}")
 
     # =========================================================================
     # PART 2: PAIR SOURCE AND TARGET SPECTRA
     # =========================================================================
+    # Establish strictly 1-to-1 temporal pairings between source and target sessions
+    # within the configured time threshold window.
     print("\n=== Part 2: Pairing Source and Target Spectra ===")
     meta_df = pair_source_target_spectra(meta_df, pairing_config)
-
-    paired_src = meta_df[
-        (meta_df["tool"] == source_tool) & meta_df["measurement_id_target"].notna()
-    ]
-    total_src_sessions = meta_df[meta_df["tool"] == source_tool]["measurement_id"].nunique()
-    paired_src_sessions = paired_src["measurement_id"].nunique()
-
-    print(
-        f"Paired measurement sessions / All measurement sessions: {paired_src_sessions}/{total_src_sessions}"
-    )
-    print("\nUpdated metadata summary with pairing columns:")
-    print(meta_df.info())
-    print("\nSample paired source rows:")
-    cols_to_show = [
-        "spectrum_index",
-        "tool",
-        "measurement_id",
-        "die",
-        "region",
-        "tool_target",
-        "measurement_id_target",
-        "spectrum_index_target",
-        "time_diff_hours",
-    ]
-    print(paired_src[cols_to_show].head(5))
+    src_mask = meta_df["tool"] == source_tool
+    n_paired = meta_df.loc[src_mask, "measurement_id_target"].dropna().nunique()
+    n_total = meta_df.loc[src_mask, "measurement_id"].nunique()
+    print(f"Paired measurement sessions: {n_paired}/{n_total}")
 
     # =========================================================================
-    # PART 3: NEURAL NETWORK TRAINING & PREDICTION (Unified 8-step workflow)
+    # PART 3: NEURAL NETWORK PIPELINE (Unified 8-step workflow)
     # =========================================================================
-    print(
-        f"\n=== Part 3: Neural Network Pipeline (model={model_type}, sliding_window={use_sliding_window}) ==="
-    )
+    # Orchestrates train/val/test session splitting, sliding window slicing (if enabled),
+    # weighted multi-region normalized MSE loss, model training, and target prediction.
+    print(f"\n=== Part 3: Neural Network Pipeline (model={model_type}, sliding_window={use_sliding_window}) ===")
     model_results = run_spectral_pipeline(
         data=(ary_intensity, ary_energy, meta_df),
         model_type=model_type,
         use_sliding_window=use_sliding_window,
         config=pipeline_config,
     )
-
-    val_evaluation = model_results["evaluation"]
-    test_evaluation = model_results.get("test_evaluation", {})
-    print("\nRegional Evaluation Losses:")
-    print("  Region | Val Normalized MSE | Test Normalized MSE")
-    print("  -------+--------------------+--------------------")
-    for reg, val_l in sorted(val_evaluation.items()):
-        test_l = test_evaluation.get(reg, float("nan"))
-        print(f"  {reg:6s} | {val_l:18.6f} | {test_l:19.6f}")
-
     ary_intensity_predicted, ary_energy_predicted, meta_df_predicted = model_results["predictions"]
-    print(f"\nPredicted intensity array shape: {ary_intensity_predicted.shape}")
-    print(f"Total predicted spectra:         {len(meta_df_predicted)}")
+    print(f"Predicted spectra shape: {ary_intensity_predicted.shape} (total: {len(meta_df_predicted)})")
 
     # =========================================================================
     # PART 4: MODEL PERFORMANCE OBSERVATION & METRICS
     # =========================================================================
+    # Evaluate prediction fidelity metrics (Normalized MSE, Peak Error, Max Error)
+    # formatted side-by-side across Train and Test splits.
     print("\n=== Part 4: Model Performance Observation & Metrics ===")
     data_orig = (ary_intensity, ary_energy, meta_df)
     data_pred = (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted)
 
-    df_metrics_samples, df_metrics_summary = calculate_prediction_metrics(
-        data_orig,
-        data_pred,
-    )
-    print("\nDetailed quantitative prediction metrics by region and split:")
-    print(df_metrics_summary.to_string(index=False))
-
+    df_metrics_samples, _ = calculate_prediction_metrics(data_orig, data_pred)
     df_side_by_side = format_side_by_side_metrics(df_metrics_samples, config=report_config)
     if not df_side_by_side.empty:
-        splits_list = report_config.get("splits", ["train", "test"])
-        split_titles = " vs. ".join([s.capitalize() for s in splits_list])
-        print(f"\nSide-by-side performance comparison across splits ({split_titles}):")
+        print("\nSide-by-side performance comparison across splits (Train vs. Test):")
         print(df_side_by_side.to_string(index=False))
 
     # =========================================================================
     # PART 5: CALCULATE ATOMIC PERCENTAGES (Shirley Integration)
     # =========================================================================
+    # Calculate elemental atomic percentages using Shirley background subtraction
+    # scaled by Scofield Relative Sensitivity Factors (RSF).
+    # format_side_by_side_atomic_percentages compiles Target, Predicted,
+    # Difference, and MAE ± Std side-by-side for all elements and Overall composition.
     print("\n=== Part 5: Calculating Atomic Percentage (Shirley Integration) ===")
-
-    # 1. Statistics across Train and Test dataset splits
-    print("\nAtomic percentage statistics across dataset splits (Train vs. Test):")
     df_at_samples, df_at_summary = calculate_atomic_percentage_split_statistics(
         data_orig,
         data_pred,
         config={"splits": ["train", "test"]},
     )
-
-    if not df_at_summary.empty:
-        for split_name in ["train", "test"]:
-            split_df = df_at_summary[df_at_summary["split"] == split_name]
-            if not split_df.empty:
-                print(f"\n--- Split: {split_name.upper()} ---")
-                display_cols = [
-                    "element",
-                    "n_samples",
-                    "source_mean",
-                    "source_std",
-                    "target_mean",
-                    "target_std",
-                    "pred_mean",
-                    "pred_std",
-                    "diff_mean",
-                    "diff_std",
-                    "mae",
-                ]
-                print(split_df[display_cols].to_string(index=False))
-
-        # Side-by-side comparison across splits
-        df_at_side_by_side = format_side_by_side_atomic_percentages(
-            df_at_summary, config={"splits": ["train", "test"]}
-        )
-        if not df_at_side_by_side.empty:
-            print("\nSide-by-side atomic percentage comparison (Train vs. Test):")
-            print(df_at_side_by_side.to_string(index=False))
-
-    # 2. Detailed single session drill-down
-    def _print_quant_summary(label: str, meas: str, df_die: pd.DataFrame, df_sum: pd.DataFrame) -> None:
-        print(f"\n[{label}] Atomic percentage per die for session '{meas}' (first 3 dies):")
-        print(df_die.head(3).to_string(index=False))
-        print(f"\nSummary across all dies for {label} '{meas}':")
-        print(df_sum.to_string(index=False))
-
-    pred_sample_meas_id = format_predicted_measurement_id(sample_meas_id, source_tool, target_tool)
-
-    df_per_die_src, df_summary_src = calculate_atomic_percentages(
-        ary_energy, ary_intensity, meta_df, config={"measurement_id": sample_meas_id}
+    df_at_side_by_side = format_side_by_side_atomic_percentages(
+        df_at_summary, config={"splits": ["train", "test"]}
     )
-    df_per_die_pred, df_summary_pred = calculate_atomic_percentages(
-        ary_energy_predicted, ary_intensity_predicted, meta_df_predicted,
-        config={"measurement_id": pred_sample_meas_id}
-    )
-
-    _print_quant_summary("Source Measured", sample_meas_id, df_per_die_src, df_summary_src)
-    _print_quant_summary("Predicted Target", pred_sample_meas_id, df_per_die_pred, df_summary_pred)
+    if not df_at_side_by_side.empty:
+        print("\nSide-by-side atomic percentage comparison (Train vs. Test):")
+        print(df_at_side_by_side.to_string(index=False))
 
     # =========================================================================
-    # DEMONSTRATION PLOTS
+    # DEMONSTRATION DIAGNOSTIC PLOTS
     # =========================================================================
+    # Render diagnostics covering data integrity, background subtraction,
+    # training loss convergence, spectral overlays, and atomic % errors.
     print("\nGenerating demonstration plots...")
 
-    # 1. Maximum intensity vs. measurement time (hue=tool, die, or region)
-    plot_max_intensity_vs_time(
-        ary_intensity,
-        meta_df,
-        region=example_region,
-        die=0,
-        plot_config={"hue": "tool"},
-    )
-
-    # 2. Maximum intensity normalized by total integrated area vs. measurement time
+    # 1. Timeline pairing and intensity stability across measurement time
+    plot_pairing_timeline(meta_df, plot_config={"source_tool": source_tool, "target_tool": target_tool})
+    plot_max_intensity_vs_time(ary_intensity, meta_df, region=example_region, die=0, plot_config={"hue": "tool"})
     plot_normalized_max_intensity_vs_time(
-        ary_intensity,
-        meta_df,
-        ary_energy=ary_energy,
-        region=example_region,
-        die=0,
-        plot_config={
-            "hue": "tool",
-            "normalization_mode": "die_total_flux",
-        },
+        ary_intensity, meta_df, ary_energy=ary_energy, region=example_region, die=0,
+        plot_config={"hue": "tool", "normalization_mode": "die_total_flux"},
     )
-
-    # 3. Direct tool comparison between tools for a region (Die 0)
     plot_tool_comparison(
-        ary_energy,
-        ary_intensity,
-        meta_df,
+        ary_energy, ary_intensity, meta_df,
         compare_config={"tools": (source_tool, target_tool), "region": example_region, "die": 0},
     )
 
-    # 4. 1-to-1 Measurement pairing timeline
-    plot_pairing_timeline(meta_df, plot_config={"source_tool": source_tool, "target_tool": target_tool})
+    # 2. Shirley background subtraction in multi-region grid mode (Die 0)
+    plot_shirley_background(ary_energy, ary_intensity, meta_df, plot_config={"measurement_id": sample_meas_id, "die": 0})
 
-    # 5. Shirley background subtraction in multi-region grid mode (all 5 regions for Die 0)
-    plot_shirley_background(
-        ary_energy,
-        ary_intensity,
-        meta_df,
-        plot_config={"measurement_id": sample_meas_id, "die": 0},
-    )
+    # 3. Neural network training & validation loss history
+    plot_training_history(model_results["histories"])
 
-    # 6. Training loss history curves across all regions (Part 4)
-    model_labels = {
-        "resnet": "1D ResNet",
-        "residual_unet": "1D Residual U-Net",
-        "unet_residual": "1D Residual U-Net",
-        "unet": "Conventional 1D U-Net",
-    }
-    mode_str = "Sliding Window" if use_sliding_window else "Full Spectrum"
-    model_name_label = f"{model_labels.get(model_type, model_type)} ({mode_str})"
-
-    plot_training_history(
-        model_results["histories"],
-        plot_config={"title": f"Part 4: {model_name_label} Neural Network Training & Validation Loss"},
-    )
-
-    # 7. Sliding window decomposition (Original vs Sliced Spectra) if sliding window chosen
+    # 4. Optional sliding window patch decomposition (if sliding window enabled)
     if use_sliding_window:
-        example_subset = meta_df[
-            (meta_df["measurement_id"] == sample_meas_id)
-            & (meta_df["region"] == example_region)
-            & (meta_df["die"] == 0)
-        ]
-        if not example_subset.empty:
-            ex_idx = int(example_subset.iloc[0]["spectrum_index"])
-            plot_sliding_window_slices(
-                ary_intensity[ex_idx],
-                ary_energy[ex_idx],
-                plot_config={
-                    "region": example_region,
-                    "window_size_ev": pipeline_config.get("window_size_ev", 2.0),
-                    "sliding_stride_ev": pipeline_config.get("sliding_stride_ev", 1.0),
-                    "offset_patches": True,
-                    "title": (
-                        f"Sliding Window Decomposition - {example_region} "
-                        f"(Session {sample_meas_id}, Die 0)"
-                    ),
-                },
-            )
+        ex_match = meta_df[(meta_df["measurement_id"] == sample_meas_id) & (meta_df["region"] == example_region) & (meta_df["die"] == 0)]
+        if not ex_match.empty:
+            ex_idx = int(ex_match.iloc[0]["spectrum_index"])
+            plot_sliding_window_slices(ary_intensity[ex_idx], ary_energy[ex_idx], plot_config={"region": example_region})
 
-    # 8. Spectral transfer comparison: Source vs. Target vs. Transformed across all regions in sub-plots
-    # Defaults to test split measurement session; strict color scheme: source=black, target=red, transformed=blue dotted
-    plot_prediction_comparison(
-        data_orig,
-        data_pred,
-        config={
-            "session_splits": model_results.get("session_splits"),
-            "die": 0,
-        },
-    )
+    # 5. Spectral transfer comparison: Source vs. Target vs. Predicted across regions
+    plot_prediction_comparison(data_orig, data_pred, config={"session_splits": model_results.get("session_splits"), "die": 0})
 
-    # 9. Atomic percentage distributions for Target, Predicted, and Difference in Train and Test sets
+    # 6. Atomic percentage distributions and Mean Absolute Error (MAE)
     if not df_at_samples.empty:
-        plot_atomic_percentage_distributions(
-            df_at_samples,
-            plot_config={
-                "splits": ["train", "test"],
-                "title": "Atomic Percentage Distributions (Target vs. Predicted and Difference)",
-            },
-        )
-
-        # 10. Atomic percentage Mean Absolute Error (MAE) across elements and splits
-        plot_atomic_percentage_mae(
-            df_at_samples,
-            plot_config={
-                "splits": ["train", "test"],
-                "title": "Atomic Percentage Mean Absolute Error (MAE) Across Splits",
-            },
-        )
+        plot_atomic_percentage_distributions(df_at_samples)
+        plot_atomic_percentage_mae(df_at_samples)
 
     if show_plots:
         print("Showing plots (close plot windows to finish execution)...")
