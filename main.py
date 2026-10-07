@@ -28,6 +28,7 @@ from utility import (
     plot_tool_comparison,
     plot_training_history,
     plot_atomic_percentage_distributions,
+    plot_atomic_percentage_mae,
 )
 
 
@@ -391,6 +392,15 @@ def main() -> None:
             plot_config={
                 "splits": ["train", "test"],
                 "title": "Atomic Percentage Distributions (Target vs. Predicted and Difference)",
+            },
+        )
+
+        # 10. Atomic percentage Mean Absolute Error (MAE) across elements and splits
+        plot_atomic_percentage_mae(
+            df_at_samples,
+            plot_config={
+                "splits": ["train", "test"],
+                "title": "Atomic Percentage Mean Absolute Error (MAE) Across Splits",
             },
         )
 
