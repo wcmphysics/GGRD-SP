@@ -2029,6 +2029,217 @@ def plot_atomic_percentage_distributions(
     return fig, (ax_abs, ax_diff)
 
 
+def plot_atomic_percentage_mae(
+    df_at_data: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot atomic percentage Mean Absolute Error (MAE) across elements and splits.
+
+    Creates a grouped bar chart comparing the Mean Absolute Error in atomic
+    percentages between true target and predicted spectra across elements
+    and dataset splits (e.g. Train vs. Test), with standard deviation error
+    bars, annotated value labels, and an 'Overall' composition summary bar.
+
+    Parameters
+    ----------
+    df_at_data : pd.DataFrame
+        DataFrame containing atomic percentage data. Accepts either:
+        - df_at_samples (per-sample records with 'split', 'element', 'abs_diff_at%'), or
+        - df_split_summary (aggregated records with 'split', 'element', 'mae', 'mae_std').
+    plot_config : dict[str, Any] | None, optional
+        Dictionary bundling plotting options:
+        - 'splits' (list[str] | None): Splits to display (e.g. ['train', 'test']).
+          Default: all present.
+        - 'elements' (list[str] | None): Elements to display. Default: all present.
+        - 'include_overall' (bool): Include an 'Overall' composition summary category
+          (default True).
+        - 'palette' (dict[str, str] | None): Custom split color mapping.
+        - 'show_values' (bool): Whether to annotate numeric value text above bars (default True).
+        - 'value_fontsize' (int): Font size for bar value labels (default 8).
+        - 'title' (str | None): Custom figure title.
+        - 'ylabel' (str | None): Y-axis label (default 'Mean Absolute Error (at. %)').
+        - 'xlabel' (str | None): X-axis label (default 'Element').
+        - 'figsize' (tuple[float, float]): Figure dimensions (default (9, 5)).
+        - 'ax' (plt.Axes | None): Existing matplotlib Axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib Figure and Axes objects.
+
+    Raises
+    ------
+    ValueError
+        If df_at_data is empty or contains no records matching filter criteria.
+    KeyError
+        If required columns ('split', 'element', and either 'abs_diff_at%' or 'mae') are missing.
+    """
+    if df_at_data.empty:
+        raise ValueError("df_at_data is empty; cannot plot atomic percentage MAE.")
+
+    required_base = {"split", "element"}
+    missing_base = required_base - set(df_at_data.columns)
+    if missing_base:
+        raise KeyError(f"df_at_data is missing required columns: {sorted(missing_base)}")
+
+    has_sample_diff = "abs_diff_at%" in df_at_data.columns
+    has_summary_mae = "mae" in df_at_data.columns
+
+    if not has_sample_diff and not has_summary_mae:
+        raise KeyError(
+            "df_at_data must contain either 'abs_diff_at%' (per-sample) or 'mae' (summary) column."
+        )
+
+    cfg = plot_config or {}
+    df = df_at_data.copy()
+
+    splits_filter = cfg.get("splits")
+    if splits_filter is not None:
+        target_splits = [str(s).lower() for s in splits_filter]
+        df = df[df["split"].str.lower().isin(target_splits)]
+
+    elements_filter = cfg.get("elements")
+    if elements_filter is not None:
+        df = df[df["element"].isin(elements_filter)]
+
+    if df.empty:
+        raise ValueError("No records in df_at_data match the requested splits or elements filter.")
+
+    include_overall = bool(cfg.get("include_overall", True))
+    show_values = bool(cfg.get("show_values", True))
+    value_fontsize = int(cfg.get("value_fontsize", 8))
+    figsize = tuple(cfg.get("figsize", (9, 5)))
+    title = cfg.get("title")
+    ylabel = cfg.get("ylabel", "Mean Absolute Error (at. %)")
+    xlabel = cfg.get("xlabel", "Element")
+    custom_ax = cfg.get("ax")
+    show = bool(cfg.get("show", False))
+
+    default_palette = {
+        "train": "#1f77b4",
+        "test": "#2ca02c",
+        "val": "#ff7f0e",
+    }
+    user_palette = {str(k).lower(): v for k, v in (cfg.get("palette") or {}).items()}
+    active_palette = {**default_palette, **user_palette}
+
+    if splits_filter is not None:
+        present_splits = [s for s in splits_filter if s.lower() in df["split"].str.lower().unique()]
+    else:
+        present_splits = list(df["split"].unique())
+
+    elements_list = sorted(df["element"].unique())
+    categories = list(elements_list)
+    if include_overall:
+        categories.append("Overall")
+
+    data_map: dict[str, dict[str, tuple[float, float]]] = {}
+    for split in present_splits:
+        sp_df = df[df["split"].str.lower() == str(split).lower()]
+        data_map[split] = {}
+
+        for elem in elements_list:
+            el_df = sp_df[sp_df["element"] == elem]
+            if el_df.empty:
+                data_map[split][elem] = (0.0, 0.0)
+            elif has_sample_diff:
+                mean_v = float(el_df["abs_diff_at%"].mean())
+                std_v = float(el_df["abs_diff_at%"].std(ddof=1)) if len(el_df) > 1 else 0.0
+                data_map[split][elem] = (mean_v, std_v)
+            else:
+                mean_v = float(el_df["mae"].iloc[0])
+                std_v = float(el_df["mae_std"].iloc[0]) if "mae_std" in el_df.columns else 0.0
+                data_map[split][elem] = (mean_v, std_v)
+
+        if include_overall:
+            if sp_df.empty:
+                data_map[split]["Overall"] = (0.0, 0.0)
+            elif has_sample_diff:
+                mean_v = float(sp_df["abs_diff_at%"].mean())
+                std_v = float(sp_df["abs_diff_at%"].std(ddof=1)) if len(sp_df) > 1 else 0.0
+                data_map[split]["Overall"] = (mean_v, std_v)
+            else:
+                mean_v = float(sp_df["mae"].mean())
+                std_v = float(sp_df["mae"].std(ddof=1)) if len(sp_df) > 1 else 0.0
+                data_map[split]["Overall"] = (mean_v, std_v)
+
+    fig, ax = _prepare_canvas(custom_ax, figsize=figsize)
+
+    n_cats = len(categories)
+    n_splits = len(present_splits)
+    bar_width = 0.8 / max(1, n_splits)
+    x_base = np.arange(n_cats)
+    offsets = (np.arange(n_splits) - (n_splits - 1) / 2.0) * bar_width
+
+    max_height = 0.0
+    for j, split in enumerate(present_splits):
+        split_means = [data_map[split][c][0] for c in categories]
+        split_stds = [data_map[split][c][1] for c in categories]
+        pos = x_base + offsets[j]
+        color = active_palette.get(str(split).lower(), "#7f7f7f")
+
+        bars = ax.bar(
+            pos,
+            split_means,
+            width=bar_width * 0.88,
+            yerr=split_stds if any(s > 0 for s in split_stds) else None,
+            capsize=3.5,
+            error_kw=dict(lw=1.0, capthick=1.0, ecolor="black"),
+            label=str(split).capitalize(),
+            color=color,
+            alpha=0.85,
+            edgecolor="black",
+            linewidth=0.8,
+            zorder=3,
+        )
+
+        for bar_rect, val, err in zip(bars, split_means, split_stds):
+            top_val = val + (err if err is not None and not np.isnan(err) else 0.0)
+            if top_val > max_height:
+                max_height = top_val
+            if show_values:
+                ax.text(
+                    bar_rect.get_x() + bar_rect.get_width() / 2.0,
+                    top_val + 0.02,
+                    f"{val:.2f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=value_fontsize,
+                    fontweight="bold",
+                    zorder=4,
+                )
+
+    if include_overall and len(categories) > 1:
+        ax.axvline(
+            x=len(elements_list) - 0.5,
+            color="gray",
+            linestyle="--",
+            alpha=0.6,
+            linewidth=1.2,
+            zorder=2,
+        )
+
+    ax.set_xticks(x_base)
+    ax.set_xticklabels(categories, fontweight="bold")
+    ax.set_ylim(0, max_height * 1.18 + 0.1)
+
+    legend_title = "Split"
+    ax.legend(title=legend_title, fontsize=8.5, loc="upper right", framealpha=0.9)
+
+    plot_title = title or "Atomic % Mean Absolute Error (MAE): True Target vs. Predicted"
+    _finalize_plot(
+        ax,
+        title=plot_title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        invert_x=False,
+        show=show,
+    )
+
+    return fig, ax
+
+
 __all__ = [
     "plot_regional_spectra",
     "plot_tool_comparison",
@@ -2041,4 +2252,5 @@ __all__ = [
     "calculate_prediction_metrics",
     "plot_sliding_window_slices",
     "plot_atomic_percentage_distributions",
+    "plot_atomic_percentage_mae",
 ]
