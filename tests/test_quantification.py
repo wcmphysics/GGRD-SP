@@ -521,6 +521,27 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
         self.assertIn("pred_test", df_side.columns)
         self.assertIn("mae_train", df_side.columns)
         self.assertIn("mae_test", df_side.columns)
+        self.assertIn("Overall (MAE)", df_side["element"].values)
+
+        # Check with include_overall=False
+        df_side_no_overall = format_side_by_side_atomic_percentages(
+            df_summary, config={"splits": ["train", "test"], "include_overall": False}
+        )
+        self.assertNotIn("Overall (MAE)", df_side_no_overall["element"].values)
+
+        # Check unformatted numerical mode (format_str=False)
+        df_side_num = format_side_by_side_atomic_percentages(
+            df_summary, config={"splits": ["train", "test"], "format_str": False}
+        )
+        self.assertIn("mae_train", df_side_num.columns)
+        self.assertIn("target_mean_train", df_side_num.columns)
+        self.assertIn("Overall (MAE)", df_side_num["element"].values)
+        overall_row = df_side_num[df_side_num["element"] == "Overall (MAE)"].iloc[0]
+        self.assertIsInstance(overall_row["mae_train"], float)
+        self.assertTrue(np.isnan(overall_row["target_mean_train"]))
+
+        # Check empty DataFrame handling
+        self.assertTrue(format_side_by_side_atomic_percentages(pd.DataFrame()).empty)
 
     def test_split_statistics_empty_splits_warns(self) -> None:
         """Verify warning when requested split is not present in data."""
@@ -546,7 +567,7 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
 
 
 class TestAtomicPercentageVisualization(unittest.TestCase):
-    """Test suite for atomic percentage distribution visualization."""
+    """Test suite for atomic percentage distribution and MAE visualization."""
 
     def setUp(self) -> None:
         # Create a synthetic df_samples table
@@ -558,6 +579,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "target_at%": 30.5,
                 "pred_at%": 31.0,
                 "diff_at%": 0.5,
+                "abs_diff_at%": 0.5,
             },
             {
                 "split": "train",
@@ -566,6 +588,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "target_at%": 29.5,
                 "pred_at%": 29.8,
                 "diff_at%": 0.3,
+                "abs_diff_at%": 0.3,
             },
             {
                 "split": "test",
@@ -574,6 +597,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "target_at%": 30.0,
                 "pred_at%": 30.2,
                 "diff_at%": 0.2,
+                "abs_diff_at%": 0.2,
             },
             {
                 "split": "train",
@@ -582,6 +606,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "target_at%": 69.5,
                 "pred_at%": 69.0,
                 "diff_at%": -0.5,
+                "abs_diff_at%": 0.5,
             },
             {
                 "split": "test",
@@ -590,6 +615,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "target_at%": 70.0,
                 "pred_at%": 69.8,
                 "diff_at%": -0.2,
+                "abs_diff_at%": 0.2,
             },
         ])
 
@@ -673,6 +699,129 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         )
         self.assertEqual(ret_ax1, ax1)
         self.assertEqual(ret_ax2, ax2)
+        plt.close(fig)
+
+    def test_plot_atomic_percentage_mae_from_samples(self) -> None:
+        """Verify plot_atomic_percentage_mae generates grouped bar chart from sample records."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        fig, ax = plot_atomic_percentage_mae(
+            self.df_samples,
+            plot_config={
+                "title": "Atomic Percentage MAE Test",
+                "show": False,
+            },
+        )
+        self.assertIsNotNone(fig)
+        self.assertIsNotNone(ax)
+
+        # Check title and labels
+        self.assertEqual(ax.get_title(), "Atomic Percentage MAE Test")
+        self.assertEqual(ax.get_xlabel(), "Element")
+        self.assertIn("Mean Absolute Error", ax.get_ylabel())
+
+        # Check xtick labels include elements and Overall
+        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertIn("Al", xticklabels)
+        self.assertIn("Ti", xticklabels)
+        self.assertIn("Overall", xticklabels)
+        plt.close(fig)
+
+    def test_plot_atomic_percentage_mae_from_summary(self) -> None:
+        """Verify plot_atomic_percentage_mae generates bar chart from aggregated summary records."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        df_sum = pd.DataFrame([
+            {"split": "train", "element": "Al", "mae": 0.40, "mae_std": 0.10},
+            {"split": "train", "element": "Ti", "mae": 0.50, "mae_std": 0.05},
+            {"split": "test", "element": "Al", "mae": 0.20, "mae_std": 0.02},
+            {"split": "test", "element": "Ti", "mae": 0.20, "mae_std": 0.01},
+        ])
+
+        fig, ax = plot_atomic_percentage_mae(
+            df_sum,
+            plot_config={"show": False},
+        )
+        self.assertIsNotNone(fig)
+        self.assertIsNotNone(ax)
+
+        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertIn("Al", xticklabels)
+        self.assertIn("Ti", xticklabels)
+        self.assertIn("Overall", xticklabels)
+        plt.close(fig)
+
+    def test_plot_atomic_percentage_mae_without_overall(self) -> None:
+        """Verify include_overall=False excludes Overall category."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        fig, ax = plot_atomic_percentage_mae(
+            self.df_samples,
+            plot_config={"include_overall": False, "show": False},
+        )
+        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertIn("Al", xticklabels)
+        self.assertIn("Ti", xticklabels)
+        self.assertNotIn("Overall", xticklabels)
+        plt.close(fig)
+
+    def test_plot_atomic_percentage_mae_filters(self) -> None:
+        """Verify filtering by split and elements."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        fig, ax = plot_atomic_percentage_mae(
+            self.df_samples,
+            plot_config={
+                "splits": ["train"],
+                "elements": ["Al"],
+                "include_overall": True,
+                "show": False,
+            },
+        )
+        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertIn("Al", xticklabels)
+        self.assertNotIn("Ti", xticklabels)
+        self.assertIn("Overall", xticklabels)
+        plt.close(fig)
+
+    def test_plot_atomic_percentage_mae_error_handling(self) -> None:
+        """Verify error handling on invalid or empty DataFrames."""
+        from utility.visualization import plot_atomic_percentage_mae
+
+        # Empty DataFrame
+        with self.assertRaises(ValueError):
+            plot_atomic_percentage_mae(pd.DataFrame())
+
+        # Missing required columns
+        with self.assertRaises(KeyError):
+            plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "diff": [0.1]}))
+
+        # Missing abs_diff_at% and mae
+        with self.assertRaises(KeyError):
+            plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "element": ["Al"]}))
+
+        # Filter yielding empty DataFrame
+        with self.assertRaises(ValueError):
+            plot_atomic_percentage_mae(
+                self.df_samples,
+                plot_config={"splits": ["invalid_split"]},
+            )
+
+    def test_plot_atomic_percentage_mae_custom_axis(self) -> None:
+        """Verify passing an existing matplotlib Axes object."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        fig, custom_ax = plt.subplots(figsize=(8, 4))
+        returned_fig, returned_ax = plot_atomic_percentage_mae(
+            self.df_samples,
+            plot_config={"ax": custom_ax, "show": False},
+        )
+        self.assertEqual(returned_ax, custom_ax)
         plt.close(fig)
 
 
