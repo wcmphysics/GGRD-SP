@@ -706,11 +706,11 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         plt.close(fig)
 
     def test_plot_atomic_percentage_mae_from_samples(self) -> None:
-        """Verify plot_atomic_percentage_mae generates grouped bar chart from sample records."""
+        """Verify plot_atomic_percentage_mae generates 2-panel figure with strip and ECDF plots."""
         import matplotlib.pyplot as plt
         from utility.visualization import plot_atomic_percentage_mae
 
-        fig, ax = plot_atomic_percentage_mae(
+        fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
             plot_config={
                 "title": "Atomic Percentage MAE Test",
@@ -718,40 +718,21 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
             },
         )
         self.assertIsNotNone(fig)
-        self.assertIsNotNone(ax)
+        self.assertIsNotNone(ax_strip)
+        self.assertIsNotNone(ax_ecdf)
 
-        # Check title and labels
-        self.assertEqual(ax.get_title(), "Atomic Percentage MAE Test")
-        self.assertEqual(ax.get_xlabel(), "Element")
-        self.assertIn("Mean Absolute Error", ax.get_ylabel())
+        # Check titles
+        self.assertIn("Sample Absolute Errors & Mean (MAE)", ax_strip.get_title())
+        self.assertIn("Empirical Cumulative Error (ECDF)", ax_ecdf.get_title())
 
-        # Check xtick labels include elements and Overall
-        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
-        self.assertIn("Al", xticklabels)
-        self.assertIn("Ti", xticklabels)
-        self.assertIn("Overall", xticklabels)
-        plt.close(fig)
+        # Check labels
+        self.assertEqual(ax_strip.get_xlabel(), "Element")
+        self.assertIn("Absolute Error", ax_strip.get_ylabel())
+        self.assertIn("Absolute Error", ax_ecdf.get_xlabel())
+        self.assertIn("Cumulative Percentage", ax_ecdf.get_ylabel())
 
-    def test_plot_atomic_percentage_mae_from_summary(self) -> None:
-        """Verify plot_atomic_percentage_mae generates bar chart from aggregated summary records."""
-        import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
-
-        df_sum = pd.DataFrame([
-            {"split": "train", "element": "Al", "mae": 0.40, "mae_std": 0.10},
-            {"split": "train", "element": "Ti", "mae": 0.50, "mae_std": 0.05},
-            {"split": "test", "element": "Al", "mae": 0.20, "mae_std": 0.02},
-            {"split": "test", "element": "Ti", "mae": 0.20, "mae_std": 0.01},
-        ])
-
-        fig, ax = plot_atomic_percentage_mae(
-            df_sum,
-            plot_config={"show": False},
-        )
-        self.assertIsNotNone(fig)
-        self.assertIsNotNone(ax)
-
-        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        # Check xtick labels include elements and Overall on ax_strip
+        xticklabels = [t.get_text() for t in ax_strip.get_xticklabels()]
         self.assertIn("Al", xticklabels)
         self.assertIn("Ti", xticklabels)
         self.assertIn("Overall", xticklabels)
@@ -762,11 +743,11 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         import matplotlib.pyplot as plt
         from utility.visualization import plot_atomic_percentage_mae
 
-        fig, ax = plot_atomic_percentage_mae(
+        fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
             plot_config={"include_overall": False, "show": False},
         )
-        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        xticklabels = [t.get_text() for t in ax_strip.get_xticklabels()]
         self.assertIn("Al", xticklabels)
         self.assertIn("Ti", xticklabels)
         self.assertNotIn("Overall", xticklabels)
@@ -777,7 +758,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         import matplotlib.pyplot as plt
         from utility.visualization import plot_atomic_percentage_mae
 
-        fig, ax = plot_atomic_percentage_mae(
+        fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
             plot_config={
                 "splits": ["train"],
@@ -786,7 +767,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "show": False,
             },
         )
-        xticklabels = [t.get_text() for t in ax.get_xticklabels()]
+        xticklabels = [t.get_text() for t in ax_strip.get_xticklabels()]
         self.assertIn("Al", xticklabels)
         self.assertNotIn("Ti", xticklabels)
         self.assertIn("Overall", xticklabels)
@@ -804,7 +785,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         with self.assertRaises(KeyError):
             plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "diff": [0.1]}))
 
-        # Missing abs_diff_at% and mae
+        # Missing abs_diff_at% and diff_at%
         with self.assertRaises(KeyError):
             plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "element": ["Al"]}))
 
@@ -816,16 +797,17 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
             )
 
     def test_plot_atomic_percentage_mae_custom_axis(self) -> None:
-        """Verify passing an existing matplotlib Axes object."""
+        """Verify passing an existing pair of matplotlib Axes objects."""
         import matplotlib.pyplot as plt
         from utility.visualization import plot_atomic_percentage_mae
 
-        fig, custom_ax = plt.subplots(figsize=(8, 4))
-        returned_fig, returned_ax = plot_atomic_percentage_mae(
+        fig, (custom_ax1, custom_ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        returned_fig, (ret_ax1, ret_ax2) = plot_atomic_percentage_mae(
             self.df_samples,
-            plot_config={"ax": custom_ax, "show": False},
+            plot_config={"ax": (custom_ax1, custom_ax2), "show": False},
         )
-        self.assertEqual(returned_ax, custom_ax)
+        self.assertEqual(ret_ax1, custom_ax1)
+        self.assertEqual(ret_ax2, custom_ax2)
         plt.close(fig)
 
 
