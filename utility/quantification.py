@@ -765,6 +765,7 @@ def format_side_by_side_atomic_percentages(
         Configuration dictionary:
         - 'splits' (list[str]): Data splits to display (default ['train', 'test']).
         - 'format_str' (bool): Format values as 'mean ± std%' string (default True).
+        - 'include_overall' (bool): Include 'Overall (MAE)' summary row across all elements (default True).
 
     Returns
     -------
@@ -777,6 +778,7 @@ def format_side_by_side_atomic_percentages(
     cfg = config or {}
     preferred_splits = list(cfg.get("splits", ["train", "test"]))
     format_str = bool(cfg.get("format_str", True))
+    include_overall = bool(cfg.get("include_overall", True))
 
     present_splits = [s for s in preferred_splits if s in df_split_summary["split"].unique()]
     if not present_splits:
@@ -810,6 +812,29 @@ def format_side_by_side_atomic_percentages(
                 row_dict[f"mae_{split}"] = r["mae"]
 
         rows.append(row_dict)
+
+    if include_overall and rows:
+        overall_row: dict[str, Any] = {"element": "Overall (MAE)"}
+        for split in present_splits:
+            sp_df = df_split_summary[df_split_summary["split"] == split]
+            if sp_df.empty:
+                continue
+            mean_mae = float(sp_df["mae"].mean())
+            if format_str:
+                overall_row[f"target_{split}"] = "-"
+                overall_row[f"pred_{split}"] = "-"
+                overall_row[f"diff_{split}"] = "-"
+                overall_row[f"mae_{split}"] = f"{mean_mae:.2f}%"
+            else:
+                overall_row[f"target_mean_{split}"] = np.nan
+                overall_row[f"target_std_{split}"] = np.nan
+                overall_row[f"pred_mean_{split}"] = np.nan
+                overall_row[f"pred_std_{split}"] = np.nan
+                overall_row[f"diff_mean_{split}"] = np.nan
+                overall_row[f"diff_std_{split}"] = np.nan
+                overall_row[f"mae_{split}"] = mean_mae
+
+        rows.append(overall_row)
 
     return pd.DataFrame(rows)
 
