@@ -522,6 +522,8 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
         self.assertIn("mae_train", df_side.columns)
         self.assertIn("mae_test", df_side.columns)
         self.assertIn("Overall (MAE)", df_side["element"].values)
+        self.assertTrue(df_side["mae_train"].str.contains("±").all())
+        self.assertTrue(df_side["mae_test"].str.contains("±").all())
 
         # Check with include_overall=False
         df_side_no_overall = format_side_by_side_atomic_percentages(
@@ -534,10 +536,12 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
             df_summary, config={"splits": ["train", "test"], "format_str": False}
         )
         self.assertIn("mae_train", df_side_num.columns)
+        self.assertIn("mae_std_train", df_side_num.columns)
         self.assertIn("target_mean_train", df_side_num.columns)
         self.assertIn("Overall (MAE)", df_side_num["element"].values)
         overall_row = df_side_num[df_side_num["element"] == "Overall (MAE)"].iloc[0]
         self.assertIsInstance(overall_row["mae_train"], float)
+        self.assertIsInstance(overall_row["mae_std_train"], float)
         self.assertTrue(np.isnan(overall_row["target_mean_train"]))
 
         # Check empty DataFrame handling

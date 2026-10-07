@@ -797,11 +797,14 @@ def format_side_by_side_atomic_percentages(
                 continue
             r = s_df.iloc[0]
 
+            mae_val = float(r["mae"]) if "mae" in r and pd.notna(r["mae"]) else 0.0
+            mae_std = float(r["mae_std"]) if "mae_std" in r and pd.notna(r["mae_std"]) else 0.0
+
             if format_str:
                 row_dict[f"target_{split}"] = f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
                 row_dict[f"pred_{split}"] = f"{r['pred_mean']:.2f}% ± {r['pred_std']:.2f}%"
                 row_dict[f"diff_{split}"] = f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
-                row_dict[f"mae_{split}"] = f"{r['mae']:.2f}%"
+                row_dict[f"mae_{split}"] = f"{mae_val:.2f}% ± {mae_std:.2f}%"
             else:
                 row_dict[f"target_mean_{split}"] = r["target_mean"]
                 row_dict[f"target_std_{split}"] = r["target_std"]
@@ -809,7 +812,8 @@ def format_side_by_side_atomic_percentages(
                 row_dict[f"pred_std_{split}"] = r["pred_std"]
                 row_dict[f"diff_mean_{split}"] = r["diff_mean"]
                 row_dict[f"diff_std_{split}"] = r["diff_std"]
-                row_dict[f"mae_{split}"] = r["mae"]
+                row_dict[f"mae_{split}"] = mae_val
+                row_dict[f"mae_std_{split}"] = mae_std
 
         rows.append(row_dict)
 
@@ -820,11 +824,12 @@ def format_side_by_side_atomic_percentages(
             if sp_df.empty:
                 continue
             mean_mae = float(sp_df["mae"].mean())
+            std_mae = float(sp_df["mae"].std(ddof=1)) if len(sp_df) > 1 else 0.0
             if format_str:
                 overall_row[f"target_{split}"] = "-"
                 overall_row[f"pred_{split}"] = "-"
                 overall_row[f"diff_{split}"] = "-"
-                overall_row[f"mae_{split}"] = f"{mean_mae:.2f}%"
+                overall_row[f"mae_{split}"] = f"{mean_mae:.2f}% ± {std_mae:.2f}%"
             else:
                 overall_row[f"target_mean_{split}"] = np.nan
                 overall_row[f"target_std_{split}"] = np.nan
@@ -833,6 +838,7 @@ def format_side_by_side_atomic_percentages(
                 overall_row[f"diff_mean_{split}"] = np.nan
                 overall_row[f"diff_std_{split}"] = np.nan
                 overall_row[f"mae_{split}"] = mean_mae
+                overall_row[f"mae_std_{split}"] = std_mae
 
         rows.append(overall_row)
 
