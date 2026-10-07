@@ -2037,11 +2037,12 @@ def plot_atomic_percentage_mae(
 
     Creates a side-by-side 2-panel figure:
     - Panel 1: Jittered strip plot showing individual sample absolute errors (|Pred - Target|)
-      overlaid with prominent Mean (MAE) diamond markers, ±1 std error bars, numeric labels,
-      and an 'Overall' composition category.
+      overlaid with prominent horizontal lines for Mean (MAE), ±1 std error bars, numeric
+      mean ± std labels, and an 'Overall' composition category.
     - Panel 2: Empirical Cumulative Distribution Function (ECDF) curves comparing cumulative
       error coverage across elements (colored curves) and splits (solid vs dashed line styles),
-      annotated with a horizontal reference threshold line (e.g., 90%).
+      annotated with a horizontal reference threshold line (e.g., 90%). Configurable via
+      'ecdf_splits' which defaults to ['train', 'test'].
 
     Parameters
     ----------
@@ -2050,8 +2051,10 @@ def plot_atomic_percentage_mae(
         and 'abs_diff_at%' (or 'diff_at%').
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
-        - 'splits' (list[str] | None): Splits to display (e.g. ['train', 'test']).
-          Default: all present.
+        - 'splits' (list[str] | None): Splits to display in Panel 1 (e.g. ['train', 'test']).
+          Default: all present in df_at_data.
+        - 'ecdf_splits' (list[str] | None): Splits to display in Panel 2 (ECDF curves).
+          Defaults to ['train', 'test'].
         - 'elements' (list[str] | None): Elements to display. Default: all present.
         - 'include_overall' (bool): Include an 'Overall' composition category in Panel 1
           (default True).
@@ -2060,6 +2063,9 @@ def plot_atomic_percentage_mae(
         - 'element_palette' (dict[str, str] | None): Custom element color mapping for Panel 2.
         - 'show_values' (bool): Whether to annotate numeric value text above MAE markers (default True).
         - 'value_fontsize' (int): Font size for MAE value labels (default 8).
+        - 'multiline_labels' (bool | None): Whether to format MAE labels on two lines (mean above std)
+          in Panel 1 to avoid horizontal crowding. Defaults to True when multiple splits are displayed.
+        - 'bar_half_width' (float): Half-width of horizontal mean line in Panel 1 (default 0.09).
         - 'title' (str | None): Overall figure suptitle.
         - 'figsize' (tuple[float, float]): Figure dimensions (default (14, 5.5)).
         - 'ax' (tuple[plt.Axes, plt.Axes] | None): Existing pair of matplotlib Axes.
@@ -2073,7 +2079,8 @@ def plot_atomic_percentage_mae(
     Raises
     ------
     ValueError
-        If df_at_data is empty or contains no records matching filter criteria.
+        If df_at_data is empty, contains no records matching filter criteria, or none of
+        the requested 'ecdf_splits' are present.
     KeyError
         If required columns ('split', 'element', and either 'abs_diff_at%' or 'diff_at%') are missing.
     """
@@ -2116,6 +2123,7 @@ def plot_atomic_percentage_mae(
     title = cfg.get("title")
     axes_tuple = cfg.get("ax")
     show = bool(cfg.get("show", False))
+    bar_half_width = float(cfg.get("bar_half_width", 0.09))
 
     if axes_tuple is not None:
         ax_strip, ax_ecdf = axes_tuple
@@ -2152,12 +2160,15 @@ def plot_atomic_percentage_mae(
     }
 
     # -------------------------------------------------------------------------
-    # Panel 1: Jittered Strip Plot with Marked Mean MAE (±1 std)
+    # Panel 1: Jittered Strip Plot with Horizontal Mean Lines & Error Bars
     # -------------------------------------------------------------------------
     n_splits = len(present_splits)
-    dodge_width = 0.30 if n_splits > 1 else 0.0
+    dodge_width = 0.32 if n_splits > 1 else 0.0
     rng = np.random.default_rng(seed=42)
     max_y_val = 0.0
+
+    multiline_labels_cfg = cfg.get("multiline_labels")
+    multiline_labels = (n_splits > 1) if multiline_labels_cfg is None else bool(multiline_labels_cfg)
 
     for i, cat in enumerate(categories):
         for j, split in enumerate(present_splits):
@@ -2187,22 +2198,31 @@ def plot_atomic_percentage_mae(
 
             mean_v = float(np.mean(vals))
             std_v = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+            if np.isnan(std_v):
+                std_v = 0.0
             low_err = min(mean_v, std_v)
             high_err = std_v
 
+            # Error bar for ±1 std (lower bound clipped at 0)
             ax_strip.errorbar(
                 x_c,
                 mean_v,
                 yerr=[[low_err], [high_err]],
-                fmt="D",
-                color="black",
-                mfc=s_color,
-                mec="black",
-                mew=1.2,
-                markersize=6.5,
+                fmt="none",
+                ecolor="black",
                 elinewidth=1.6,
                 capsize=4.0,
                 capthick=1.4,
+                zorder=4,
+            )
+
+            # Horizontal line indicating Mean (MAE)
+            ax_strip.plot(
+                [x_c - bar_half_width, x_c + bar_half_width],
+                [mean_v, mean_v],
+                color=s_color,
+                linewidth=3.2,
+                solid_capstyle="round",
                 zorder=5,
             )
 
@@ -2211,10 +2231,11 @@ def plot_atomic_percentage_mae(
                 max_y_val = top_point
 
             if show_values:
+                val_text = f"{mean_v:.2f}%\n±{std_v:.2f}%" if multiline_labels else f"{mean_v:.2f}% ± {std_v:.2f}%"
                 ax_strip.text(
                     x_c,
-                    mean_v + high_err + 0.05,
-                    f"{mean_v:.2f}%",
+                    top_point + 0.06,
+                    val_text,
                     ha="center",
                     va="bottom",
                     fontsize=value_fontsize,
@@ -2237,18 +2258,15 @@ def plot_atomic_percentage_mae(
     ax_strip.set_xlabel("Element")
     ax_strip.set_ylabel("Absolute Error |Pred - Target| (at. %)")
     ax_strip.set_title("Sample Absolute Errors & Mean (MAE)", fontsize=11, fontweight="bold")
-    ax_strip.set_ylim(bottom=0.0, top=max_y_val * 1.18 + 0.15)
+    ax_strip.set_ylim(bottom=0.0, top=max_y_val * 1.25 + 0.20)
     ax_strip.grid(True, linestyle="--", alpha=0.5, axis="y")
 
     strip_handles = [
         plt.Line2D(
             [0],
             [0],
-            marker="D",
-            color="w",
-            mfc=split_palette.get(str(s).lower(), "#7f7f7f"),
-            mec="black",
-            markersize=7,
+            color=split_palette.get(str(s).lower(), "#7f7f7f"),
+            linewidth=3.0,
             label=f"{str(s).capitalize()} (Mean ± Std)",
         )
         for s in present_splits
@@ -2258,6 +2276,29 @@ def plot_atomic_percentage_mae(
     # -------------------------------------------------------------------------
     # Panel 2: Empirical Cumulative Distribution Function (ECDF)
     # -------------------------------------------------------------------------
+    ecdf_splits_cfg = cfg.get("ecdf_splits")
+    unique_splits_lower = [str(s).lower() for s in df["split"].unique()]
+    if ecdf_splits_cfg is not None:
+        target_ecdf = [str(s).lower() for s in ecdf_splits_cfg]
+        active_ecdf_splits = [
+            s for s in target_ecdf
+            if s in unique_splits_lower
+        ]
+        if not active_ecdf_splits:
+            raise ValueError(
+                f"None of the requested ecdf_splits {ecdf_splits_cfg} were found in the data."
+            )
+    else:
+        # Defaults to 'train' and 'test' if present in data
+        default_ecdf_targets = ["train", "test"]
+        active_ecdf_splits = [
+            s for s in default_ecdf_targets
+            if s in unique_splits_lower
+        ]
+        if not active_ecdf_splits:
+            # Fallback if neither train nor test is in the data
+            active_ecdf_splits = list(dict.fromkeys(unique_splits_lower))
+
     split_linestyles = {
         "train": "-",
         "test": "--",
@@ -2267,7 +2308,7 @@ def plot_atomic_percentage_mae(
     max_x_val = 0.0
     for elem in elements_list:
         e_color = elem_palette[elem]
-        for split in present_splits:
+        for split in active_ecdf_splits:
             sub = df[(df["element"] == elem) & (df["split"].str.lower() == str(split).lower())]
             if sub.empty:
                 continue
@@ -2317,7 +2358,7 @@ def plot_atomic_percentage_mae(
         fontsize=8,
         loc="lower right",
         framealpha=0.9,
-        ncol=max(1, len(present_splits)),
+        ncol=max(1, len(active_ecdf_splits)),
     )
 
     if title:
