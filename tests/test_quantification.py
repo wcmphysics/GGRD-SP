@@ -736,7 +736,71 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         self.assertIn("Al", xticklabels)
         self.assertIn("Ti", xticklabels)
         self.assertIn("Overall", xticklabels)
+
+        # Check value text annotations include both mean and std (±)
+        texts = [t.get_text() for t in ax_strip.texts]
+        self.assertTrue(len(texts) > 0)
+        self.assertTrue(all("±" in t for t in texts))
+        # Since df_samples contains 2 splits (train & test), labels default to multiline
+        self.assertTrue(any("\n±" in t for t in texts))
         plt.close(fig)
+
+        # Check single-line label override
+        fig_single, (ax_strip_single, _) = plot_atomic_percentage_mae(
+            self.df_samples,
+            plot_config={"multiline_labels": False, "show": False},
+        )
+        texts_single = [t.get_text() for t in ax_strip_single.texts]
+        self.assertTrue(all(" % ± " in t or "% ± " in t for t in texts_single))
+        self.assertFalse(any("\n±" in t for t in texts_single))
+        plt.close(fig_single)
+
+    def test_plot_atomic_percentage_mae_ecdf_splits(self) -> None:
+        """Verify configurable ecdf_splits defaults to train and test, and respects custom configuration."""
+        import matplotlib.pyplot as plt
+        from utility.visualization import plot_atomic_percentage_mae
+
+        df_with_val = pd.concat([
+            self.df_samples,
+            pd.DataFrame([{
+                "split": "val",
+                "element": "Al",
+                "die": 0,
+                "target_at%": 30.0,
+                "pred_at%": 30.4,
+                "diff_at%": 0.4,
+                "abs_diff_at%": 0.4,
+            }]),
+        ], ignore_index=True)
+
+        # 1. Default: ecdf_splits should only include Train and Test, excluding Val
+        fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
+            df_with_val,
+            plot_config={"show": False},
+        )
+        ecdf_labels = [line.get_label() for line in ax_ecdf.get_lines() if line.get_label()]
+        self.assertTrue(any("Train" in l for l in ecdf_labels))
+        self.assertTrue(any("Test" in l for l in ecdf_labels))
+        self.assertFalse(any("Val" in l for l in ecdf_labels))
+        plt.close(fig)
+
+        # 2. Custom ecdf_splits including Val only
+        fig2, (ax_strip2, ax_ecdf2) = plot_atomic_percentage_mae(
+            df_with_val,
+            plot_config={"ecdf_splits": ["val"], "show": False},
+        )
+        ecdf_labels2 = [line.get_label() for line in ax_ecdf2.get_lines() if line.get_label()]
+        self.assertTrue(any("Val" in l for l in ecdf_labels2))
+        self.assertFalse(any("Train" in l for l in ecdf_labels2))
+        self.assertFalse(any("Test" in l for l in ecdf_labels2))
+        plt.close(fig2)
+
+        # 3. Invalid ecdf_splits should raise ValueError
+        with self.assertRaises(ValueError):
+            plot_atomic_percentage_mae(
+                df_with_val,
+                plot_config={"ecdf_splits": ["non_existent_split"], "show": False},
+            )
 
     def test_plot_atomic_percentage_mae_without_overall(self) -> None:
         """Verify include_overall=False excludes Overall category."""
