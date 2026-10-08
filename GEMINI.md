@@ -70,12 +70,6 @@ The codes will be composed of mainly 5 parts
 - Jupyter Notebooks for exploration, Python scripts for utilities.
 
 ## Agent Instructions (Rules for Gemini)
-0. Follow ASD-STE100 Simplified Technical English rule closely in communication with the user. If communication is not conducted in Chinese, follow these rules: 
-   - 限制字數在30字以內
-   - 少用或不用被動句(如"被"、"讓")
-   - 禁止省略主詞
-   - 一句話只包含一個核心動作，禁止使用連續動詞句
-   - 句子中的條件必須要前置(比如先寫"如果..."，再接著寫"就...")
 1. **Virtual Environment:** Always execute Python commands using the local environment at `\.venv\Scripts\python.exe`.
 2. **File Structure:** 
    - Main python body: `main.py`
