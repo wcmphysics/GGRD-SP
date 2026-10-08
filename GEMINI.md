@@ -98,3 +98,10 @@ The codes will be composed of mainly 5 parts
    - When error occurs provide informative details about the error.
    - Avoid silent error.
    - Always discuss with the user first about how to handle unexpected cases or error. Do not handle unexpected case silently. Do not guess what the fix should be without asking or at least notifying the user. 
+11. ** Code Line Count Reduction**
+   - When asked to reduce the number of code lines (comment line is not counted) for one specific file or many specified files:
+      1. DO NOT EVER modify anything outside the specified files. 
+      2. DO NOT package coding lines into another module as it is merely moving lines to somewhere else rather than cutting down lines. 
+      3. DO NOT rename variables to shorten the line counts. Variable names should be easy to understand for reader. 
+   - Ask me anything if there is something unclear to you
+   - Always Propose your plans first for me to review. Only implement the plan if I approve
