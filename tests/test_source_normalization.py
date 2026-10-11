@@ -365,6 +365,14 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         # Should be (x / 200.0) * 200.0 = x
         np.testing.assert_allclose(pred, x, rtol=1e-4)
 
+    def test_die_total_flux_missing_scale_x_raises(self) -> None:
+        """Verify SpectrumPairDataset raises ValueError if die_total_flux is requested without scale_x."""
+        x = np.ones((2, 20), dtype=np.float32)
+        y = np.ones((2, 20), dtype=np.float32)
+        with self.assertRaises(ValueError) as ctx:
+            SpectrumPairDataset(x, y, config={"normalization_mode": "die_total_flux"}, scale_x=None)
+        self.assertIn("requires 'scale_x'", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

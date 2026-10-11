@@ -82,7 +82,11 @@ class SpectrumPairDataset(Dataset):
         self.normalize_by_source: bool = bool(cfg.get("normalize_by_source", norm_mode != "none"))
         eps: float = float(cfg.get("eps", 1e-4))
 
-        if norm_mode in ("die_total_flux", "die_flux") and scale_x is not None:
+        if norm_mode in ("die_total_flux", "die_flux"):
+            if scale_x is None:
+                raise ValueError(
+                    f"normalization_mode='{norm_mode}' requires 'scale_x' to be provided."
+                )
             # Tier 1 canonical die total flux normalization
             if isinstance(scale_x, np.ndarray):
                 self.scale_x = torch.from_numpy(scale_x.astype(np.float32))

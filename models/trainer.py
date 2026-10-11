@@ -512,6 +512,12 @@ def train_model_region(
         history["val_loss"].append(val_loss)
         history["lr"].append(optimizer.param_groups[0]["lr"])
 
+        if math.isnan(monitored_loss) or math.isinf(monitored_loss):
+            warnings.warn(
+                f"Training diverged at epoch {epoch} with NaN/Inf loss ({monitored_loss}). Stopping early."
+            )
+            break
+
         if monitored_loss < best_monitored_loss:
             best_monitored_loss = monitored_loss
             best_epoch = epoch
