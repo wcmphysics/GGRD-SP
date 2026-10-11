@@ -1,14 +1,5 @@
-"""Main orchestration module executing the unified 8-step spectral transformation pipeline.
-
-Workflow:
-1. Data splitting (session-level train-val-test split applied across all regions).
-2. Sliding window setup (if enabled, compute patch window and stride).
-3. Dataset and data loader setup (source-referenced normalization).
-4. Cost function definition (Normalized MSE with regional weights and L2 penalty).
-5. Model definition (ResNet1D, ResidualUNet1D, ConventionalUNet1D).
-6. Bayesian optimization setup (Ax hyperparameter search).
-7. Model training and validation (with log10 progress reporting).
-8. Test data prediction (sequence-to-sequence prediction, physical counts, zero clamping).
+"""Main orchestration module executing the unified 8-step spectral
+transformation pipeline.
 """
 
 from __future__ import annotations
@@ -18,10 +9,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch.nn as nn
-from torch.utils.data import Dataset
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
+from models.cost import CompositeSpectralLoss, NormalizedMSELoss
 from models.dataset import (
     SpectrumPatchDataset,
     create_dataloaders,
@@ -36,261 +26,115 @@ from models.unet import ConventionalUNet1D, ResidualUNet1D
 from utility.patching import calculate_window_points
 
 
-def instantiate_model(
-    model_type: str,
-    seq_len: int,
-    config: dict[str, Any] | None = None,
-) -> nn.Module:
-    """Instantiate a neural network model by architecture name and sequence length.
+def instantiate_model(model_type: str, seq_len: int, config: dict[str, Any] | None = None) -> nn.Module:
+    """Instantiate a neural network model by architecture name and
+    sequence length.
 
     Parameters
     ----------
     model_type : str
-        Architecture type: 'resnet', 'residual_unet', 'unet', or 'deeplabv3'.
+        Architecture type: 'resnet', 'residual_unet', 'unet', or
+        'deeplabv3'.
     seq_len : int
-        Input sequence length in points (patch window or full spectrum).
+        Input sequence length in points.
     config : dict[str, Any] | None, optional
-        Architecture-specific hyperparameters.
+        Architecture hyperparameters.
 
     Returns
     -------
     nn.Module
-        Instantiated PyTorch neural network module.
+        Instantiated neural network module.
     """
-    m_type = model_type.lower()
-    cfg = config or {}
-    if m_type == "resnet":
-        return ResNet1D(n_points=seq_len, config=cfg)
-    elif m_type == "residual_unet":
-        return ResidualUNet1D(n_points=seq_len, config=cfg)
-    elif m_type == "unet":
-        return ConventionalUNet1D(n_points=seq_len, config=cfg)
-    elif m_type == "deeplabv3":
-        return DeepLabV3(n_points=seq_len, config=cfg)
-    else:
+    m_map = dict(resnet=ResNet1D, residual_unet=ResidualUNet1D, unet=ConventionalUNet1D, deeplabv3=DeepLabV3)
+    m_cls = m_map.get(model_type.lower())
+    if m_cls is None:
         raise ValueError(
             f"Unknown model_type '{model_type}'. Choose 'resnet', 'residual_unet', 'unet', or 'deeplabv3'."
         )
+    return m_cls(n_points=seq_len, config=config or {})
 
 
 def _normalize_config_aliases(config_dict: dict[str, Any]) -> dict[str, Any]:
-    """Normalize hyperparameter keys and aliases within a configuration dictionary.
-
-    Maps common aliases (e.g. 'epoch' -> 'epochs', 'lr' -> 'learning_rate',
-    'patience' -> 'early_stopping_patience', 'l2' -> 'l2_weight', 'batch' -> 'batch_size')
-    to their canonical forms and synchronizes all keys in the alias group.
-
-    Parameters
-    ----------
-    config_dict : dict[str, Any]
-        Raw input configuration dictionary.
-
-    Returns
-    -------
-    dict[str, Any]
-        Configuration dictionary with canonical and alias keys synchronized.
+    """Normalize hyperparameter keys and aliases within a configuration
+    dictionary.
     """
-    normalized = dict(config_dict)
-
-    alias_groups: dict[str, tuple[str, ...]] = {
+    res = dict(config_dict)
+    alias_groups = {
         "epochs": ("epoch", "num_epochs", "n_epochs", "max_epochs"),
-        "learning_rate": ("lr",),
-        "batch_size": ("batch", "batchsize"),
+        "learning_rate": ("lr",), "batch_size": ("batch", "batchsize"),
         "early_stopping_patience": ("patience", "early_stop_patience"),
         "l2_weight": ("l2", "l2_reg", "l2_penalty", "weight_decay_l2"),
         "model_type": ("model", "architecture"),
         "use_sliding_window": ("sliding_window", "use_sw"),
-        "use_bayesian_opt": ("bayesian_opt", "use_bo"),
-        "use_film": ("film",),
-        "sliding_stride_ev": ("stride_ev",),
-        "sliding_stride_points": ("stride_points", "stride"),
-        "window_size_points": ("window_points", "window_size"),
-        "cost_type": ("loss_type",),
-        "use_lr_scheduler": (
-            "use_reduce_lr_on_plateau",
-            "reduce_lr_on_plateau",
-            "use_scheduler",
-            "lr_scheduler",
-        ),
-        "lr_reduce_factor": (
-            "lr_factor",
-            "factor",
-            "lr_scheduler_factor",
-            "reduction_factor",
-        ),
+        "use_bayesian_opt": ("bayesian_opt", "use_bo"), "use_film": ("film",),
+        "sliding_stride_ev": ("stride_ev",), "sliding_stride_points": ("stride_points", "stride"),
+        "window_size_points": ("window_points", "window_size"), "cost_type": ("loss_type",),
+        "use_lr_scheduler": ("use_reduce_lr_on_plateau", "reduce_lr_on_plateau", "use_scheduler", "lr_scheduler"),
+        "lr_reduce_factor": ("lr_factor", "factor", "lr_scheduler_factor", "reduction_factor"),
         "lr_scheduler_patience": ("lr_patience", "scheduler_patience"),
         "min_lr": ("lr_min", "lr_scheduler_min_lr"),
     }
-
-    for canonical, aliases in alias_groups.items():
-        val = None
-        has_val = False
-        if canonical in normalized:
-            val = normalized[canonical]
-            has_val = True
-        else:
-            for alias in aliases:
-                if alias in normalized:
-                    val = normalized[alias]
-                    has_val = True
-                    break
-
-        if has_val:
-            normalized[canonical] = val
-            for alias in aliases:
-                normalized[alias] = val
-
-    return normalized
+    for canon, aliases in alias_groups.items():
+        keys = (canon,) + aliases
+        hit = next((k for k in keys if k in res), None)
+        if hit is not None:
+            val = res[hit]
+            res.update({k: val for k in keys})
+    return res
 
 
 def _resolve_region_config(
-    global_cfg: dict[str, Any],
-    region: str,
+    global_cfg: dict[str, Any], region: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Resolve regional sliding window, training, and Bayesian optimization configurations.
-
-    Applies hierarchical fallback: global top-level settings provide defaults,
-    which are optionally overridden by specific settings under
-    global_cfg['region_configs'][region] or global_cfg['region_config'][region].
-
-    Parameters
-    ----------
-    global_cfg : dict[str, Any]
-        Top-level pipeline configuration dictionary.
-    region : str
-        Target spectral region identifier (e.g. 'Al2p').
-
-    Returns
-    -------
-    tuple[dict[str, Any], dict[str, Any], dict[str, Any]]
-        (sw_calc_cfg, region_train_cfg, region_bo_cfg)
+    """Resolve regional sliding window, training, and Bayesian
+    optimization configurations.
     """
-    region_configs = global_cfg.get("region_configs") or global_cfg.get("region_config") or {}
-    if not isinstance(region_configs, dict):
-        region_configs = {}
+    r_cfgs = global_cfg.get("region_configs") or global_cfg.get("region_config") or {}
+    reg = dict(r_cfgs.get(region, {})) if isinstance(r_cfgs, dict) and region in r_cfgs else {}
 
-    reg_overrides = (
-        dict(region_configs.get(region, {}))
-        if isinstance(region_configs, dict) and region in region_configs
-        else {}
-    )
+    def _pick(k1: str, k2: str, def_v: Any = None) -> Any:
+        return reg.get(k1, reg.get(k2, global_cfg.get(k1, global_cfg.get(k2, def_v))))
 
-    # 1. Sliding window parameters
     sw_calc_cfg = {
-        "window_size_ev": reg_overrides.get(
-            "window_size_ev", global_cfg.get("window_size_ev", 2.0)
-        ),
-        "sliding_stride_ev": reg_overrides.get(
-            "sliding_stride_ev",
-            reg_overrides.get(
-                "stride_ev",
-                global_cfg.get("sliding_stride_ev", global_cfg.get("stride_ev", 1.0)),
-            ),
-        ),
-        "window_size_points": reg_overrides.get(
-            "window_size_points",
-            reg_overrides.get(
-                "window_size",
-                global_cfg.get("window_size_points", global_cfg.get("window_size")),
-            ),
-        ),
-        "sliding_stride_points": reg_overrides.get(
-            "sliding_stride_points",
-            reg_overrides.get(
-                "stride",
-                global_cfg.get("sliding_stride_points", global_cfg.get("stride")),
-            ),
-        ),
+        "window_size_ev": reg.get("window_size_ev", global_cfg.get("window_size_ev", 2.0)),
+        "sliding_stride_ev": _pick("sliding_stride_ev", "stride_ev", 1.0),
+        "window_size_points": _pick("window_size_points", "window_size"),
+        "sliding_stride_points": _pick("sliding_stride_points", "stride"),
     }
 
-    # 2. Training configuration (epochs, batch_size, lr, architecture params, l2_weight, etc.)
-    global_train_cfg = (
-        global_cfg.get("train_config")
-        or global_cfg.get("training_config")
-        or global_cfg.get("train_cfg")
-        or {}
-    )
-    base_train_cfg = _normalize_config_aliases(dict(global_train_cfg))
+    g_train = global_cfg.get("train_config") or global_cfg.get("training_config") or global_cfg.get("train_cfg") or {}
+    base_train = _normalize_config_aliases(dict(g_train))
+    n_train = reg.get("train_config") or reg.get("training_config") or reg.get("train_cfg") or {}
+    if isinstance(n_train, dict):
+        base_train.update(_normalize_config_aliases(n_train))
 
-    nested_train = (
-        reg_overrides.get("train_config")
-        or reg_overrides.get("training_config")
-        or reg_overrides.get("train_cfg")
-        or {}
-    )
-    if isinstance(nested_train, dict):
-        base_train_cfg.update(_normalize_config_aliases(nested_train))
-
-    # Flat overrides in reg_overrides:
-    # Any parameter not belonging strictly to nested sub-dictionaries or eV sliding window
-    excluded_from_flat = {
-        "train_config",
-        "training_config",
-        "train_cfg",
-        "bayesian_opt_config",
-        "bayesian_opt_configs",
-        "bo_config",
-        "bo_cfg",
-        "window_size_ev",
-        "sliding_stride_ev",
-        "stride_ev",
+    excl = {
+        "train_config", "training_config", "train_cfg", "bayesian_opt_config", "bayesian_opt_configs",
+        "bo_config", "bo_cfg", "window_size_ev", "sliding_stride_ev", "stride_ev",
     }
-    flat_overrides = {
-        k: v for k, v in reg_overrides.items() if k not in excluded_from_flat
-    }
-    if flat_overrides:
-        base_train_cfg.update(_normalize_config_aliases(flat_overrides))
+    flat_ovr = {k: v for k, v in reg.items() if k not in excl}
+    if flat_ovr:
+        base_train.update(_normalize_config_aliases(flat_ovr))
+    base_train = _normalize_config_aliases(base_train)
 
-    base_train_cfg = _normalize_config_aliases(base_train_cfg)
+    g_bo = global_cfg.get("bayesian_opt_config") or global_cfg.get("bo_config") or global_cfg.get("bo_cfg") or {}
+    base_bo = _normalize_config_aliases(dict(g_bo))
+    n_bo = reg.get("bayesian_opt_config") or reg.get("bo_config") or reg.get("bo_cfg") or {}
+    if isinstance(n_bo, dict):
+        base_bo.update(_normalize_config_aliases(n_bo))
 
-    # 3. Bayesian optimization configuration
-    global_bo_cfg = (
-        global_cfg.get("bayesian_opt_config")
-        or global_cfg.get("bayesian_opt_configs")
-        or global_cfg.get("bo_config")
-        or global_cfg.get("bo_cfg")
-        or {}
+    bo_keys = (
+        "batch_sizes", "kernel_sizes", "window_size_choices", "lr_bounds", "l2_bounds",
+        "num_trials", "epochs_per_trial", "seed", "verbose",
     )
-    base_bo_cfg = _normalize_config_aliases(dict(global_bo_cfg))
+    for k in bo_keys:
+        if k in reg:
+            base_bo[k] = reg[k]
+    for arch in ("hidden_channels", "base_channels", "depths", "backbone_channels", "aspp_channels"):
+        if arch in reg and isinstance(reg[arch], (list, tuple)):
+            base_bo[arch] = list(reg[arch])
 
-    nested_bo = (
-        reg_overrides.get("bayesian_opt_config")
-        or reg_overrides.get("bayesian_opt_configs")
-        or reg_overrides.get("bo_config")
-        or reg_overrides.get("bo_cfg")
-        or {}
-    )
-    if isinstance(nested_bo, dict):
-        base_bo_cfg.update(_normalize_config_aliases(nested_bo))
-
-    bo_param_keys = (
-        "batch_sizes",
-        "kernel_sizes",
-        "window_size_choices",
-        "lr_bounds",
-        "l2_bounds",
-        "num_trials",
-        "epochs_per_trial",
-        "seed",
-        "verbose",
-    )
-    for k in bo_param_keys:
-        if k in reg_overrides:
-            base_bo_cfg[k] = reg_overrides[k]
-
-    for arch_choice in (
-        "hidden_channels",
-        "base_channels",
-        "depths",
-        "backbone_channels",
-        "aspp_channels",
-    ):
-        if arch_choice in reg_overrides and isinstance(reg_overrides[arch_choice], (list, tuple)):
-            base_bo_cfg[arch_choice] = list(reg_overrides[arch_choice])
-
-    base_bo_cfg = _normalize_config_aliases(base_bo_cfg)
-
-    return sw_calc_cfg, base_train_cfg, base_bo_cfg
+    return sw_calc_cfg, base_train, _normalize_config_aliases(base_bo)
 
 
 def run_spectral_pipeline(
@@ -300,437 +144,206 @@ def run_spectral_pipeline(
     config: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Execute the unified 8-step end-to-end spectral transformation pipeline.
+    """Execute the unified 8-step end-to-end spectral transformation
+    pipeline.
 
     Parameters
     ----------
-    data : tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any] | pd.DataFrame
-        Measured data containers:
-        - tuple: (ary_intensity, ary_energy, meta_df),
-        - dict: {'ary_intensity': ..., 'ary_energy': ..., 'meta_df': ...}, or
-        - DataFrame: meta_df with ary_intensity and ary_energy passed in kwargs.
+    data : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Measured data canonical tuple
+        (ary_intensity, ary_energy, meta_df).
     model_type : str, optional
-        Architecture: 'resnet' (default), 'residual_unet', or 'unet'.
+        Architecture: 'resnet' (default), 'residual_unet', 'unet', or
+        'deeplabv3'.
     use_sliding_window : bool, optional
-        Whether to train using sliding window patch data augmentation (default False).
+        Whether to train using sliding window patch data augmentation.
     config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'source_tool' (str): Source tool identifier (default 'J4').
-        - 'target_tool' (str): Target tool identifier (default 'H1').
-        - 'train_ratio' (float): Training session fraction (default 0.5).
-        - 'val_ratio' (float): Validation session fraction (default 0.2).
-        - 'test_ratio' (float): Held-out test session fraction (default 0.3).
-        - 'seed' (int | None): Global random seed (default 42).
-        - 'regions' (list[str] | None): Specific spectral regions to train (default auto-detected).
-        - 'use_bayesian_opt' (bool): Whether to run Ax Bayesian optimization (default False).
-        - 'bayesian_opt_config' (dict[str, Any]): Ax hyperparameter search configuration.
-        - 'train_config' (dict[str, Any]): Regional training configuration (epochs, lr, batch_size, etc.).
-        - 'region_configs' (dict[str, dict[str, Any]]): Optional per-region overrides for
-          window_size_ev, sliding_stride_ev, batch_size, learning_rate, architecture parameters,
-          train_config, or bayesian_opt_config.
-        - 'window_size_ev' (float): Patch window size in eV if sliding window enabled (default 2.0).
-        - 'sliding_stride_ev' (float): Patch stride in eV if sliding window enabled (default 1.0).
-        - 'window_size' | 'window_size_points' (int): Explicit patch points override.
-        - 'stride' | 'sliding_stride_points' (int): Explicit stride points override.
-        - 'predict_source' (bool): Whether to predict target spectra for source sessions (default True).
-        - 'verbose' (bool): Whether to log detailed progress (default False).
-    **kwargs : Any
-        Backward-compatibility keyword arguments.
+        Pipeline configuration dictionary.
 
     Returns
     -------
     dict[str, Any]
-        Pipeline results dictionary containing:
-        - 'models': Dict mapping region -> trained model (or (model, w_size, stride) tuple).
-        - 'evaluation': Dict mapping region -> best validation loss (Normalized MSE).
-        - 'test_evaluation': Dict mapping region -> test loss on held-out sessions.
-        - 'session_splits': Dict with sets of 'train', 'val', and 'test' measurement IDs.
-        - 'histories': Dict mapping region -> epoch loss histories.
-        - 'bayesian_opt_results': Dict mapping region -> Ax optimization outputs.
-        - 'predictions': Tuple (ary_intensity_pred, ary_energy_pred, meta_df_pred).
+        Pipeline results dictionary containing trained models,
+        evaluations, histories, and predictions.
     """
-    # Unpack data container (strictly canonical tuple: ary_intensity, ary_energy, meta_df)
     if not isinstance(data, (tuple, list)) or len(data) != 3:
         raise ValueError(
-            "run_spectral_pipeline requires data as canonical tuple: "
-            "(ary_intensity, ary_energy, meta_df)."
+            "run_spectral_pipeline requires data as canonical tuple: (ary_intensity, ary_energy, meta_df)."
         )
-
     ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
-    if (
-        not isinstance(ary_intensity, np.ndarray)
-        or not isinstance(ary_energy, np.ndarray)
-        or not isinstance(meta_df, pd.DataFrame)
-    ):
+    if (not isinstance(ary_intensity, np.ndarray) or not isinstance(ary_energy, np.ndarray)
+            or not isinstance(meta_df, pd.DataFrame)):
         raise ValueError(
-            "run_spectral_pipeline expects data tuple elements of type: "
-            "(np.ndarray, np.ndarray, pd.DataFrame)."
+            "run_spectral_pipeline expects data tuple elements of type: (np.ndarray, np.ndarray, pd.DataFrame)."
         )
 
     cfg = dict(config or {})
-    m_type: str = str(cfg.get("model_type", model_type)).lower()
-    use_sw: bool = bool(cfg.get("use_sliding_window", use_sliding_window))
-
-    source_tool: str = str(cfg.get("source_tool", "J4"))
-    target_tool: str = str(cfg.get("target_tool", "H1"))
-    train_ratio: float = float(cfg.get("train_ratio", 0.5))
-    val_ratio: float = float(cfg.get("val_ratio", 0.2))
-    test_ratio: float = float(cfg.get("test_ratio", 0.3))
-    seed: int | None = cfg.get("seed", 42)
-    use_bo: bool = bool(cfg.get("use_bayesian_opt", False))
-    bo_cfg: dict[str, Any] = dict(cfg.get("bayesian_opt_config", {}))
-    train_cfg: dict[str, Any] = dict(cfg.get("train_config", {}))
-    predict_source: bool = bool(cfg.get("predict_source", True))
-    verbose: bool = bool(cfg.get("verbose", False))
-
+    m_type = str(cfg.get("model_type", model_type)).lower()
+    use_sw = bool(cfg.get("use_sliding_window", use_sliding_window))
+    source_tool, target_tool = str(cfg.get("source_tool", "J4")), str(cfg.get("target_tool", "H1"))
+    ratios = (float(cfg.get("train_ratio", 0.5)), float(cfg.get("val_ratio", 0.2)), float(cfg.get("test_ratio", 0.3)))
+    seed, verbose = cfg.get("seed", 42), bool(cfg.get("verbose", False))
+    use_bo, bo_cfg = bool(cfg.get("use_bayesian_opt", False)), dict(cfg.get("bayesian_opt_config", {}))
     if "seed" not in bo_cfg and seed is not None:
         bo_cfg["seed"] = seed
 
-    # Auto-detect regions if not explicitly provided
-    regions: list[str] | None = cfg.get("regions")
+    regions = cfg.get("regions")
     if regions is None:
-        paired_mask = meta_df["measurement_id_target"].notna()
+        mask = meta_df["measurement_id_target"].notna()
         if source_tool:
-            paired_mask = paired_mask & (meta_df["tool"] == source_tool)
-        regions = sorted(meta_df[paired_mask]["region"].unique().tolist())
-
+            mask = mask & (meta_df["tool"] == source_tool)
+        regions = sorted(meta_df[mask]["region"].unique().tolist())
     if not regions:
-        raise ValueError(
-            f"No valid spectral regions found to train for source_tool='{source_tool}', target_tool='{target_tool}'"
-        )
+        raise ValueError(f"No valid spectral regions found to train for {source_tool=}, {target_tool=}")
 
-    # =========================================================================
-    # STEP 1: DATA SPLITTING (Session-level split applied across all regions)
-    # =========================================================================
-    session_splits: dict[str, set[str]] | None = cfg.get("session_splits")
+    session_splits = cfg.get("session_splits")
     if session_splits is None:
-        partition_cfg = {
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "train_ratio": train_ratio,
-            "val_ratio": val_ratio,
-            "test_ratio": test_ratio,
-            "seed": seed,
+        p_cfg = {
+            "source_tool": source_tool, "target_tool": target_tool,
+            "train_ratio": ratios[0], "val_ratio": ratios[1], "test_ratio": ratios[2], "seed": seed,
         }
-        session_splits = partition_measurement_sessions(meta_df, config=partition_cfg)
+        session_splits = partition_measurement_sessions(meta_df, config=p_cfg)
 
-    if verbose:
-        n_tr = len(session_splits.get("train", set()))
-        n_va = len(session_splits.get("val", set()))
-        n_te = len(session_splits.get("test", set()))
-        print(f"Step 1: Session partition -> {n_tr} train, {n_va} val, {n_te} test sessions.")
-
-    models: dict[str, Any] = {}
-    eval_results: dict[str, float] = {}
-    test_eval_results: dict[str, float] = {}
-    histories: dict[str, dict[str, list[float]]] = {}
-    bo_results: dict[str, dict[str, Any]] = {}
+    models, eval_results, test_eval_results, histories, bo_results = {}, {}, {}, {}, {}
 
     for region in regions:
-        if verbose:
-            print(f"\n--- Processing Region: {region} ({source_tool} -> {target_tool}) ---")
-
-        sw_calc_cfg, region_train_cfg, region_bo_cfg = _resolve_region_config(cfg, region)
-
-        region_use_sw = bool(region_train_cfg.get("use_sliding_window", use_sw))
-        region_m_type = str(region_train_cfg.get("model_type", m_type)).lower()
-        region_use_film = bool(region_train_cfg.get("use_film", cfg.get("use_film", False)))
-        region_use_bo = bool(
-            region_bo_cfg.get("use_bayesian_opt", region_train_cfg.get("use_bayesian_opt", use_bo))
-        )
+        sw_calc_cfg, r_train_cfg, r_bo_cfg = _resolve_region_config(cfg, region)
+        reg_use_sw = bool(r_train_cfg.get("use_sliding_window", use_sw))
+        reg_m_type = str(r_train_cfg.get("model_type", m_type)).lower()
+        reg_use_film = bool(r_train_cfg.get("use_film", cfg.get("use_film", False)))
+        reg_use_bo = bool(r_bo_cfg.get("use_bayesian_opt", r_train_cfg.get("use_bayesian_opt", use_bo)))
 
         split_cfg = {
-            "region": region,
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "session_splits": session_splits,
-            "return_test": True,
+            "region": region, "source_tool": source_tool, "target_tool": target_tool,
+            "session_splits": session_splits, "return_test": True,
             "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
         }
         train_full_ds, val_full_ds, test_full_ds = split_session_datasets(
-            meta_df, ary_intensity, ary_energy, config=split_cfg
+            meta_df, ary_intensity, ary_energy, config=split_cfg,
         )
+        full_len = len(train_full_ds[0]["x"])
 
-        sample_item = train_full_ds[0]
-        full_len = len(sample_item["x"])
-
-        # =====================================================================
-        # STEP 2: SLIDING WINDOW SETUP (if enabled)
-        # =====================================================================
-        if region_use_sw:
-            sample_energy = sample_item.get("energy")
-            if sample_energy is not None:
-                e_grid = sample_energy.cpu().numpy()
-            else:
-                e_grid = np.linspace(0.0, 10.0, full_len)
-
+        if reg_use_sw:
+            e_samp = train_full_ds[0].get("energy")
+            e_grid = e_samp.cpu().numpy() if e_samp is not None else np.linspace(0.0, 10.0, full_len)
             w_size, s_step = calculate_window_points(e_grid, config=sw_calc_cfg)
-            w_size = min(full_len, max(3, w_size))
-            s_step = max(1, min(w_size, s_step))
-            seq_len = w_size
+            w_size, s_step = min(full_len, max(3, w_size)), max(1, min(w_size, s_step))
+            seq_len, train_ds = w_size, SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
         else:
-            w_size = full_len
-            s_step = full_len
-            seq_len = full_len
-
-        # =====================================================================
-        # STEP 3: DATASET AND DATA LOADER SETUP
-        # =====================================================================
-        # Note: train_full_ds and val_full_ds already implement source-referenced
-        # normalization (dividing by max(|x|)). For patch training, SpectrumPatchDataset
-        # extracts patches and inherits normalized scale.
-        if region_use_sw:
-            train_ds: Dataset = SpectrumPatchDataset(
-                train_full_ds, window_size=w_size, stride=s_step
-            )
-            val_ds: Dataset = val_full_ds
-        else:
+            w_size = s_step = seq_len = full_len
             train_ds = train_full_ds
-            val_ds = val_full_ds
 
-        # =====================================================================
-        # STEP 4: COST FUNCTION DEFINITION
-        # =====================================================================
-        l2_weight = float(region_train_cfg.get("l2_weight", 1e-4))
-        region_weights = cfg.get("region_weights")
-        cost_type = str(
-            region_train_cfg.get(
-                "cost_type",
-                region_train_cfg.get("loss_type", cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))),
-            )
-        ).lower()
-        if cost_type in ("composite", "composite_spectral"):
-            criterion = CompositeSpectralLoss(
-                w_shape=float(region_train_cfg.get("w_shape", cfg.get("w_shape", 0.5))),
-                w_mse=float(region_train_cfg.get("w_mse", cfg.get("w_mse", 0.5))),
-                w_scale=float(region_train_cfg.get("w_scale", cfg.get("w_scale", 0.0))),
-                l2_weight=l2_weight,
-                region_weights=region_weights,
-            )
-        else:
-            w_shape = float(region_train_cfg.get("w_shape", cfg.get("w_shape", 0.0)))
-            w_scale = float(region_train_cfg.get("w_scale", cfg.get("w_scale", 0.0)))
-            w_mse = float(region_train_cfg.get("w_mse", cfg.get("w_mse", 1.0)))
-            criterion = NormalizedMSELoss(
-                l2_weight=l2_weight,
-                region_weights=region_weights,
-                w_mse=w_mse,
-                w_shape=w_shape,
-                w_scale=w_scale,
-            )
-
-        # =====================================================================
-        # STEP 5: MODEL DEFINITION
-        # =====================================================================
-        region_train_cfg.update(
-            {
-                "model_type": region_m_type,
-                "use_sliding_window": region_use_sw,
-                "window_size": w_size,
-                "stride": s_step,
-                "n_points": seq_len,
-                "use_film": region_use_film,
-            }
+        l2_w = float(r_train_cfg.get("l2_weight", 1e-4))
+        c_type = str(r_train_cfg.get("cost_type", cfg.get("cost_type", "normalized_mse"))).lower()
+        cost_kw = dict(l2_weight=l2_w, region_weights=cfg.get("region_weights"))
+        loss_cls = CompositeSpectralLoss if "composite" in c_type else NormalizedMSELoss
+        def_mse, def_shape = (0.5, 0.5) if "composite" in c_type else (1.0, 0.0)
+        criterion = loss_cls(
+            w_mse=float(r_train_cfg.get("w_mse", cfg.get("w_mse", def_mse))),
+            w_shape=float(r_train_cfg.get("w_shape", cfg.get("w_shape", def_shape))),
+            w_scale=float(r_train_cfg.get("w_scale", cfg.get("w_scale", 0.0))), **cost_kw,
         )
-        model = instantiate_model(region_m_type, seq_len=seq_len, config=region_train_cfg)
-        region_train_cfg["model"] = model
-        region_train_cfg["criterion"] = criterion
 
-        # =====================================================================
-        # STEP 6: BAYESIAN OPTIMIZATION SETUP
-        # =====================================================================
-        if region_use_bo:
-            if verbose:
-                print(f"Running Ax Bayesian Optimization for {region}...")
-            region_bo_cfg.update(
-                {
-                    "model_type": region_m_type,
-                    "use_sliding_window": region_use_sw,
-                    "window_size": w_size,
-                    "stride": s_step,
-                    "criterion": criterion,
-                }
-            )
-            # When sliding window is active, pass train_full_ds to Ax so trials can slice
-            # candidate window_sizes without nesting or clamping
+        r_train_cfg.update({
+            "model_type": reg_m_type, "use_sliding_window": reg_use_sw,
+            "window_size": w_size, "stride": s_step, "n_points": seq_len, "use_film": reg_use_film,
+        })
+        model = instantiate_model(reg_m_type, seq_len=seq_len, config=r_train_cfg)
+        r_train_cfg.update(dict(model=model, criterion=criterion))
+
+        if reg_use_bo:
+            r_bo_cfg.update({
+                "model_type": reg_m_type, "use_sliding_window": reg_use_sw,
+                "window_size": w_size, "stride": s_step, "criterion": criterion,
+            })
             bo_res = optimize_model_hyperparameters(
-                train_dataset=train_full_ds if region_use_sw else train_ds,
-                val_dataset=val_ds,
-                config=region_bo_cfg,
+                train_full_ds if reg_use_sw else train_ds, val_full_ds, config=r_bo_cfg,
             )
             bo_results[region] = bo_res
-            best_params = bo_res.get("best_parameters", {})
-            if best_params:
-                region_train_cfg.update(best_params)
-                if region_use_sw and "window_size" in best_params:
-                    w_size = int(best_params["window_size"])
+            best_p = bo_res.get("best_parameters", {})
+            if best_p:
+                r_train_cfg.update(best_p)
+                if reg_use_sw and "window_size" in best_p:
+                    w_size = int(best_p["window_size"])
                     s_step = max(1, w_size // 2)
                     seq_len = w_size
                     train_ds = SpectrumPatchDataset(train_full_ds, window_size=w_size, stride=s_step)
-                    region_train_cfg["window_size"] = w_size
-                    region_train_cfg["stride"] = s_step
-
-                # Re-instantiate model with optimal parameters if architecture parameters changed
+                    r_train_cfg.update({"window_size": w_size, "stride": s_step})
                 arch_keys = (
-                    "kernel_size",
-                    "hidden_channels",
-                    "base_channels",
-                    "depth",
-                    "backbone_channels",
-                    "aspp_channels",
-                    "window_size",
+                    "kernel_size", "hidden_channels", "base_channels", "depth", "backbone_channels",
+                    "aspp_channels", "window_size",
                 )
-                if any(k in best_params for k in arch_keys):
-                    model = instantiate_model(region_m_type, seq_len=seq_len, config=region_train_cfg)
-                    region_train_cfg["model"] = model
-            if verbose:
-                print(f"Ax optimal params for {region}: {best_params}")
+                if any(k in best_p for k in arch_keys):
+                    model = instantiate_model(reg_m_type, seq_len=seq_len, config=r_train_cfg)
+                    r_train_cfg["model"] = model
 
-        # =====================================================================
-        # STEP 7: MODEL TRAINING AND VALIDATION
-        # =====================================================================
         if verbose:
-            region_train_cfg["verbose"] = True
+            r_train_cfg["verbose"] = True
+        train_res = train_model_region(train_ds, val_full_ds, config=r_train_cfg)
+        trained_m = train_res["model"]
+        models[region] = (trained_m, w_size, s_step) if reg_use_sw else trained_m
+        eval_results[region] = float(train_res["best_val_loss"])
+        histories[region] = train_res["history"]
 
-        train_result = train_model_region(train_ds, val_ds, config=region_train_cfg)
-        trained_model = train_result["model"]
-
-        if region_use_sw:
-            models[region] = (trained_model, w_size, s_step)
-        else:
-            models[region] = trained_model
-
-        best_val = float(train_result["best_val_loss"])
-        eval_results[region] = best_val
-        histories[region] = train_result["history"]
-
-        # Evaluate model generalization on held-out test dataset
         if len(test_full_ds) > 0:
-            if region_use_sw:
+            if reg_use_sw:
                 t_loss = evaluate_sliding_window(
-                    trained_model,
-                    test_full_ds,
-                    criterion=criterion,
-                    config={"window_size": w_size, "stride": s_step},
+                    trained_m, test_full_ds, criterion=criterion, config={"window_size": w_size, "stride": s_step},
                 )
             else:
-                _, test_loader = create_dataloaders(
-                    test_full_ds,
-                    test_full_ds,
-                    config={"batch_size": region_train_cfg.get("batch_size", 16), "shuffle_train": False},
+                _, t_loader = create_dataloaders(
+                    test_full_ds, test_full_ds,
+                    config={"batch_size": r_train_cfg.get("batch_size", 16), "shuffle_train": False},
                 )
-                t_loss = evaluate(trained_model, test_loader, criterion)
+                t_loss = evaluate(trained_m, t_loader, criterion)
             test_eval_results[region] = float(t_loss)
-            if verbose:
-                t_str = format_loss_log10(t_loss)
-                print(f"Region {region} test loss: {t_str}")
 
-        if verbose:
-            b_str = format_loss_log10(best_val)
-            print(f"Region {region} training complete. Best Val Loss: {b_str}")
-
-    # =========================================================================
-    # STEP 8: TEST DATA PREDICTION
-    # =========================================================================
     predictions = None
-    if predict_source:
-        pred_cfg = {
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "session_splits": session_splits,
-            "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
-            "clamp_non_negative": True,
+    if cfg.get("predict_source", True):
+        p_cfg = {
+            "source_tool": source_tool, "target_tool": target_tool, "session_splits": session_splits,
+            "normalization_mode": cfg.get("normalization_mode", "source_referenced"), "clamp_non_negative": True,
         }
-        predictions = predict_spectra(
-            models=models,
-            data=(ary_intensity, ary_energy, meta_df),
-            config=pred_cfg,
-        )
+        predictions = predict_spectra(models=models, data=(ary_intensity, ary_energy, meta_df), config=p_cfg)
 
     return {
-        "models": models,
-        "evaluation": eval_results,
-        "test_evaluation": test_eval_results,
-        "session_splits": session_splits,
-        "histories": histories,
-        "bayesian_opt_results": bo_results,
+        "models": models, "evaluation": eval_results, "test_evaluation": test_eval_results,
+        "session_splits": session_splits, "histories": histories, "bayesian_opt_results": bo_results,
         "predictions": predictions,
     }
 
 
 def run_resnet_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
+    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute the end-to-end ResNet modeling pipeline."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "resnet")
-    return run_spectral_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        model_type="resnet",
-        use_sliding_window=bool(cfg.get("use_sliding_window", False)),
-        config=cfg,
-        **kwargs,
-    )
+    cfg = {**(config or {}), "model_type": "resnet"}
+    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "resnet", config=cfg, **kwargs)
 
 
 def run_residual_unet_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
+    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute the end-to-end Residual U-Net modeling pipeline."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "residual_unet")
-    return run_spectral_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        model_type="residual_unet",
-        use_sliding_window=bool(cfg.get("use_sliding_window", False)),
-        config=cfg,
-        **kwargs,
-    )
+    cfg = {**(config or {}), "model_type": "residual_unet"}
+    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "residual_unet", config=cfg, **kwargs)
 
 
 def run_unet_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
+    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute the end-to-end Conventional U-Net modeling pipeline."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "unet")
-    return run_spectral_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        model_type="unet",
-        use_sliding_window=bool(cfg.get("use_sliding_window", False)),
-        config=cfg,
-        **kwargs,
-    )
+    cfg = {**(config or {}), "model_type": "unet"}
+    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "unet", config=cfg, **kwargs)
 
 
 def run_deeplabv3_pipeline(
-    meta_df: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None,
-    **kwargs: Any,
+    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
+    config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute the end-to-end DeepLabV3 modeling pipeline."""
-    cfg = dict(config or {})
-    cfg.setdefault("model_type", "deeplabv3")
-    return run_spectral_pipeline(
-        data=(ary_intensity, ary_energy, meta_df),
-        model_type="deeplabv3",
-        use_sliding_window=bool(cfg.get("use_sliding_window", False)),
-        config=cfg,
-        **kwargs,
-    )
-
-
+    cfg = {**(config or {}), "model_type": "deeplabv3"}
+    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "deeplabv3", config=cfg, **kwargs)
