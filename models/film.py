@@ -173,9 +173,17 @@ class FiLMGenerator(nn.Module):
               centered at 0.0 for identity modulation.
             Applied to feature map z as: FiLM(z) = gamma * z + beta.
         """
+        target_device = self.die_embedding.weight.device
+        cond_dev = {
+            k: v.to(target_device) if isinstance(v, torch.Tensor) and v.device != target_device else v
+            for k, v in cond.items()
+        }
         raw_feat = torch.cat([
-            self.die_embedding(cond["die"]), self.tool_embedding(cond["tool_src"]),
-            self.tool_embedding(cond["tool_tgt"]), cond["log_flux_src"], cond["delta_time_days"],
+            self.die_embedding(cond_dev["die"]),
+            self.tool_embedding(cond_dev["tool_src"]),
+            self.tool_embedding(cond_dev["tool_tgt"]),
+            cond_dev["log_flux_src"],
+            cond_dev["delta_time_days"],
         ], dim=-1)
         h = self.mlp(raw_feat)
         modulations = []

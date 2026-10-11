@@ -112,12 +112,14 @@ class NormalizedMSELoss(nn.Module):
 
         if max_val is None:
             max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
+        else:
+            max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
         max_val = torch.clamp(max_val, min=self.eps)
 
         norm_pred = y_pred / max_val
         norm_true = y_true / max_val
 
-        total_loss = torch.tensor(0.0, device=y_pred.device, dtype=y_pred.dtype)
+        total_loss = 0.0 * torch.sum(y_pred)
 
         # 1. Normalized MSE loss component
         if self.w_mse > 0.0:
@@ -126,8 +128,8 @@ class NormalizedMSELoss(nn.Module):
 
         # 2. Scale-invariant Cosine Shape distance component (1 - cos(y_pred, y_true))
         if self.w_shape > 0.0:
-            pred_norm = torch.norm(norm_pred, p=2, dim=-1, keepdim=True).clamp(min=self.eps)
-            true_norm = torch.norm(norm_true, p=2, dim=-1, keepdim=True).clamp(min=self.eps)
+            pred_norm = torch.linalg.vector_norm(norm_pred, dim=-1, keepdim=True).clamp(min=self.eps)
+            true_norm = torch.linalg.vector_norm(norm_true, dim=-1, keepdim=True).clamp(min=self.eps)
             cosine_sim = torch.sum((norm_pred / pred_norm) * (norm_true / true_norm), dim=-1)
             cosine_sim = torch.clamp(cosine_sim, -1.0, 1.0)
             shape_loss = torch.mean(1.0 - cosine_sim)
