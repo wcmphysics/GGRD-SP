@@ -449,7 +449,6 @@ def run_spectral_pipeline(
             "session_splits": session_splits,
             "return_test": True,
             "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
-            "normalize_by_source": cfg.get("normalize_by_source", True),
         }
         train_full_ds, val_full_ds, test_full_ds = split_session_datasets(
             meta_df, ary_intensity, ary_energy, config=split_cfg
@@ -644,7 +643,6 @@ def run_spectral_pipeline(
             "target_tool": target_tool,
             "session_splits": session_splits,
             "normalization_mode": cfg.get("normalization_mode", "source_referenced"),
-            "normalize_by_source": cfg.get("normalize_by_source", True),
             "clamp_non_negative": True,
         }
         predictions = predict_spectra(

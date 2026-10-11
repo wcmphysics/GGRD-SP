@@ -39,7 +39,7 @@ def predict_sliding_window_spectrum(
         - 'stride' (int): Stride points (default window_size // 2).
         - 'device' (str | torch.device | None): Computation device.
         - 'batch_size' (int): Batch size for patch forward pass (default 64).
-        - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
+        - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default) or 'none'.
         - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
         - 'eps' (float): Epsilon floor for source scale (default 1e-4).
     cond : dict[str, torch.Tensor] | None, optional
@@ -53,7 +53,7 @@ def predict_sliding_window_spectrum(
     cfg = config or {}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
-    normalize_by_source = bool(cfg.get("normalize_by_source", True))
+    norm_mode = str(cfg.get("normalization_mode", "source_referenced")).lower()
     clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
     eps = float(cfg.get("eps", 1e-4))
 
@@ -71,7 +71,7 @@ def predict_sliding_window_spectrum(
     if scale_factor is not None:
         scale_x = max(float(scale_factor), eps)
         spectrum_in = spectrum_1d / scale_x
-    elif normalize_by_source:
+    elif norm_mode == "source_referenced":
         scale_x = max(float(np.max(np.abs(spectrum_1d))), eps)
         spectrum_in = spectrum_1d / scale_x
     else:
@@ -108,7 +108,7 @@ def predict_sliding_window_spectrum(
     # Rescale to physical counts
     reconstructed_phys = (
         reconstructed_norm * scale_x
-        if (normalize_by_source or scale_factor is not None)
+        if (norm_mode != "none" or scale_factor is not None)
         else reconstructed_norm
     )
 
@@ -261,7 +261,8 @@ def predict_spectra(
           (default None = all sessions for source_tool).
         - 'batch_size' (int): Batch size for inference (default 64).
         - 'device' (str | torch.device | None): Computation device (default CPU/CUDA auto).
-        - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
+        - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default),
+          'die_total_flux', or 'none'.
         - 'clamp_non_negative' (bool): Whether to clamp final predicted intensities to non-negative (default True).
         - 'eps' (float): Epsilon floor for source normalization scale (default 1e-4).
 
@@ -288,7 +289,7 @@ def predict_spectra(
     target_tool: str = cfg.get("target_tool", "H1")
     measurement_ids: list[str] | None = cfg.get("measurement_ids")
     batch_size: int = int(cfg.get("batch_size", 64))
-    normalize_by_source: bool = bool(cfg.get("normalize_by_source", True))
+    norm_mode = str(cfg.get("normalization_mode", "source_referenced")).lower()
     clamp_non_negative: bool = bool(cfg.get("clamp_non_negative", True))
     eps: float = float(cfg.get("eps", 1e-4))
     device_str = cfg.get("device")
@@ -326,14 +327,8 @@ def predict_spectra(
     source_indices = source_df["spectrum_index"].astype(int).to_numpy()
     predicted_energies[:] = ary_energy[source_indices]
 
-    raw_mode = cfg.get("normalization_mode")
-    if raw_mode is not None:
-        norm_mode = str(raw_mode).lower()
-    else:
-        norm_mode = "source_referenced" if normalize_by_source else "none"
-
     source_flux_map: dict[tuple[str, int], float] = {}
-    if norm_mode in ("die_total_flux", "die_flux"):
+    if norm_mode == "die_total_flux":
         source_flux_map = compute_die_total_flux(source_df, ary_intensity, ary_energy)
 
     # Process region-by-region in batches for vectorization speedup
@@ -345,7 +340,7 @@ def predict_spectra(
             model_entry = models[str(region)]
             region_x = ary_intensity[orig_indices]
 
-            if norm_mode in ("die_total_flux", "die_flux") and source_flux_map:
+            if norm_mode == "die_total_flux" and source_flux_map:
                 scales = np.array([
                     source_flux_map.get(
                         (str(r_row["measurement_id"]), int(r_row["die"])),
@@ -354,7 +349,7 @@ def predict_spectra(
                     for _, r_row in group.iterrows()
                 ], dtype=np.float32)[:, None]
                 region_x_in = region_x / scales
-            elif normalize_by_source and norm_mode != "none":
+            elif norm_mode == "source_referenced":
                 scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
                 region_x_in = region_x / scales
             else:
@@ -398,7 +393,7 @@ def predict_spectra(
                             "stride": s_step,
                             "device": m_dev,
                             "scale_factor": float(scales[idx_in_region, 0]),
-                            "normalize_by_source": normalize_by_source,
+                            "normalization_mode": norm_mode,
                             "clamp_non_negative": clamp_non_negative,
                             "eps": eps,
                         },

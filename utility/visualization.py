@@ -986,8 +986,8 @@ def plot_normalized_max_intensity_vs_time(
     if hue not in meta_df.columns:
         raise KeyError(f"Hue column '{hue}' not found in meta_df columns: {list(meta_df.columns)}")
 
-    valid_die_flux_modes = {"die_total_flux", "die_flux", "die", "canonical"}
-    valid_spec_area_modes = {"spectrum_area", "spectrum", "regional"}
+    valid_die_flux_modes = {"die_total_flux"}
+    valid_spec_area_modes = {"spectrum_area"}
 
     if norm_mode not in (valid_die_flux_modes | valid_spec_area_modes):
         raise ValueError(

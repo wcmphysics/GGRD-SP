@@ -24,7 +24,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         x_raw = np.array([[1000.0, 5000.0, 2000.0], [500.0, 2000.0, 1000.0]], dtype=np.float32)
         y_raw = x_raw * 1.15  # Target tool is 15% higher
 
-        ds = SpectrumPairDataset(x_raw, y_raw, config={"normalize_by_source": True})
+        ds = SpectrumPairDataset(x_raw, y_raw, config={"normalization_mode": "source_referenced"})
 
         # Sample 0: max(x) is 5000
         item0 = ds[0]
@@ -37,11 +37,11 @@ class TestSourceReferencedNormalization(unittest.TestCase):
         np.testing.assert_allclose(unnorm_y.numpy(), y_raw[0], rtol=1e-5)
 
     def test_spectrum_pair_dataset_disabled_normalization(self) -> None:
-        """Test that normalize_by_source=False leaves x and y unnormalized."""
+        """Test that normalization_mode='none' leaves x and y unnormalized."""
         x_raw = np.array([[1000.0, 5000.0, 2000.0]], dtype=np.float32)
         y_raw = x_raw * 1.1
 
-        ds = SpectrumPairDataset(x_raw, y_raw, config={"normalize_by_source": False})
+        ds = SpectrumPairDataset(x_raw, y_raw, config={"normalization_mode": "none"})
         item = ds[0]
         self.assertAlmostEqual(item["x"].max().item(), 5000.0, places=2)
         self.assertAlmostEqual(item["y"].max().item(), 5500.0, places=2)
@@ -98,7 +98,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
             config={
                 "window_size": 20,
                 "stride": 10,
-                "normalize_by_source": True,
+                "normalization_mode": "source_referenced",
                 "clamp_non_negative": True,
             },
         )
@@ -156,7 +156,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
             meta_df,
             ary_intensity,
             ary_energy,
-            {"region": "Ti2p", "source_tool": "J4", "target_tool": "J5", "normalize_by_source": True},
+            {"region": "Ti2p", "source_tool": "J4", "target_tool": "J5", "normalization_mode": "source_referenced"},
         )
 
         from models.cost import NormalizedMSELoss
@@ -351,13 +351,13 @@ class TestSourceReferencedNormalization(unittest.TestCase):
                 return patch
 
         model = PassThrough()
-        # Explicit scale_factor of 200.0, normalize_by_source=False
+        # Explicit scale_factor of 200.0, normalization_mode="none"
         pred = predict_sliding_window_spectrum(
             model=model,
             spectrum=x,
             config={
                 "scale_factor": 200.0,
-                "normalize_by_source": False,
+                "normalization_mode": "none",
                 "window_size": 10,
                 "stride": 5,
             },
