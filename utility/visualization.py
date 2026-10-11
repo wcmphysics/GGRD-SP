@@ -984,7 +984,7 @@ def plot_normalized_max_intensity_vs_time(
                     f"Column '{req_col}' is required in meta_df for 'die_total_flux' normalization."
                 )
 
-        from models.dataset import compute_die_total_flux
+        from utility.quantification import compute_die_total_flux
 
         # Compute die total flux across the full meta_df before filtering
         flux_map = compute_die_total_flux(meta_df, ary_intensity, ary_energy)
