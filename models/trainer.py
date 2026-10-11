@@ -222,10 +222,19 @@ def evaluate_sliding_window(
         x_arr = item["x"].cpu().numpy()
         y_true = item["y"].unsqueeze(0).to(device)
 
+        cond = None
+        if getattr(model, "use_film", False):
+            cond = prepare_film_condition_tensor(
+                metadata=item.get("meta"),
+                scale_x=item.get("scale_x"),
+                device=device,
+                num_samples=1,
+            )
+
         reconstructed_arr = predict_sliding_window_spectrum(
-            model, x_arr, config=predict_cfg
+            model, x_arr, config=predict_cfg, cond=cond
         )
-        y_pred = torch.from_numpy(reconstructed_arr).unsqueeze(0).to(device)
+        y_pred = torch.from_numpy(reconstructed_arr).float().unsqueeze(0).to(device)
 
         loss = criterion(y_pred, y_true, model=None)
         total_loss += loss.item()
