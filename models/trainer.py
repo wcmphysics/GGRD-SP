@@ -14,7 +14,12 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
 from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
-from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders
+from models.dataset import (
+    SpectrumPairDataset,
+    SpectrumPatchDataset,
+    create_dataloaders,
+    default_spectrum_collate,
+)
 from models.deeplabv3 import DeepLabV3
 from models.film import prepare_film_condition_tensor
 from models.inference import predict_sliding_window_spectrum
@@ -392,7 +397,12 @@ def train_model_region(
 
     if use_sw:
         if isinstance(train_dataset, SpectrumPatchDataset):
-            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                collate_fn=default_spectrum_collate,
+            )
             w_size = train_dataset.window_size
             s_step = train_dataset.stride
             seq_len = w_size
@@ -405,7 +415,12 @@ def train_model_region(
             seq_len = w_size
 
             train_patch_ds = SpectrumPatchDataset(train_dataset, window_size=w_size, stride=s_step)
-            train_loader = DataLoader(train_patch_ds, batch_size=batch_size, shuffle=True)
+            train_loader = DataLoader(
+                train_patch_ds,
+                batch_size=batch_size,
+                shuffle=True,
+                collate_fn=default_spectrum_collate,
+            )
             val_loader = None
     else:
         seq_len = full_len

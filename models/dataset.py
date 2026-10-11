@@ -158,14 +158,14 @@ class SpectrumPairDataset(Dataset):
 
     def get_scale(self, idx: int) -> float:
         """Return the source normalization scalar for a given sample index."""
-        if self.scale_x.dim() > 1:
+        if self.scale_x.numel() > 1:
             return float(self.scale_x[idx].item())
         return float(self.scale_x.item())
 
     def get_target_scale(self, idx: int) -> float:
         """Return the target normalization scalar for a given sample index."""
         if hasattr(self, "scale_y"):
-            if self.scale_y.dim() > 1:
+            if self.scale_y.numel() > 1:
                 return float(self.scale_y[idx].item())
             return float(self.scale_y.item())
         return self.get_scale(idx)
@@ -203,6 +203,9 @@ class SpectrumPatchDataset(Dataset):
         x_patches_list: list[np.ndarray] = []
         y_patches_list: list[np.ndarray] = []
         max_vals_list: list[float] = []
+        meta_list: list[dict[str, Any]] = []
+        scale_x_list: list[torch.Tensor] = []
+        scale_y_list: list[torch.Tensor] = []
 
         for idx in range(len(full_dataset)):
             item = full_dataset[idx]
@@ -212,10 +215,17 @@ class SpectrumPatchDataset(Dataset):
 
             x_win, _ = extract_sliding_windows(x_arr, window_size, stride)
             y_win, _ = extract_sliding_windows(y_arr, window_size, stride)
+            n_win = len(x_win)
 
             x_patches_list.append(x_win)
             y_patches_list.append(y_win)
-            max_vals_list.extend([max_y] * len(x_win))
+            max_vals_list.extend([max_y] * n_win)
+            if "meta" in item:
+                meta_list.extend([item["meta"]] * n_win)
+            if "scale_x" in item:
+                scale_x_list.extend([item["scale_x"]] * n_win)
+            if "scale_y" in item:
+                scale_y_list.extend([item["scale_y"]] * n_win)
 
         if not x_patches_list:
             raise ValueError("No patches could be extracted from the dataset.")
@@ -223,16 +233,26 @@ class SpectrumPatchDataset(Dataset):
         self.x = torch.from_numpy(np.vstack(x_patches_list).astype(np.float32))
         self.y = torch.from_numpy(np.vstack(y_patches_list).astype(np.float32))
         self.max_vals = torch.tensor(max_vals_list, dtype=torch.float32).unsqueeze(1)
+        self.meta_list = meta_list
+        self.scale_x_list = scale_x_list
+        self.scale_y_list = scale_y_list
 
     def __len__(self) -> int:
         return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        return {
+        ret: dict[str, Any] = {
             "x": self.x[idx],
             "y": self.y[idx],
             "max_val": self.max_vals[idx],
         }
+        if self.meta_list and idx < len(self.meta_list):
+            ret["meta"] = self.meta_list[idx]
+        if self.scale_x_list and idx < len(self.scale_x_list):
+            ret["scale_x"] = self.scale_x_list[idx]
+        if self.scale_y_list and idx < len(self.scale_y_list):
+            ret["scale_y"] = self.scale_y_list[idx]
+        return ret
 
 
 def partition_measurement_sessions(
