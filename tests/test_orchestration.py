@@ -45,6 +45,13 @@ class TestOrchestrationPipeline(unittest.TestCase):
             meta_df,
             config={"source_tool": "J4", "target_tool": "H1", "time_threshold_hours": 12.0},
         )
+        unique_tools = sorted(
+            set(meta_df["tool"].dropna().astype(str).unique())
+            | set(meta_df["tool_target"].dropna().astype(str).unique())
+        )
+        tool_map = {tool_name: idx for idx, tool_name in enumerate(unique_tools)}
+        meta_df["tool_index"] = meta_df["tool"].map(tool_map)
+        meta_df["tool_target_index"] = meta_df["tool_target"].map(tool_map)
         cls.ary_intensity = ary_intensity
         cls.ary_energy = ary_energy
         cls.meta_df = meta_df

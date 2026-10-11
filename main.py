@@ -66,6 +66,17 @@ def main() -> None:
     df_meta = ut.pair_source_target_spectra(df_meta, pair_cfg)
     src_df = df_meta[df_meta["tool"] == source_tool]
     print(f"Paired sessions: {src_df['measurement_id_target'].dropna().nunique()}/{src_df['measurement_id'].nunique()}")
+
+    # Establish fixed, unique tool mapping across all tools present in metadata
+    unique_tools = sorted(
+        set(df_meta["tool"].dropna().astype(str).unique())
+        | set(df_meta["tool_target"].dropna().astype(str).unique())
+    )
+    tool_map = {tool_name: idx for idx, tool_name in enumerate(unique_tools)}
+    df_meta["tool_index"] = df_meta["tool"].map(tool_map)
+    df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_map)
+    pipe_cfg["num_tools"] = len(tool_map)
+
     data_orig = (ary_i, ary_e, df_meta)
 
     # =========================================================================
