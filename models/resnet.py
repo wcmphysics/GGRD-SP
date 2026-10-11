@@ -8,9 +8,27 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch, torch.nn as nn
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 from models.film import FiLMGenerator
+
+
+class _SafeReflectionPad1d(nn.Module):
+    """Dynamically applies reflection padding when sequence length L > pad.
+
+    Falls back gracefully to constant zero padding when L <= pad.
+    """
+
+    def __init__(self, pad: int) -> None:
+        super().__init__()
+        self.pad = int(pad)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] > self.pad:
+            return F.pad(x, (self.pad, self.pad), mode="reflect")
+        return F.pad(x, (self.pad, self.pad), mode="constant", value=0.0)
 
 
 class ResNet1D(nn.Module):
@@ -42,8 +60,13 @@ class ResNet1D(nn.Module):
         effective_config = config or {}
 
         # Parse configuration parameters with project defaults
-        hidden_channels, kernel_size, dropout = int(effective_config.get("hidden_channels", 32)), int(effective_config.get("kernel_size", 5)), float(effective_config.get("dropout", 0.0))
-        use_batch_norm, padding_mode, self.use_film, self.n_points = bool(effective_config.get("use_batch_norm", True)), str(effective_config.get("padding_mode", "reflect")), bool(effective_config.get("use_film", False)), n_points
+        hidden_channels = int(effective_config.get("hidden_channels", 32))
+        kernel_size = int(effective_config.get("kernel_size", 5))
+        dropout = float(effective_config.get("dropout", 0.0))
+        use_batch_norm = bool(effective_config.get("use_batch_norm", True))
+        padding_mode = str(effective_config.get("padding_mode", "reflect"))
+        self.use_film = bool(effective_config.get("use_film", False))
+        self.n_points = n_points
 
         # Validate that kernel size is positive and odd to ensure symmetric padding
         if kernel_size <= 0 or kernel_size % 2 == 0:
@@ -51,21 +74,38 @@ class ResNet1D(nn.Module):
 
         padding_size = kernel_size // 2
 
-        # Factory helper to construct conv layer with optional reflection padding
+        # Factory helper to construct conv layer with safe reflection padding
         def _make_conv(in_channels: int, out_channels: int) -> nn.Module:
-            return nn.Sequential(nn.ReflectionPad1d(padding_size), nn.Conv1d(in_channels, out_channels, kernel_size)) if (padding_size > 0 and padding_mode == "reflect" and n_points > padding_size) else nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding_size)
+            if padding_size > 0 and padding_mode == "reflect":
+                return nn.Sequential(
+                    _SafeReflectionPad1d(padding_size),
+                    nn.Conv1d(in_channels, out_channels, kernel_size),
+                )
+            return nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding_size)
 
         # 3-layer CNN backbone: 1 -> hidden -> hidden -> 1 (spectral residual Delta)
-        self.conv1, self.conv2, self.conv3 = _make_conv(1, hidden_channels), _make_conv(hidden_channels, hidden_channels), _make_conv(hidden_channels, 1)
+        self.conv1 = _make_conv(1, hidden_channels)
+        self.conv2 = _make_conv(hidden_channels, hidden_channels)
+        self.conv3 = _make_conv(hidden_channels, 1)
 
         # Normalization, activation, and dropout layers
-        self.bn1, self.bn2 = (nn.BatchNorm1d(hidden_channels) if use_batch_norm else nn.Identity()), (nn.BatchNorm1d(hidden_channels) if use_batch_norm else nn.Identity())
-        self.activation, self.dropout = nn.ReLU(inplace=True), nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.bn1 = nn.BatchNorm1d(hidden_channels) if use_batch_norm else nn.Identity()
+        self.bn2 = nn.BatchNorm1d(hidden_channels) if use_batch_norm else nn.Identity()
+        self.activation = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
         # Optional FiLM generator for metadata-conditioned modulation (die, tool, drift)
-        self.film_gen = FiLMGenerator([hidden_channels, hidden_channels], config=effective_config) if self.use_film else None
+        self.film_gen = (
+            FiLMGenerator([hidden_channels, hidden_channels], config=effective_config)
+            if self.use_film
+            else None
+        )
 
-    def forward(self, x: torch.Tensor, cond: dict[str, torch.Tensor] | torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Forward pass applying residual transformation: y = x + Delta(x, cond).
 
         Parameters
@@ -90,7 +130,9 @@ class ResNet1D(nn.Module):
 
         # Hidden representation extraction across layers 1 and 2 with FiLM affine modulation
         hidden_features = x_in
-        for layer_index, (conv_layer, batch_norm_layer) in enumerate(((self.conv1, self.bn1), (self.conv2, self.bn2))):
+        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
+            ((self.conv1, self.bn1), (self.conv2, self.bn2))
+        ):
             hidden_features = batch_norm_layer(conv_layer(hidden_features))
             if film_modulations is not None:
                 gamma, beta = film_modulations[layer_index]
@@ -98,7 +140,9 @@ class ResNet1D(nn.Module):
             hidden_features = self.dropout(self.activation(hidden_features))
 
         # Project to residual difference Delta(x) and add physical shortcut: y = x + Delta(x)
-        return (x_in + self.conv3(hidden_features)).squeeze(1) if x.dim() == 2 else (x_in + self.conv3(hidden_features))
+        delta = self.conv3(hidden_features)
+        out = x_in + delta
+        return out.squeeze(1) if x.dim() == 2 else out
 
     def get_l2_regularization(self) -> torch.Tensor:
         """Compute the sum of squared weights (L2 regularization penalty) for conv layers.
@@ -111,5 +155,9 @@ class ResNet1D(nn.Module):
         torch.Tensor
             Scalar tensor representing sum of squared convolutional weights.
         """
-        weights = [param for name, param in self.named_parameters() if param.requires_grad and name.endswith(".weight") and "bn" not in name]
-        return sum((param ** 2).sum() for param in weights) if weights else torch.tensor(0.0, device=next(self.parameters()).device)
+        device = next(self.parameters()).device
+        l2_sum = torch.tensor(0.0, device=device)
+        for module in self.modules():
+            if isinstance(module, nn.Conv1d) and module.weight.requires_grad:
+                l2_sum = l2_sum + torch.sum(module.weight**2)
+        return l2_sum

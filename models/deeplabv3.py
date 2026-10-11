@@ -44,7 +44,7 @@ class _SafeBatchNorm1d(nn.BatchNorm1d):
     """
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.training and (x.size(0) * x.size(-1) <= 1):
+        if self.training and (x.size(0) * x.size(-1) <= 1) and self.running_mean is not None:
             return F.batch_norm(
                 x,
                 self.running_mean,
