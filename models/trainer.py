@@ -221,7 +221,7 @@ def evaluate_sliding_window(
         "device": device,
         "window_size": w_size,
         "stride": s_step,
-        "normalize_by_source": False,  # dataset items are already normalized
+        "normalization_mode": "none",  # dataset items are already normalized
         "clamp_non_negative": True,
     }
 

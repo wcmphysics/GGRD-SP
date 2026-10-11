@@ -30,7 +30,6 @@ class SpectrumPairDataset(Dataset):
         Configuration dictionary:
         - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default),
           'die_total_flux' (Tier 1 canonical die flux normalization), or 'none'.
-        - 'normalize_by_source' (bool): Legacy flag for backward compatibility (default True).
         - 'eps' (float): Epsilon floor to prevent division by zero (default 1e-4).
     scale_x : np.ndarray | torch.Tensor | None, optional
         Precomputed source scale factors of shape (N_samples, 1) or (N_samples,).
@@ -83,17 +82,13 @@ class SpectrumPairDataset(Dataset):
         if scale_y is None:
             scale_y = cfg.get("scale_y")
 
-        raw_mode = cfg.get("normalization_mode")
-        if raw_mode is not None:
-            norm_mode = str(raw_mode).lower()
-        else:
-            norm_mode = "source_referenced" if cfg.get("normalize_by_source", True) else "none"
+        raw_mode = cfg.get("normalization_mode", "source_referenced")
+        norm_mode = str(raw_mode).lower()
 
         self.normalization_mode = norm_mode
-        self.normalize_by_source: bool = bool(cfg.get("normalize_by_source", norm_mode != "none"))
         eps: float = float(cfg.get("eps", 1e-4))
 
-        if norm_mode in ("die_total_flux", "die_flux"):
+        if norm_mode == "die_total_flux":
             if scale_x is None:
                 raise ValueError(
                     f"normalization_mode='{norm_mode}' requires 'scale_x' to be provided."
@@ -125,7 +120,7 @@ class SpectrumPairDataset(Dataset):
 
             self.x = self.x / self.scale_x
             self.y = self.y / self.scale_y
-        elif self.normalize_by_source and norm_mode != "none" and len(self.x) > 0:
+        elif norm_mode == "source_referenced" and len(self.x) > 0:
             if self.x.dim() == 1:
                 scales = torch.clamp(torch.max(torch.abs(self.x)), min=eps)
             else:
@@ -421,7 +416,6 @@ def split_session_datasets(
         - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
         - 'return_test' (bool): Whether to return test_dataset as 3rd tuple element (default False).
         - 'normalization_mode' (str): 'source_referenced' (default), 'die_total_flux', or 'none'.
-        - 'normalize_by_source' (bool): Legacy flag for backward compatibility (default True).
         - 'train_ratio' (float): Fraction of sessions for training (default 0.5).
         - 'val_ratio' (float): Fraction of sessions for validation (default 0.2).
         - 'test_ratio' (float): Fraction of sessions for test (default 0.3).
@@ -440,12 +434,8 @@ def split_session_datasets(
     source_tool: str | None = cfg.get("source_tool")
     target_tool: str | None = cfg.get("target_tool")
     return_test: bool = bool(cfg.get("return_test", False))
-    raw_mode = cfg.get("normalization_mode")
-    if raw_mode is not None:
-        norm_mode = str(raw_mode).lower()
-    else:
-        norm_mode = "source_referenced" if cfg.get("normalize_by_source", True) else "none"
-    normalize_by_source: bool = bool(cfg.get("normalize_by_source", norm_mode != "none"))
+    raw_mode = cfg.get("normalization_mode", "source_referenced")
+    norm_mode = str(raw_mode).lower()
     eps_val: float = float(cfg.get("eps", 1e-4))
 
     if len(ary_intensity) != len(ary_energy):
@@ -536,7 +526,6 @@ def split_session_datasets(
             metadata=df_subset.to_dict(orient="records"),
             config={
                 "normalization_mode": norm_mode,
-                "normalize_by_source": normalize_by_source,
                 "eps": eps_val,
             },
             scale_x=scale_x_arr,
