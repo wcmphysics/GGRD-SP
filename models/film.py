@@ -7,6 +7,7 @@ area/flux) without target data leakage.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -17,20 +18,27 @@ import torch.nn as nn
 
 def _parse_time_diff(t1: Any, t2: Any) -> float:
     """Compute time difference in days between two timestamps."""
+    if t1 is None or t2 is None or pd.isna(t1) or pd.isna(t2):
+        return 0.0
     try:
-        if t1 is not None and t2 is not None and not (pd.isna(t1) or pd.isna(t2)):
-            return abs((pd.Timestamp(t2) - pd.Timestamp(t1)).total_seconds()) / 86400.0
-    except Exception:
-        pass
-    return 0.0
+        return abs((pd.Timestamp(t2) - pd.Timestamp(t1)).total_seconds()) / 86400.0
+    except (ValueError, TypeError) as exc:
+        warnings.warn(f"Failed to parse timestamps '{t1}' and '{t2}': {exc}. Defaulting time diff to 0.0.")
+        return 0.0
 
 
 def _parse_die(value: Any) -> int:
     """Extract die index bounded within [0, 8]."""
+    if value is None or pd.isna(value):
+        return 0
     try:
         raw_val = value.item() if hasattr(value, "item") else value
-        return min(max(int(raw_val), 0), 8) if value is not None and not pd.isna(value) else 0
-    except Exception:
+        die_idx = int(raw_val)
+        if not (0 <= die_idx <= 8):
+            warnings.warn(f"Die index {die_idx} outside expected [0, 8] range; clamping to [0, 8].")
+        return min(max(die_idx, 0), 8)
+    except (ValueError, TypeError) as exc:
+        warnings.warn(f"Invalid die value '{value}': {exc}. Defaulting die index to 0.")
         return 0
 
 

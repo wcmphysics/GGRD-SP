@@ -131,8 +131,8 @@ def run_ax_search(
             first = metrics[0]
             if isinstance(first, dict) and "val_loss" in first:
                 best_val_loss = float(first["val_loss"])
-    except Exception:
-        pass
+    except Exception as exc:
+        warnings.warn(f"ax_client.get_best_parameters() failed ({exc}); falling back to best recorded trial.")
 
     if (np.isinf(best_val_loss) or np.isnan(best_val_loss)) and trials_data:
         sorted_trials = sorted(trials_data, key=lambda t: t["val_loss"])
