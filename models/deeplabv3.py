@@ -369,13 +369,19 @@ class DeepLabV3(nn.Module):
         # 3. Final Prediction Head (maps feature channels to 1 intensity channel)
         self.head = nn.Conv1d(aspp_channels, 1, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Forward pass transforming input spectrum x to target spectrum y.
 
         Parameters
         ----------
         x : torch.Tensor
             Input tensor of shape (batch_size, n_points) or (batch_size, 1, n_points).
+        cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
+            Optional metadata conditioning (unused by default DeepLabV3 backbone).
 
         Returns
         -------
