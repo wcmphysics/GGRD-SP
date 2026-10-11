@@ -328,6 +328,14 @@ def pair_source_target_spectra(
     col_diff: list[float | None] = [None] * n_rows
     col_t7: list[str | None] = [None] * n_rows
 
+    src_mask = result_df["tool"] == source_tool
+    if src_mask.any() and not all_session_pairs:
+        warnings.warn(
+            f"No session pairs could be formed between source tool '{source_tool}' and target tool "
+            f"'{target_tool}' within time threshold of {threshold_hours} hours. All target metadata "
+            "columns will remain null."
+        )
+
     if all_session_pairs:
         for row_idx, (_, row) in enumerate(result_df.iterrows()):
             if row["tool"] == source_tool:

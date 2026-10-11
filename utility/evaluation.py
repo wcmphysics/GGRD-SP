@@ -7,6 +7,7 @@ fulfilling Part 4 of GEMINI.md independently from plotting libraries.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -79,7 +80,8 @@ def calculate_prediction_metrics(
         y_true = ary_intensity_orig[tgt_idx]
         y_pred = ary_intensity_pred[pred_idx]
 
-        max_true = max(float(np.max(np.abs(y_true))), eps)
+        safe_eps = max(float(eps), 1e-12)
+        max_true = max(float(np.max(np.abs(y_true))), safe_eps)
         max_pred = float(np.max(np.abs(y_pred)))
 
         norm_mse = float(np.mean(((y_pred - y_true) / max_true) ** 2))
@@ -103,6 +105,11 @@ def calculate_prediction_metrics(
 
     df_per_sample = pd.DataFrame(records)
     if df_per_sample.empty:
+        if not meta_df_pred.empty:
+            warnings.warn(
+                "calculate_prediction_metrics found zero matching target records for "
+                f"{len(meta_df_pred)} prediction rows in meta_df_orig."
+            )
         df_summary = pd.DataFrame(
             columns=[
                 "region",
