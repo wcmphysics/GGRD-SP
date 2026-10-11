@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
 from models.dataset import (
@@ -24,7 +24,7 @@ from models.deeplabv3 import DeepLabV3
 from models.film import prepare_film_condition_tensor
 from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
-from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
+from models.unet import ConventionalUNet1D, ResidualUNet1D
 
 
 

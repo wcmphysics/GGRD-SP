@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from utility.evaluation import calculate_prediction_metrics
 from utility.patching import calculate_window_points, extract_sliding_windows
 from utility.quantification import calculate_shirley_background
 
@@ -1951,6 +1950,7 @@ def plot_atomic_percentage_distributions(
         palette=active_palette_abs,
         showfliers=False,
         boxprops=dict(alpha=0.75),
+        vert=None,
     )
     sns.stripplot(
         data=df_abs,
@@ -2003,6 +2003,7 @@ def plot_atomic_percentage_distributions(
         palette=active_palette_diff,
         showfliers=False,
         boxprops=dict(alpha=0.75),
+        vert=None,
     )
     sns.stripplot(
         data=df,
@@ -2398,7 +2399,6 @@ __all__ = [
     "plot_shirley_background",
     "plot_training_history",
     "plot_prediction_comparison",
-    "calculate_prediction_metrics",
     "plot_sliding_window_slices",
     "plot_atomic_percentage_distributions",
     "plot_atomic_percentage_mae",

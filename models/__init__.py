@@ -6,7 +6,7 @@ from models.bayesian_opt import (
     optimize_model_hyperparameters,
     run_ax_search,
 )
-from models.cost import NormalizedMSELoss, format_loss_log10
+from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
 from models.dataset import (
     SpectrumPairDataset,
     SpectrumPatchDataset,
@@ -15,6 +15,7 @@ from models.dataset import (
     split_session_datasets,
 )
 from models.deeplabv3 import DeepLabV3, DeepLabV3_1D
+from models.film import FiLMGenerator, prepare_film_condition_tensor
 from models.inference import (
     assemble_prediction_metadata,
     format_predicted_measurement_id,
@@ -50,11 +51,14 @@ __all__ = [
     "ConventionalUNet1D",
     "DeepLabV3",
     "DeepLabV3_1D",
+    "FiLMGenerator",
     "instantiate_model",
     # Cost
+    "CompositeSpectralLoss",
     "NormalizedMSELoss",
     "format_loss_log10",
-    # Datasets
+    # Conditioning & Datasets
+    "prepare_film_condition_tensor",
     "SpectrumPairDataset",
     "SpectrumPatchDataset",
     "create_dataloaders",

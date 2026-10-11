@@ -14,18 +14,17 @@ Workflow:
 from __future__ import annotations
 
 import warnings
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import NormalizedMSELoss, format_loss_log10
+from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
 from models.dataset import (
-    SpectrumPairDataset,
     SpectrumPatchDataset,
     create_dataloaders,
     partition_measurement_sessions,
@@ -35,7 +34,7 @@ from models.deeplabv3 import DeepLabV3
 from models.inference import predict_spectra
 from models.resnet import ResNet1D
 from models.trainer import evaluate, evaluate_sliding_window, train_model_region
-from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
+from models.unet import ConventionalUNet1D, ResidualUNet1D
 from utility.patching import calculate_window_points
 
 
@@ -503,7 +502,6 @@ def run_spectral_pipeline(
             )
         ).lower()
         if cost_type in ("composite", "composite_spectral"):
-            from models.cost import CompositeSpectralLoss
             criterion = CompositeSpectralLoss(
                 w_shape=float(region_train_cfg.get("w_shape", cfg.get("w_shape", 0.5))),
                 w_mse=float(region_train_cfg.get("w_mse", cfg.get("w_mse", 0.5))),

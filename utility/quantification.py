@@ -542,8 +542,6 @@ def calculate_atomic_percentages(
     target_meas: str | None = cfg.get("measurement_id")
     material: str | None = cfg.get("material")
     rsf_dict: dict[str, float] = cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF)
-    max_iter: int = int(cfg.get("max_iter", 50))
-    tol: float = float(cfg.get("tol", 1e-5))
 
     required_cols = {"spectrum_index", "measurement_id", "die", "region"}
     missing = required_cols - set(meta_df.columns)

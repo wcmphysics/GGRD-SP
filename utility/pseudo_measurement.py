@@ -417,10 +417,7 @@ def generate_pseudo_measurements(
         die_base_factors = {int(k): float(v) for k, v in die_base_factors_cfg.items()}
 
     die_repeatability_std = float(
-        merged_config.get(
-            "die_repeatability_std",
-            merged_config.get("die_variation_std", 0.015),
-        )
+        merged_config.get("die_repeatability_std", die_variation_std)
     )
 
     # Tool maintenance reset cycle caches
