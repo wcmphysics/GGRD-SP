@@ -114,6 +114,8 @@ class NormalizedMSELoss(nn.Module):
             max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
         else:
             max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
+            if max_val.dim() == 1 and y_pred.dim() >= 2:
+                max_val = max_val.unsqueeze(-1)
         max_val = torch.clamp(max_val, min=self.eps)
 
         norm_pred = y_pred / max_val
