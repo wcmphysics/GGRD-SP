@@ -154,25 +154,33 @@ class FiLMGenerator(nn.Module):
             nn.init.zeros_(p.weight)
             nn.init.zeros_(p.bias)
 
-    def forward(self, cond: dict[str, torch.Tensor] | torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        """Compute (gamma, beta) pairs for each modulated layer.
+    def forward(self, cond: dict[str, torch.Tensor]) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        """Compute affine (gamma, beta) modulation parameters per layer.
 
         Parameters
         ----------
-        cond : dict[str, torch.Tensor] | torch.Tensor
-            Conditioning dictionary or pre-concatenated tensor.
+        cond : dict[str, torch.Tensor]
+            Conditioning features with 'die', 'tool_src',
+            'tool_tgt', 'log_flux_src', and 'delta_time_days'.
 
         Returns
         -------
         list[tuple[torch.Tensor, torch.Tensor]]
-            List of (gamma, beta) tuples of shape (B, channels).
+            List of (gamma, beta) modulation pairs per target layer:
+            - gamma: Multiplicative feature scale factor (B, channels),
+              centered at 1.0 for identity modulation.
+            - beta: Additive feature shift factor (B, channels),
+              centered at 0.0 for identity modulation.
+            Applied to feature map z as: FiLM(z) = gamma * z + beta.
         """
-        raw_feat = cond if isinstance(cond, torch.Tensor) else torch.cat(
-            [
-                self.die_embedding(cond["die"]), self.tool_embedding(cond["tool_src"]),
-                self.tool_embedding(cond["tool_tgt"]), cond["log_flux_src"], cond["delta_time_days"],
-            ],
-            dim=-1,
-        )
+        raw_feat = torch.cat([
+            self.die_embedding(cond["die"]), self.tool_embedding(cond["tool_src"]),
+            self.tool_embedding(cond["tool_tgt"]), cond["log_flux_src"], cond["delta_time_days"],
+        ], dim=-1)
         h = self.mlp(raw_feat)
-        return [(1.0 + g(h), b(h)) for g, b in zip(self.gamma_projs, self.beta_projs)]
+        modulations = []
+        for gamma_proj, beta_proj in zip(self.gamma_projs, self.beta_projs):
+            gamma = 1.0 + gamma_proj(h)
+            beta = beta_proj(h)
+            modulations.append((gamma, beta))
+        return modulations
