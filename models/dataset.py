@@ -142,8 +142,8 @@ class SpectrumPairDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        scale_val_x = self.scale_x[idx] if self.scale_x.dim() > 1 else self.scale_x
-        scale_val_y = self.scale_y[idx] if hasattr(self, "scale_y") and self.scale_y.dim() > 1 else scale_val_x
+        scale_val_x = self.scale_x[idx] if self.scale_x.numel() > 1 else self.scale_x
+        scale_val_y = self.scale_y[idx] if hasattr(self, "scale_y") and self.scale_y.numel() > 1 else scale_val_x
         item: dict[str, Any] = {
             "x": self.x[idx],
             "y": self.y[idx],
