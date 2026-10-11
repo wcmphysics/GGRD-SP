@@ -48,9 +48,10 @@ class SpectrumPairDataset(Dataset):
         self,
         x_data: np.ndarray | torch.Tensor,
         y_data: np.ndarray | torch.Tensor,
+        config: dict[str, Any] | None = None,
+        *,
         energy: np.ndarray | torch.Tensor | None = None,
         metadata: list[dict[str, Any]] | None = None,
-        config: dict[str, Any] | None = None,
         scale_x: np.ndarray | torch.Tensor | None = None,
         scale_y: np.ndarray | torch.Tensor | None = None,
         **kwargs: Any,
@@ -70,8 +71,22 @@ class SpectrumPairDataset(Dataset):
         else:
             self.y = y_data.float()
 
+        # Handle backward-compatible positional 3rd argument (energy)
+        if not isinstance(config, dict) and config is not None:
+            energy = config
+            config = kwargs.pop("config", None)
+
         cfg = dict(config or {})
         cfg.update(kwargs)
+        if energy is None:
+            energy = cfg.get("energy")
+        if metadata is None:
+            metadata = cfg.get("metadata")
+        if scale_x is None:
+            scale_x = cfg.get("scale_x")
+        if scale_y is None:
+            scale_y = cfg.get("scale_y")
+
         raw_mode = cfg.get("normalization_mode")
         if raw_mode is not None:
             norm_mode = str(raw_mode).lower()
