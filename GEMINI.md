@@ -99,13 +99,13 @@ The codes will be composed of mainly 5 parts
    - Avoid silent error.
    - Always discuss with the user first about how to handle unexpected cases or error. Do not handle unexpected case silently. Do not guess what the fix should be without asking or at least notifying the user. 
 11. ** Code Line Count Reduction**
-   - When asked to reduce the number of code lines (comment line is not counted) for one specific file or many specified files:
+   - When asked to reduce the number of code lines (comment and docstrings are not counted) for one specific file or many specified files:
       1. DO NOT EVER modify anything outside the specified files. 
       2. DO NOT package coding lines into another module as it is merely moving lines to somewhere else rather than cutting down lines. 
       3. DO NOT rename variables to shorten the line counts. Variable names should be easy to understand for reader. 
       4. DO NOT just use `;` to put different lines into one line. This is not cutting down lines.
-      5. One coding line cannot exceed 120 characters. One documentation cannot exceed 72 characters.
-      6. Note that comment lines are not counted. You can use comments to maintain code clarity/readability when reducing code lines.
-      7. Comments line like docucmentation and input/output description should still be complete and comprehensive.
+      5. One coding line cannot exceed 120 characters. One comment or docstring line cannot exceed 80 characters.
+      6. Note that comment and docstring lines are not counted. Exploit this to ensure code clarity and readability when reducing code lines.
+      7. Comment lines and docstring should still be complete and comprehensive. No need to remove them unless explicitly requested.
    - Ask me anything if there is something unclear to you
    - Always Propose your plans first for me to review. Only implement the plan if I approve
