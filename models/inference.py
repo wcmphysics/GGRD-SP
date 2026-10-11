@@ -19,6 +19,7 @@ def predict_sliding_window_spectrum(
     model: nn.Module,
     spectrum: np.ndarray,
     config: dict[str, Any] | None = None,
+    cond: dict[str, torch.Tensor] | None = None,
 ) -> np.ndarray:
     """Transform a full 1D spectrum using a trained sliding window patch model.
 
@@ -41,6 +42,8 @@ def predict_sliding_window_spectrum(
         - 'normalize_by_source' (bool): Whether to apply source-referenced normalization (default True).
         - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
         - 'eps' (float): Epsilon floor for source scale (default 1e-4).
+    cond : dict[str, torch.Tensor] | None, optional
+        Optional conditioning dictionary for FiLM modulation.
 
     Returns
     -------
@@ -83,8 +86,15 @@ def predict_sliding_window_spectrum(
     pred_patches_list: list[np.ndarray] = []
     with torch.no_grad():
         for i in range(0, len(windows), batch_size):
-            batch = torch.from_numpy(windows[i : i + batch_size]).to(device)
-            out = model(batch).cpu().numpy()
+            batch = torch.from_numpy(windows[i : i + batch_size]).float().to(device)
+            if cond is not None:
+                batch_cond = {
+                    k: v.repeat(len(batch), *([1] * (v.dim() - 1))) if isinstance(v, torch.Tensor) else v
+                    for k, v in cond.items()
+                }
+                out = model(batch, cond=batch_cond).cpu().numpy()
+            else:
+                out = model(batch).cpu().numpy()
             pred_patches_list.append(out)
 
     pred_patches = np.vstack(pred_patches_list)
@@ -368,6 +378,18 @@ def predict_spectra(
 
                 sw_preds = []
                 for idx_in_region, x_single in enumerate(region_x):
+                    sw_cond = None
+                    if getattr(m_obj, "use_film", False):
+                        sample_meta = group.iloc[idx_in_region : idx_in_region + 1].to_dict(orient="records")
+                        for r in sample_meta:
+                            r.setdefault("tool_target", target_tool)
+                        sample_scale = scales[idx_in_region : idx_in_region + 1]
+                        sw_cond = prepare_film_condition_tensor(
+                            metadata=sample_meta,
+                            scale_x=sample_scale,
+                            device=m_dev,
+                            num_samples=1,
+                        )
                     recon = predict_sliding_window_spectrum(
                         model=m_obj,
                         spectrum=x_single,
@@ -380,6 +402,7 @@ def predict_spectra(
                             "clamp_non_negative": clamp_non_negative,
                             "eps": eps,
                         },
+                        cond=sw_cond,
                     )
                     sw_preds.append(recon)
                 pred_arr = np.vstack(sw_preds)
