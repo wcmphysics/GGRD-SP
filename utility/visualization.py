@@ -32,6 +32,8 @@ def _prepare_canvas(
 
 def _finalize_plot(
     ax: plt.Axes,
+    config: dict[str, Any] | str | None = None,
+    *,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
@@ -39,19 +41,35 @@ def _finalize_plot(
     grid: bool = True,
     grid_alpha: float = 0.6,
     show: bool = False,
+    **kwargs: Any,
 ) -> None:
     """Apply standard plot styling, labels, inverted x-axis, and display."""
-    if title:
-        ax.set_title(title)
-    if xlabel:
-        ax.set_xlabel(xlabel)
-    if ylabel:
-        ax.set_ylabel(ylabel)
-    if invert_x and not ax.xaxis_inverted():
+    if isinstance(config, str):
+        title = config
+        cfg: dict[str, Any] = {}
+    else:
+        cfg = dict(config or {})
+    cfg.update(kwargs)
+
+    t = title if title is not None else cfg.get("title")
+    xl = xlabel if xlabel is not None else cfg.get("xlabel")
+    yl = ylabel if ylabel is not None else cfg.get("ylabel")
+    inv_x = cfg.get("invert_x", invert_x)
+    gr = cfg.get("grid", grid)
+    gr_alpha = float(cfg.get("grid_alpha", grid_alpha))
+    sh = cfg.get("show", show)
+
+    if t:
+        ax.set_title(t)
+    if xl:
+        ax.set_xlabel(xl)
+    if yl:
+        ax.set_ylabel(yl)
+    if inv_x and not ax.xaxis_inverted():
         ax.invert_xaxis()
-    if grid:
-        ax.grid(True, linestyle="--", alpha=grid_alpha)
-    if show:
+    if gr:
+        ax.grid(True, linestyle="--", alpha=gr_alpha)
+    if sh:
         plt.show()
 
 
@@ -303,17 +321,28 @@ def _calculate_staggered_levels(
 def _annotate_timeline_points(
     ax: plt.Axes,
     df_tool: pd.DataFrame,
-    y_val: float,
-    is_source: bool,
-    config: dict[str, Any],
+    y_val: float | dict[str, Any] = 0.0,
+    is_source: bool = True,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> None:
     """Add collision-avoiding measurement_id annotations near timeline nodes."""
     if df_tool.empty:
         return
 
-    fontsize = int(config.get("label_fontsize", 8))
-    max_levels = max(1, int(config.get("stagger_levels", 3)))
-    use_leaders = bool(config.get("leader_lines", True))
+    if isinstance(y_val, dict):
+        config = y_val
+        cfg = dict(config)
+        cfg.update(kwargs)
+        y_val = float(cfg.get("y_val", 0.0))
+        is_source = bool(cfg.get("is_source", True))
+    else:
+        cfg = dict(config or {})
+        cfg.update(kwargs)
+
+    fontsize = int(cfg.get("label_fontsize", 8))
+    max_levels = max(1, int(cfg.get("stagger_levels", 3)))
+    use_leaders = bool(cfg.get("leader_lines", True))
     color = "tab:blue" if is_source else "tab:green"
 
     sorted_df = df_tool.sort_values("time")
