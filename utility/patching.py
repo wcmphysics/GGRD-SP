@@ -56,8 +56,12 @@ def calculate_window_points(
     # Determine window size in points
     if w_pts is not None:
         window_size = int(w_pts)
+        if window_size <= 0:
+            raise ValueError(f"window_size_points must be strictly positive, got {window_size}.")
     else:
         window_size_ev = float(cfg.get("window_size_ev", 2.0))
+        if window_size_ev <= 0.0:
+            raise ValueError(f"window_size_ev must be strictly positive, got {window_size_ev}.")
         window_size = int(round(window_size_ev / delta_e))
 
     force_odd = bool(cfg.get("force_odd_window", True))
@@ -70,8 +74,12 @@ def calculate_window_points(
     # Determine sliding stride in points
     if s_pts is not None:
         stride = int(s_pts)
+        if stride <= 0:
+            raise ValueError(f"sliding_stride_points must be strictly positive, got {stride}.")
     else:
         stride_ev = float(cfg.get("sliding_stride_ev", 1.0))
+        if stride_ev <= 0.0:
+            raise ValueError(f"sliding_stride_ev must be strictly positive, got {stride_ev}.")
         stride = int(round(stride_ev / delta_e))
 
     stride = max(1, min(window_size, stride))

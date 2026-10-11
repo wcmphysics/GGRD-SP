@@ -41,12 +41,25 @@ class TestSpectralPatching(unittest.TestCase):
         self.assertEqual(s_pts, 5)
 
     def test_calculate_window_points_invalid_inputs(self) -> None:
-        """Verify errors on short or non-monotonic energy arrays."""
+        """Verify errors on short, non-monotonic energy arrays, or non-positive window/stride."""
+        energy = np.linspace(100.0, 110.0, 50)
         with self.assertRaises(ValueError):
             calculate_window_points(np.array([10.0, 11.0]))  # len < 3
 
         with self.assertRaises(ValueError):
             calculate_window_points(np.array([10.0, 10.0, 10.0]))  # delta_e == 0
+
+        with self.assertRaises(ValueError):
+            calculate_window_points(energy, config={"window_size_points": 0})
+
+        with self.assertRaises(ValueError):
+            calculate_window_points(energy, config={"window_size_ev": -1.0})
+
+        with self.assertRaises(ValueError):
+            calculate_window_points(energy, config={"sliding_stride_points": -2})
+
+        with self.assertRaises(ValueError):
+            calculate_window_points(energy, config={"sliding_stride_ev": 0.0})
 
     def test_extract_sliding_windows_right_anchoring(self) -> None:
         """Verify 100% spectral coverage and right-edge anchoring."""
