@@ -125,15 +125,12 @@ def run_spectral_pipeline(
         evaluations, histories, and predictions.
     """
     if not isinstance(data, (tuple, list)) or len(data) != 3:
-        raise ValueError(
-            "run_spectral_pipeline requires data as canonical tuple: (ary_intensity, ary_energy, meta_df)."
-        )
+        raise ValueError("run_spectral_pipeline requires canonical tuple: (ary_intensity, ary_energy, meta_df).")
     ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
-    if (not isinstance(ary_intensity, np.ndarray) or not isinstance(ary_energy, np.ndarray)
-            or not isinstance(meta_df, pd.DataFrame)):
-        raise ValueError(
-            "run_spectral_pipeline expects data tuple elements of type: (np.ndarray, np.ndarray, pd.DataFrame)."
-        )
+    if (not isinstance(ary_intensity, np.ndarray) or 
+        not isinstance(ary_energy, np.ndarray) or 
+        not isinstance(meta_df, pd.DataFrame)):
+        raise ValueError("run_spectral_pipeline requires tuple elements of type: (np.array, np.array, pd.DataFrame).")
 
     cfg = dict(config or {})
     m_type = str(cfg.get("model_type", model_type)).lower()
