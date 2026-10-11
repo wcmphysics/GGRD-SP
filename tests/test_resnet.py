@@ -17,7 +17,7 @@ from models.dataset import (
     split_session_datasets,
 )
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.orchestration import run_resnet_pipeline
+from models.orchestration import run_spectral_pipeline
 from models.resnet import ResNet1D
 from models.trainer import evaluate, train_model_region
 from utility.pairing import pair_source_target_spectra
@@ -437,10 +437,9 @@ class TestTrainingAndInference(unittest.TestCase):
 
     def test_run_resnet_pipeline(self) -> None:
         """Test full ResNet pipeline execution."""
-        pipeline_res = run_resnet_pipeline(
-            self.meta_df,
-            self.ary_intensity,
-            self.ary_energy,
+        pipeline_res = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.meta_df),
+            model_type="resnet",
             config={
                 "regions": ["Al2p"],
                 "source_tool": "J4",

@@ -12,7 +12,7 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
 from models.deeplabv3 import ASPP1D, DeepLabV3, DeepLabV3_1D, ResNet1DBackbone
-from models.orchestration import instantiate_model, run_deeplabv3_pipeline
+from models.orchestration import instantiate_model, run_spectral_pipeline
 from models.trainer import train_model_region
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
@@ -337,10 +337,9 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
             "predict_source": True,
         }
 
-        results = run_deeplabv3_pipeline(
-            meta_df=self.paired_meta,
-            ary_intensity=self.ary_intensity,
-            ary_energy=self.ary_energy,
+        results = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.paired_meta),
+            model_type="deeplabv3",
             config=pipeline_cfg,
         )
 
@@ -379,10 +378,9 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
             "predict_source": True,
         }
 
-        results = run_deeplabv3_pipeline(
-            meta_df=self.paired_meta,
-            ary_intensity=self.ary_intensity,
-            ary_energy=self.ary_energy,
+        results = run_spectral_pipeline(
+            data=(self.ary_intensity, self.ary_energy, self.paired_meta),
+            model_type="deeplabv3",
             config=pipeline_cfg,
         )
 

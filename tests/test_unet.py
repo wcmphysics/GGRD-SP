@@ -10,7 +10,7 @@ import torch
 
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
-from models.orchestration import run_unet_pipeline
+from models.orchestration import run_spectral_pipeline
 from models.trainer import train_model_region
 from models.unet import (
     ConventionalUNet1D,
@@ -142,10 +142,9 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
 
     def test_run_unet_pipeline_full_spectrum_mode(self) -> None:
         """Verify full regional spectrum pipeline produces standardized output containers."""
-        res = run_unet_pipeline(
-            self.meta_df,
-            self.ary_int,
-            self.ary_ene,
+        res = run_spectral_pipeline(
+            data=(self.ary_int, self.ary_ene, self.meta_df),
+            model_type="unet",
             config={
                 "use_sliding_window": False,
                 "regions": ["Al2p"],
@@ -178,10 +177,9 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
 
     def test_run_unet_pipeline_sliding_window_mode(self) -> None:
         """Verify sliding window patch mode works end-to-end with UNet1D."""
-        res = run_unet_pipeline(
-            self.meta_df,
-            self.ary_int,
-            self.ary_ene,
+        res = run_spectral_pipeline(
+            data=(self.ary_int, self.ary_ene, self.meta_df),
+            model_type="unet",
             config={
                 "use_sliding_window": True,
                 "regions": ["Al2p"],
