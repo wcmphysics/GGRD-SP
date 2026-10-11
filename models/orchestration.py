@@ -376,21 +376,6 @@ def run_spectral_pipeline(
             "run_spectral_pipeline requires meta_df, ary_intensity, and ary_energy."
         )
 
-    if "tool_index" not in meta_df.columns and "tool" in meta_df.columns:
-        meta_df = meta_df.copy()
-        unique_tools = sorted(
-            set(meta_df["tool"].dropna().astype(str).unique())
-            | (
-                set(meta_df["tool_target"].dropna().astype(str).unique())
-                if "tool_target" in meta_df.columns
-                else set()
-            )
-        )
-        tool_map = {t_name: idx for idx, t_name in enumerate(unique_tools)}
-        meta_df["tool_index"] = meta_df["tool"].map(tool_map)
-        if "tool_target" in meta_df.columns:
-            meta_df["tool_target_index"] = meta_df["tool_target"].map(tool_map)
-
     cfg = dict(config or {})
     m_type: str = str(cfg.get("model_type", model_type)).lower()
     use_sw: bool = bool(cfg.get("use_sliding_window", use_sliding_window))

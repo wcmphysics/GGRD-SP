@@ -428,6 +428,30 @@ class TestOrchestrationPipeline(unittest.TestCase):
         self.assertEqual(len(hist_al["train_loss"]), 2)
         self.assertEqual(len(hist_ti["train_loss"]), 3)
 
+    def test_run_spectral_pipeline_without_tool_index_raises_error(self) -> None:
+        """Verify pipeline raises ValueError when use_film=True.
+
+        Ensure missing tool_index raises informative ValueError.
+        """
+        df_without_indices = self.meta_df.drop(columns=["tool_index", "tool_target_index"])
+        cfg = {
+            "model_type": "resnet",
+            "regions": ["Ti2p"],
+            "region_configs": {
+                "Ti2p": {
+                    "epoch": 1,
+                    "use_film": True,
+                },
+            },
+            "predict_source": False,
+        }
+        with self.assertRaises(ValueError) as ctx:
+            run_spectral_pipeline(
+                data=(self.ary_intensity, self.ary_energy, df_without_indices),
+                config=cfg,
+            )
+        self.assertIn("tool_index", str(ctx.exception))
+
     def test_resolve_region_config_late_aliases_and_bo_aliases(self) -> None:
         """Verify late aliases in alias groups and nested BO config aliases synchronize properly."""
         global_cfg = {
