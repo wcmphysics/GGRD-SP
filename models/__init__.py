@@ -24,11 +24,7 @@ from models.inference import (
 )
 from models.orchestration import (
     instantiate_model,
-    run_deeplabv3_pipeline,
-    run_residual_unet_pipeline,
-    run_resnet_pipeline,
     run_spectral_pipeline,
-    run_unet_pipeline,
 )
 from models.resnet import ResNet1D
 from models.trainer import (
@@ -79,9 +75,5 @@ __all__ = [
     "predict_sliding_window_spectrum",
     # Orchestration pipelines
     "run_spectral_pipeline",
-    "run_resnet_pipeline",
-    "run_residual_unet_pipeline",
-    "run_unet_pipeline",
-    "run_deeplabv3_pipeline",
 ]
 

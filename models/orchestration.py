@@ -54,35 +54,6 @@ def instantiate_model(model_type: str, seq_len: int, config: dict[str, Any] | No
     return m_cls(n_points=seq_len, config=config or {})
 
 
-def _normalize_config_aliases(config_dict: dict[str, Any]) -> dict[str, Any]:
-    """Normalize hyperparameter keys and aliases within a configuration
-    dictionary.
-    """
-    res = dict(config_dict)
-    alias_groups = {
-        "epochs": ("epoch", "num_epochs", "n_epochs", "max_epochs"),
-        "learning_rate": ("lr",), "batch_size": ("batch", "batchsize"),
-        "early_stopping_patience": ("patience", "early_stop_patience"),
-        "l2_weight": ("l2", "l2_reg", "l2_penalty", "weight_decay_l2"),
-        "model_type": ("model", "architecture"),
-        "use_sliding_window": ("sliding_window", "use_sw"),
-        "use_bayesian_opt": ("bayesian_opt", "use_bo"), "use_film": ("film",),
-        "sliding_stride_ev": ("stride_ev",), "sliding_stride_points": ("stride_points", "stride"),
-        "window_size_points": ("window_points", "window_size"), "cost_type": ("loss_type",),
-        "use_lr_scheduler": ("use_reduce_lr_on_plateau", "reduce_lr_on_plateau", "use_scheduler", "lr_scheduler"),
-        "lr_reduce_factor": ("lr_factor", "factor", "lr_scheduler_factor", "reduction_factor"),
-        "lr_scheduler_patience": ("lr_patience", "scheduler_patience"),
-        "min_lr": ("lr_min", "lr_scheduler_min_lr"),
-    }
-    for canon, aliases in alias_groups.items():
-        keys = (canon,) + aliases
-        hit = next((k for k in keys if k in res), None)
-        if hit is not None:
-            val = res[hit]
-            res.update({k: val for k in keys})
-    return res
-
-
 def _resolve_region_config(
     global_cfg: dict[str, Any], region: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -92,49 +63,36 @@ def _resolve_region_config(
     r_cfgs = global_cfg.get("region_configs") or global_cfg.get("region_config") or {}
     reg = dict(r_cfgs.get(region, {})) if isinstance(r_cfgs, dict) and region in r_cfgs else {}
 
-    def _pick(k1: str, k2: str, def_v: Any = None) -> Any:
-        return reg.get(k1, reg.get(k2, global_cfg.get(k1, global_cfg.get(k2, def_v))))
+    def _get_pts(k1: str, k2: str) -> int | None:
+        v = reg.get(k1, reg.get(k2))
+        return v if v is not None else global_cfg.get(k1, global_cfg.get(k2))
 
+    w_pts, s_pts = _get_pts("window_size", "window_size_points"), _get_pts("stride", "sliding_stride_points")
     sw_calc_cfg = {
         "window_size_ev": reg.get("window_size_ev", global_cfg.get("window_size_ev", 2.0)),
-        "sliding_stride_ev": _pick("sliding_stride_ev", "stride_ev", 1.0),
-        "window_size_points": _pick("window_size_points", "window_size"),
-        "sliding_stride_points": _pick("sliding_stride_points", "stride"),
+        "sliding_stride_ev": reg.get("sliding_stride_ev", global_cfg.get("sliding_stride_ev", 1.0)),
+        "window_size": w_pts, "stride": s_pts, "window_size_points": w_pts, "sliding_stride_points": s_pts,
     }
 
-    g_train = global_cfg.get("train_config") or global_cfg.get("training_config") or global_cfg.get("train_cfg") or {}
-    base_train = _normalize_config_aliases(dict(g_train))
-    n_train = reg.get("train_config") or reg.get("training_config") or reg.get("train_cfg") or {}
-    if isinstance(n_train, dict):
-        base_train.update(_normalize_config_aliases(n_train))
-
-    excl = {
-        "train_config", "training_config", "train_cfg", "bayesian_opt_config", "bayesian_opt_configs",
-        "bo_config", "bo_cfg", "window_size_ev", "sliding_stride_ev", "stride_ev",
-    }
+    g_train = dict(global_cfg.get("train_config") or {})
+    n_train = dict(reg.get("train_config") or {})
+    excl = {"train_config", "bayesian_opt_config", "window_size_ev", "sliding_stride_ev"}
     flat_ovr = {k: v for k, v in reg.items() if k not in excl}
-    if flat_ovr:
-        base_train.update(_normalize_config_aliases(flat_ovr))
-    base_train = _normalize_config_aliases(base_train)
+    base_train = {**g_train, **n_train, **flat_ovr}
 
-    g_bo = global_cfg.get("bayesian_opt_config") or global_cfg.get("bo_config") or global_cfg.get("bo_cfg") or {}
-    base_bo = _normalize_config_aliases(dict(g_bo))
-    n_bo = reg.get("bayesian_opt_config") or reg.get("bo_config") or reg.get("bo_cfg") or {}
-    if isinstance(n_bo, dict):
-        base_bo.update(_normalize_config_aliases(n_bo))
-
+    g_bo = dict(global_cfg.get("bayesian_opt_config") or {})
+    n_bo = dict(reg.get("bayesian_opt_config") or {})
+    base_bo = {**g_bo, **n_bo}
     bo_keys = (
         "batch_sizes", "kernel_sizes", "window_size_choices", "lr_bounds", "l2_bounds",
         "num_trials", "epochs_per_trial", "seed", "verbose",
+        "hidden_channels", "base_channels", "depths", "backbone_channels", "aspp_channels",
     )
     for k in bo_keys:
         if k in reg:
-            base_bo[k] = reg[k]
-    for arch in ("hidden_channels", "base_channels", "depths", "backbone_channels", "aspp_channels"):
-        if arch in reg and isinstance(reg[arch], (list, tuple)):
-            base_bo[arch] = list(reg[arch])
+            base_bo[k] = list(reg[k]) if isinstance(reg[k], (list, tuple)) else reg[k]
 
-    return sw_calc_cfg, base_train, _normalize_config_aliases(base_bo)
+    return sw_calc_cfg, base_train, base_bo
 
 
 def run_spectral_pipeline(
@@ -311,39 +269,3 @@ def run_spectral_pipeline(
         "session_splits": session_splits, "histories": histories, "bayesian_opt_results": bo_results,
         "predictions": predictions,
     }
-
-
-def run_resnet_pipeline(
-    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None, **kwargs: Any,
-) -> dict[str, Any]:
-    """Execute the end-to-end ResNet modeling pipeline."""
-    cfg = {**(config or {}), "model_type": "resnet"}
-    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "resnet", config=cfg, **kwargs)
-
-
-def run_residual_unet_pipeline(
-    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None, **kwargs: Any,
-) -> dict[str, Any]:
-    """Execute the end-to-end Residual U-Net modeling pipeline."""
-    cfg = {**(config or {}), "model_type": "residual_unet"}
-    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "residual_unet", config=cfg, **kwargs)
-
-
-def run_unet_pipeline(
-    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None, **kwargs: Any,
-) -> dict[str, Any]:
-    """Execute the end-to-end Conventional U-Net modeling pipeline."""
-    cfg = {**(config or {}), "model_type": "unet"}
-    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "unet", config=cfg, **kwargs)
-
-
-def run_deeplabv3_pipeline(
-    meta_df: pd.DataFrame, ary_intensity: np.ndarray, ary_energy: np.ndarray,
-    config: dict[str, Any] | None = None, **kwargs: Any,
-) -> dict[str, Any]:
-    """Execute the end-to-end DeepLabV3 modeling pipeline."""
-    cfg = {**(config or {}), "model_type": "deeplabv3"}
-    return run_spectral_pipeline((ary_intensity, ary_energy, meta_df), "deeplabv3", config=cfg, **kwargs)
