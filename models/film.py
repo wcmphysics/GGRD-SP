@@ -98,13 +98,13 @@ def prepare_film_condition_tensor(
     ] if isinstance(meta, dict) else []
     n = lens[0] if lens else (len(meta) if isinstance(meta, list) and meta else num_samples)
 
-    def _col(k: str, alt: str | None = None) -> list[Any]:
+    def _col(k: str) -> list[Any]:
         if isinstance(meta, dict):
-            val = meta.get(k, meta.get(alt) if alt else None)
+            val = meta.get(k)
             is_seq = isinstance(val, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(val, (str, bytes))
             return list(val) if is_seq else [val] * n
         return [
-            (m.get(k, m.get(alt) if alt else None) if isinstance(m, dict) else None)
+            (m.get(k) if isinstance(m, dict) else None)
             for m in meta
         ] if isinstance(meta, list) and meta else [None] * n
 
@@ -113,8 +113,8 @@ def prepare_film_condition_tensor(
     )
     sx_2d = sx.view(1, 1).expand(n, 1) if sx.numel() == 1 and n > 1 else sx.view(n, 1)
     log_f = torch.log10(torch.clamp(sx_2d, min=1e-4)) if scale_x is not None else sx
-    t_src = [_parse_tool_index(x, "tool_index") for x in _col("tool_index", "tool_src_index")]
-    t_tgt = [_parse_tool_index(x, "tool_target_index") for x in _col("tool_target_index", "target_tool_index")]
+    t_src = [_parse_tool_index(x, "tool_index") for x in _col("tool_index")]
+    t_tgt = [_parse_tool_index(x, "tool_target_index") for x in _col("tool_target_index")]
     dt = [_parse_time_diff(t1, t2) for t1, t2 in zip(_col("time"), _col("time_target"))]
     return {
         "die": torch.tensor([_parse_die(x) for x in _col("die")], dtype=torch.long, device=device),

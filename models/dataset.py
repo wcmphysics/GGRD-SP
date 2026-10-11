@@ -72,11 +72,6 @@ class SpectrumPairDataset(Dataset):
         else:
             self.y = y_data.float()
 
-        # Handle backward-compatible positional 3rd argument (energy)
-        if not isinstance(config, dict) and config is not None:
-            energy = config
-            config = kwargs.pop("config", None)
-
         cfg = dict(config or {})
         cfg.update(kwargs)
         if energy is None:

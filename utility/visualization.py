@@ -32,7 +32,7 @@ def _prepare_canvas(
 
 def _finalize_plot(
     ax: plt.Axes,
-    config: dict[str, Any] | str | None = None,
+    config: dict[str, Any] | None = None,
     *,
     title: str | None = None,
     xlabel: str | None = None,
@@ -44,11 +44,7 @@ def _finalize_plot(
     **kwargs: Any,
 ) -> None:
     """Apply standard plot styling, labels, inverted x-axis, and display."""
-    if isinstance(config, str):
-        title = config
-        cfg: dict[str, Any] = {}
-    else:
-        cfg = dict(config or {})
+    cfg = dict(config or {})
     cfg.update(kwargs)
 
     t = title if title is not None else cfg.get("title")
@@ -321,7 +317,7 @@ def _calculate_staggered_levels(
 def _annotate_timeline_points(
     ax: plt.Axes,
     df_tool: pd.DataFrame,
-    y_val: float | dict[str, Any] = 0.0,
+    y_val: float = 0.0,
     is_source: bool = True,
     config: dict[str, Any] | None = None,
     **kwargs: Any,
@@ -330,15 +326,8 @@ def _annotate_timeline_points(
     if df_tool.empty:
         return
 
-    if isinstance(y_val, dict):
-        config = y_val
-        cfg = dict(config)
-        cfg.update(kwargs)
-        y_val = float(cfg.get("y_val", 0.0))
-        is_source = bool(cfg.get("is_source", True))
-    else:
-        cfg = dict(config or {})
-        cfg.update(kwargs)
+    cfg = dict(config or {})
+    cfg.update(kwargs)
 
     fontsize = int(cfg.get("label_fontsize", 8))
     max_levels = max(1, int(cfg.get("stagger_levels", 3)))

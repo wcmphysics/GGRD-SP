@@ -68,11 +68,7 @@ class NormalizedMSELoss(nn.Module):
         **kwargs: Any,
     ) -> None:
         super().__init__()
-        if isinstance(config, (int, float)):
-            l2_weight = float(config)
-            cfg: dict[str, Any] = {}
-        else:
-            cfg = dict(config or {})
+        cfg = dict(config or {})
         cfg.update(kwargs)
         self.l2_weight = float(cfg.get("l2_weight", l2_weight))
         self.eps = float(cfg.get("eps", eps))
@@ -204,11 +200,7 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         region_weights: dict[str, float] | None = None,
         **kwargs: Any,
     ) -> None:
-        if isinstance(config, (int, float)):
-            w_shape = float(config)
-            cfg: dict[str, Any] = {}
-        else:
-            cfg = dict(config or {})
+        cfg = dict(config or {})
         cfg.update(kwargs)
         cfg.setdefault("w_shape", w_shape)
         cfg.setdefault("w_mse", w_mse)
