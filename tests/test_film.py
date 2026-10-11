@@ -22,8 +22,14 @@ class TestFiLMModulation(unittest.TestCase):
     def test_prepare_film_condition_tensor(self) -> None:
         """Verify conditioning tensor extraction from metadata and scale_x."""
         meta = [
-            {"die": 0, "tool": "J4", "tool_target": "J5", "time": "2026-01-01 10:00:00", "time_target": "2026-01-01 14:00:00"},
-            {"die": 5, "tool": "J4", "tool_target": "J5", "time": "2026-01-02 10:00:00", "time_target": "2026-01-03 10:00:00"},
+            {
+                "die": 0, "tool_index": 0, "tool_target_index": 1,
+                "time": "2026-01-01 10:00:00", "time_target": "2026-01-01 14:00:00",
+            },
+            {
+                "die": 5, "tool_index": 0, "tool_target_index": 1,
+                "time": "2026-01-02 10:00:00", "time_target": "2026-01-03 10:00:00",
+            },
         ]
         scales = np.array([[1000.0], [5000.0]], dtype=np.float32)
 
@@ -39,6 +45,10 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond["die"][0].item(), 0)
         self.assertEqual(cond["die"][1].item(), 5)
 
+        # Tool index values
+        self.assertEqual(cond["tool_src"][0].item(), 0)
+        self.assertEqual(cond["tool_tgt"][0].item(), 1)
+
         # log_flux_src: log10(1000) = 3.0, log10(5000) ~ 3.699
         self.assertAlmostEqual(cond["log_flux_src"][0, 0].item(), 3.0, places=2)
 
@@ -49,7 +59,7 @@ class TestFiLMModulation(unittest.TestCase):
     def test_film_generator_identity_initialization(self) -> None:
         """Verify FiLMGenerator outputs gamma ~ 1.0 and beta ~ 0.0 at initialization."""
         film_gen = FiLMGenerator(channels_list=[16, 32])
-        meta = [{"die": 2, "tool": "J4", "tool_target": "J5"}]
+        meta = [{"die": 2, "tool_index": 0, "tool_target_index": 1}]
         scales = np.array([[200.0]], dtype=np.float32)
         cond = prepare_film_condition_tensor(metadata=meta, scale_x=scales)
 
@@ -76,7 +86,7 @@ class TestFiLMModulation(unittest.TestCase):
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 16, "use_film": True})
 
         x = torch.randn(4, n_points)
-        meta = [{"die": i, "tool": "J4", "tool_target": "J5"} for i in range(4)]
+        meta = [{"die": i, "tool_index": 0, "tool_target_index": 1} for i in range(4)]
         scales = np.full((4, 1), 100.0, dtype=np.float32)
         cond = prepare_film_condition_tensor(metadata=meta, scale_x=scales, num_samples=4)
 
@@ -105,7 +115,7 @@ class TestFiLMModulation(unittest.TestCase):
         x_raw = np.ones((8, n_points), dtype=np.float32)
         y_raw = np.ones((8, n_points), dtype=np.float32) * 1.05
         meta = [
-            {"die": i % 9, "tool": "J4", "tool_target": "J5", "spectrum_index": i}
+            {"die": i % 9, "tool_index": 0, "tool_target_index": 1, "spectrum_index": i}
             for i in range(8)
         ]
         ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta)
@@ -125,7 +135,7 @@ class TestFiLMModulation(unittest.TestCase):
         n_points = 32
         model = ResidualUNet1D(n_points=n_points, config={"base_channels": 8, "depth": 2, "use_film": True})
         x = torch.randn(2, n_points)
-        meta = [{"die": 1, "tool": "J4", "tool_target": "J5"}, {"die": 4, "tool": "J4", "tool_target": "J5"}]
+        meta = [{"die": 1, "tool_index": 0, "tool_target_index": 1}, {"die": 4, "tool_index": 0, "tool_target_index": 1}]
         cond = prepare_film_condition_tensor(metadata=meta, num_samples=2)
 
         out = model(x, cond=cond)
@@ -135,10 +145,10 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIsNotNone(model.film_gen.die_embedding.weight.grad)
 
     def test_prepare_film_condition_tensor_dict_and_scalar_edge_cases(self) -> None:
-        """Verify robust handling of scalar tool strings, None values, single timestamps, and scalar scale_x."""
-        # 1. Dict metadata with scalar string tool, None target, and scalar scale_x with num_samples=3
+        """Verify robust handling of tool indices, timestamps, and DataFrame inputs."""
+        # 1. Dict metadata with tool_index list
         cond1 = prepare_film_condition_tensor(
-            metadata={"die": [0, 1, 2], "tool": "J4", "tool_target": None},
+            metadata={"die": [0, 1, 2], "tool_index": 0, "tool_target_index": 1},
             scale_x=torch.tensor(100.0),
             num_samples=3,
         )
@@ -146,14 +156,15 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond1["tool_src"].shape, (3,))
         self.assertEqual(cond1["tool_tgt"].shape, (3,))
         self.assertEqual(cond1["log_flux_src"].shape, (3, 1))
-        # Ensure 'J4' mapped to index 0, not UNKNOWN
         self.assertEqual(cond1["tool_src"][0].item(), 0)
+        self.assertEqual(cond1["tool_tgt"][0].item(), 1)
 
         # 2. Single timestamp strings in dict
         cond2 = prepare_film_condition_tensor(
             metadata={
                 "die": [0, 1],
-                "tool": ["J4", "J4"],
+                "tool_index": [0, 0],
+                "tool_target_index": [1, 1],
                 "time": "2026-01-01 00:00:00",
                 "time_target": "2026-01-01 12:00:00",
             },
@@ -162,21 +173,35 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond2["delta_time_days"].shape, (2, 1))
         self.assertAlmostEqual(cond2["delta_time_days"][0, 0].item(), 0.5, places=3)
 
-        # 3. List of dicts with None values
-        cond3 = prepare_film_condition_tensor(
-            metadata=[{"die": None, "tool": None, "tool_target": None, "time": None}],
-            num_samples=1,
-        )
-        self.assertEqual(cond3["die"][0].item(), 0)
+        # 3. Pandas DataFrame input
+        df = pd.DataFrame([{"die": 3, "tool_index": 0, "tool_target_index": 1}])
+        cond3 = prepare_film_condition_tensor(metadata=df, scale_x=np.array([500.0]))
+        self.assertEqual(cond3["die"][0].item(), 3)
         self.assertEqual(cond3["tool_src"][0].item(), 0)
         self.assertEqual(cond3["tool_tgt"][0].item(), 1)
 
-        # 4. Pandas DataFrame input
-        df = pd.DataFrame([{"die": 3, "tool": "J4", "tool_target": "J5"}])
-        cond4 = prepare_film_condition_tensor(metadata=df, scale_x=np.array([500.0]))
-        self.assertEqual(cond4["die"][0].item(), 3)
-        self.assertEqual(cond4["tool_src"][0].item(), 0)
-        self.assertEqual(cond4["tool_tgt"][0].item(), 1)
+    def test_missing_tool_index_raises_loud_error(self) -> None:
+        """Verify prepare_film_condition_tensor raises ValueError when tool index is missing."""
+        # Missing tool_index
+        with self.assertRaises(ValueError) as ctx1:
+            prepare_film_condition_tensor(
+                metadata=[{"die": 0, "tool_target_index": 1}],
+                num_samples=1,
+            )
+        self.assertIn("tool_index", str(ctx1.exception))
+
+        # Missing tool_target_index
+        with self.assertRaises(ValueError) as ctx2:
+            prepare_film_condition_tensor(
+                metadata=[{"die": 0, "tool_index": 0}],
+                num_samples=1,
+            )
+        self.assertIn("tool_target_index", str(ctx2.exception))
+
+        # None metadata where tool indices are absent
+        with self.assertRaises(ValueError) as ctx3:
+            prepare_film_condition_tensor(metadata=None, num_samples=1)
+        self.assertIn("tool_index", str(ctx3.exception))
 
 
 if __name__ == "__main__":
