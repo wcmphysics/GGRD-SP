@@ -139,9 +139,10 @@ def pseudo_voigt(
 def calculate_time_decay_factor(
     meas_time: datetime,
     base_time: datetime,
-    config: dict[str, Any],
-    rng: np.random.Generator,
+    config: dict[str, Any] | None = None,
+    rng: np.random.Generator | None = None,
     cycle_cache: dict[int, float] | None = None,
+    **kwargs: Any,
 ) -> float:
     """Calculate the time decay scale factor with periodic maintenance jump resets.
 
@@ -154,9 +155,9 @@ def calculate_time_decay_factor(
         Timestamp of the measurement.
     base_time : datetime
         Reference start timestamp.
-    config : dict[str, Any]
-        Configuration dictionary with decay parameters.
-    rng : np.random.Generator
+    config : dict[str, Any] | None, optional
+        Configuration dictionary with decay parameters (can package 'rng', 'cycle_cache').
+    rng : np.random.Generator | None, optional
         Random number generator.
     cycle_cache : dict[int, float] | None, optional
         Dictionary caching post-maintenance renewed intensity levels per cycle.
@@ -166,15 +167,22 @@ def calculate_time_decay_factor(
     float
         Multiplicative time-dependent intensity scale factor.
     """
-    decay_rate = float(config.get("time_decay_rate", 0.005))
+    cfg = dict(config or {})
+    cfg.update(kwargs)
+    rng = rng if rng is not None else cfg.get("rng")
+    if rng is None:
+        rng = np.random.default_rng()
+    cycle_cache = cycle_cache if cycle_cache is not None else cfg.get("cycle_cache")
+
+    decay_rate = float(cfg.get("time_decay_rate", 0.005))
     if decay_rate <= 0.0:
         return 1.0
 
-    interval_days = float(config.get("maintenance_interval_days", 30.0))
+    interval_days = float(cfg.get("maintenance_interval_days", 30.0))
     if interval_days <= 0.0:
         interval_days = 30.0
-    jump_std = max(0.0, float(config.get("maintenance_jump_noise_std", 0.03)))
-    decay_floor = float(config.get("decay_floor", 0.2))
+    jump_std = max(0.0, float(cfg.get("maintenance_jump_noise_std", 0.03)))
+    decay_floor = float(cfg.get("decay_floor", 0.2))
 
     delta_days = max(0.0, (meas_time - base_time).total_seconds() / 86400.0)
     cycle_idx = int(delta_days // interval_days)

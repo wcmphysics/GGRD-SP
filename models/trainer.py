@@ -31,9 +31,10 @@ from models.unet import ConventionalUNet1D, ResidualUNet1D, UNet1D
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: NormalizedMSELoss,
+    optimizer: torch.optim.Optimizer | None = None,
+    criterion: NormalizedMSELoss | None = None,
     config: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> float:
     """Train the model for a single epoch.
 
@@ -43,19 +44,26 @@ def train_one_epoch(
         The neural network model.
     loader : DataLoader
         DataLoader for the training dataset (batches of full spectra or patches).
-    optimizer : torch.optim.Optimizer
-        Optimizer instance.
-    criterion : NormalizedMSELoss
-        Loss function instance.
+    optimizer : torch.optim.Optimizer | None, optional
+        Optimizer instance (or pass via config['optimizer']).
+    criterion : NormalizedMSELoss | None, optional
+        Loss function instance (or pass via config['criterion']).
     config : dict[str, Any] | None, optional
-        Configuration dictionary containing 'device' (default auto from model).
+        Configuration dictionary containing 'optimizer', 'criterion', 'device'.
 
     Returns
     -------
     float
         Average training loss across all batches.
     """
-    cfg = config or {}
+    cfg = dict(config or {})
+    cfg.update(kwargs)
+    opt = optimizer if optimizer is not None else cfg.get("optimizer")
+    crit = criterion if criterion is not None else cfg.get("criterion")
+    if opt is None or crit is None:
+        raise ValueError("train_one_epoch requires 'optimizer' and 'criterion'.")
+    optimizer, criterion = opt, crit
+
     device = cfg.get("device")
     if device is None:
         params = list(model.parameters())
