@@ -10,12 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-try:
-    from ax.service.ax_client import AxClient, ObjectiveProperties
-
-    AX_AVAILABLE = True
-except (ImportError, OSError):
-    AX_AVAILABLE = False
+from ax.service.ax_client import AxClient, ObjectiveProperties
 
 
 def run_ax_search(
@@ -53,15 +48,6 @@ def run_ax_search(
     dict[str, Any]
         Dictionary containing 'best_parameters', 'best_val_loss', 'trials_data', and 'ax_client'.
     """
-    if not AX_AVAILABLE:
-        warnings.warn("Ax platform is not available. Skipping hyperparameter optimization.")
-        return {
-            "best_parameters": {},
-            "best_val_loss": float("nan"),
-            "trials_data": [],
-            "ax_client": None,
-        }
-
     cfg = config or {}
     search_params = parameters if parameters is not None else cfg.get("parameters", [])
     if not search_params:

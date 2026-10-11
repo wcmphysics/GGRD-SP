@@ -250,7 +250,7 @@ class TestSourceReferencedNormalization(unittest.TestCase):
 
     def test_compute_die_total_flux(self) -> None:
         """Verify compute_die_total_flux sums integrated areas across regions for each die."""
-        from models.dataset import compute_die_total_flux
+        from utility.quantification import compute_die_total_flux
         import pandas as pd
 
         n_points = 10

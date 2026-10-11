@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from utility.patching import extract_sliding_windows
+from utility.quantification import compute_die_total_flux
 
 
 class SpectrumPairDataset(Dataset):
@@ -398,10 +399,6 @@ def partition_measurement_sessions(
             )
 
     return splits_dict
-
-
-# Re-export compute_die_total_flux from utility for backward compatibility
-from utility.quantification import compute_die_total_flux
 
 
 def split_session_datasets(
