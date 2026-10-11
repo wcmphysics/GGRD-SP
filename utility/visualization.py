@@ -29,6 +29,22 @@ def _prepare_canvas(
     return fig, ax
 
 
+def _setup_subplot_grid(
+    n_items: int,
+    max_cols: int = 3,
+    col_width: float = 5.0,
+    row_height: float = 3.8,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[plt.Figure, np.ndarray, np.ndarray]:
+    """Create a standard grid of subplots for multi-region visualization."""
+    n_cols = min(n_items, max_cols)
+    n_rows = (n_items + n_cols - 1) // n_cols
+    fig_size = figsize or (col_width * n_cols, row_height * n_rows)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=fig_size, squeeze=False)
+    axes_flat = axes.flatten()
+    return fig, axes, axes_flat
+
+
 def _finalize_plot(
     ax: plt.Axes,
     config: dict[str, Any] | None = None,
@@ -693,6 +709,65 @@ def _format_die_label(d: Any) -> str:
         return f"Die {d}"
 
 
+def _resolve_target_filters(
+    cfg: dict[str, Any],
+    region: str | None = None,
+    die: int | None = None,
+) -> tuple[str | None, int | None, dict[str, Any]]:
+    """Resolve target region and die with precedence: argument > config key > filters."""
+    raw_filters = cfg.get("filters")
+    filters: dict[str, Any] = dict(raw_filters) if raw_filters is not None else {}
+
+    if region is not None:
+        target_region: str | None = str(region)
+    elif "region" in cfg:
+        target_region = str(cfg["region"]) if cfg["region"] is not None else None
+    elif "region" in filters:
+        target_region = str(filters["region"]) if filters["region"] is not None else None
+    else:
+        target_region = None
+
+    if die is not None:
+        target_die: int | None = die
+    elif "die" in cfg:
+        target_die = cfg["die"]
+    elif "die" in filters:
+        target_die = filters["die"]
+    else:
+        target_die = None
+
+    if target_region is not None:
+        filters["region"] = target_region
+
+    if target_die is not None:
+        try:
+            target_die = int(target_die)
+            filters["die"] = target_die
+        except (ValueError, TypeError):
+            filters["die"] = target_die
+
+    return target_region, target_die, filters
+
+
+def _prepare_hue_series(
+    df: pd.DataFrame,
+    hue: str,
+) -> tuple[str, list[Any] | None]:
+    """Prepare discrete hue column formatting and hue order for time-series plotting."""
+    plot_hue = hue
+    hue_order = None
+    if hue == "die":
+        dies = sorted(df["die"].dropna().unique())
+        df["die_formatted"] = df["die"].apply(_format_die_label)
+        plot_hue = "die_formatted"
+        hue_order = [_format_die_label(d) for d in dies]
+    elif hue == "tool":
+        hue_order = sorted(df["tool"].dropna().unique())
+    elif hue == "region":
+        hue_order = sorted(df["region"].dropna().unique())
+    return plot_hue, hue_order
+
+
 def plot_max_intensity_vs_time(
     ary_intensity: np.ndarray,
     meta_df: pd.DataFrame,
@@ -751,37 +826,7 @@ def plot_max_intensity_vs_time(
 
     cfg = plot_config or {}
     hue: str = str(cfg.get("hue", "tool"))
-    raw_filters = cfg.get("filters")
-    filters: dict[str, Any] = dict(raw_filters) if raw_filters is not None else {}
-
-    # Resolve target_region and target_die with precedence: kwarg > cfg key > cfg['filters']
-    if region is not None:
-        target_region: str | None = str(region)
-    elif "region" in cfg:
-        target_region = str(cfg["region"]) if cfg["region"] is not None else None
-    elif "region" in filters:
-        target_region = str(filters["region"]) if filters["region"] is not None else None
-    else:
-        target_region = None
-
-    if die is not None:
-        target_die: int | None = die
-    elif "die" in cfg:
-        target_die = cfg["die"]
-    elif "die" in filters:
-        target_die = filters["die"]
-    else:
-        target_die = None
-
-    if target_region is not None:
-        filters["region"] = target_region
-
-    if target_die is not None:
-        try:
-            target_die = int(target_die)
-            filters["die"] = target_die
-        except (ValueError, TypeError):
-            filters["die"] = target_die
+    target_region, target_die, filters = _resolve_target_filters(cfg, region, die)
 
     style: str | None = cfg.get("style")
     palette = cfg.get("palette")
@@ -809,18 +854,7 @@ def plot_max_intensity_vs_time(
     except (ValueError, TypeError):
         plot_df["time"] = pd.to_datetime(plot_df["time"])
 
-    # Discrete formatting for hue
-    plot_hue = hue
-    hue_order = None
-    if hue == "die":
-        dies = sorted(plot_df["die"].dropna().unique())
-        plot_df["die_formatted"] = plot_df["die"].apply(_format_die_label)
-        plot_hue = "die_formatted"
-        hue_order = [_format_die_label(d) for d in dies]
-    elif hue == "tool":
-        hue_order = sorted(plot_df["tool"].dropna().unique())
-    elif hue == "region":
-        hue_order = sorted(plot_df["region"].dropna().unique())
+    plot_hue, hue_order = _prepare_hue_series(plot_df, hue)
 
     fig, ax = _prepare_canvas(custom_ax, figsize=figsize)
 
@@ -932,37 +966,7 @@ def plot_normalized_max_intensity_vs_time(
     cfg = plot_config or {}
     hue: str = str(cfg.get("hue", "tool"))
     norm_mode: str = str(cfg.get("normalization_mode", "die_total_flux")).lower()
-    raw_filters = cfg.get("filters")
-    filters: dict[str, Any] = dict(raw_filters) if raw_filters is not None else {}
-
-    # Resolve target_region and target_die with precedence: kwarg > cfg key > cfg['filters']
-    if region is not None:
-        target_region: str | None = str(region)
-    elif "region" in cfg:
-        target_region = str(cfg["region"]) if cfg["region"] is not None else None
-    elif "region" in filters:
-        target_region = str(filters["region"]) if filters["region"] is not None else None
-    else:
-        target_region = None
-
-    if die is not None:
-        target_die: int | None = die
-    elif "die" in cfg:
-        target_die = cfg["die"]
-    elif "die" in filters:
-        target_die = filters["die"]
-    else:
-        target_die = None
-
-    if target_region is not None:
-        filters["region"] = target_region
-
-    if target_die is not None:
-        try:
-            target_die = int(target_die)
-            filters["die"] = target_die
-        except (ValueError, TypeError):
-            filters["die"] = target_die
+    target_region, target_die, filters = _resolve_target_filters(cfg, region, die)
 
     style: str | None = cfg.get("style")
     palette = cfg.get("palette")
@@ -1049,17 +1053,7 @@ def plot_normalized_max_intensity_vs_time(
     except (ValueError, TypeError):
         plot_df["time"] = pd.to_datetime(plot_df["time"])
 
-    plot_hue = hue
-    hue_order = None
-    if hue == "die":
-        dies = sorted(plot_df["die"].dropna().unique())
-        plot_df["die_formatted"] = plot_df["die"].apply(_format_die_label)
-        plot_hue = "die_formatted"
-        hue_order = [_format_die_label(d) for d in dies]
-    elif hue == "tool":
-        hue_order = sorted(plot_df["tool"].dropna().unique())
-    elif hue == "region":
-        hue_order = sorted(plot_df["region"].dropna().unique())
+    plot_hue, hue_order = _prepare_hue_series(plot_df, hue)
 
     fig, ax = _prepare_canvas(custom_ax, figsize=figsize)
 
@@ -1197,11 +1191,7 @@ def plot_shirley_background(
     # Multi-region subplot grid
     regions = list(subset["region"].unique())
     n_regs = len(regions)
-    n_cols = min(n_regs, 3)
-    n_rows = (n_regs + n_cols - 1) // n_cols
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3.8 * n_rows), squeeze=False)
-    axes_flat = axes.flatten()
+    fig, axes, axes_flat = _setup_subplot_grid(n_regs, max_cols=3, col_width=5.0, row_height=3.8)
 
     for idx, reg in enumerate(regions):
         ax = axes_flat[idx]
@@ -1278,11 +1268,7 @@ def plot_training_history(
     if n_regs == 0:
         raise ValueError("Histories dictionary is empty; no training curves to plot.")
 
-    n_cols = min(n_regs, 3)
-    n_rows = (n_regs + n_cols - 1) // n_cols
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 3.8 * n_rows), squeeze=False)
-    axes_flat = axes.flatten()
+    fig, axes, axes_flat = _setup_subplot_grid(n_regs, max_cols=3, col_width=5.0, row_height=3.8)
 
     for idx, reg in enumerate(regions):
         ax = axes_flat[idx]
@@ -1547,11 +1533,10 @@ def plot_prediction_comparison(
     if n_regs == 0:
         raise ValueError(f"No regions found for source measurement '{meas_id}', die={die}.")
 
-    n_cols = min(n_regs, 3)
-    n_rows = (n_regs + n_cols - 1) // n_cols
-    figsize = tuple(cfg.get("figsize", (5.2 * n_cols, 3.8 * n_rows)))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
-    axes_flat = axes.flatten()
+    figsize = tuple(cfg.get("figsize", (5.2 * min(n_regs, 3), 3.8 * ((n_regs + 2) // 3)))) if "figsize" in cfg else None
+    fig, axes, axes_flat = _setup_subplot_grid(
+        n_regs, max_cols=3, col_width=5.2, row_height=3.8, figsize=figsize
+    )
 
     src_tool = str(src_rows["tool"].iloc[0])
     has_tgt_col = "measurement_id_target" in src_rows.columns
