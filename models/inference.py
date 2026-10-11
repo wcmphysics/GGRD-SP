@@ -1,4 +1,6 @@
-"""Inference and standardized prediction utilities for spectral transfer."""
+"""Inference and standardized prediction utilities for spectral
+transfer.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +12,14 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from models.film import prepare_film_condition_tensor
 from utility.patching import extract_sliding_windows, reconstruct_from_patches
 from utility.quantification import compute_die_total_flux
-from models.film import prepare_film_condition_tensor
+
+
+def _repeat_cond(c_dict: dict[str, torch.Tensor] | None, n: int) -> dict[str, torch.Tensor] | None:
+    if not c_dict: return None
+    return {k: v.repeat(n, *([1] * (v.dim() - 1))) if isinstance(v, torch.Tensor) else v for k, v in c_dict.items()}
 
 
 def predict_sliding_window_spectrum(
@@ -21,216 +28,70 @@ def predict_sliding_window_spectrum(
     config: dict[str, Any] | None = None,
     cond: dict[str, torch.Tensor] | None = None,
 ) -> np.ndarray:
-    """Transform a full 1D spectrum using a trained sliding window patch model.
-
-    Applies unbiased linear overlap-averaging across patches, scales back to physical
-    intensity using source scale, and enforces physical non-negativity strictly at the
-    final reconstructed full spectrum level.
-
-    Parameters
-    ----------
-    model : nn.Module
-        Trained patch model expecting input length window_size.
-    spectrum : np.ndarray
-        1D source spectrum array of length N.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary containing:
-        - 'window_size' (int): Window points (default 15).
-        - 'stride' (int): Stride points (default window_size // 2).
-        - 'device' (str | torch.device | None): Computation device.
-        - 'batch_size' (int): Batch size for patch forward pass (default 64).
-        - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default) or 'none'.
-        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default True).
-        - 'eps' (float): Epsilon floor for source scale (default 1e-4).
-    cond : dict[str, torch.Tensor] | None, optional
-        Optional conditioning dictionary for FiLM modulation.
-
-    Returns
-    -------
-    np.ndarray
-        Reconstructed target spectrum of length N.
+    """Transform a full 1D spectrum using a trained sliding window
+    patch model.
     """
     cfg = config or {}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
     norm_mode = str(cfg.get("normalization_mode", "source_referenced")).lower()
-    clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
-    eps = float(cfg.get("eps", 1e-4))
-
-    device = cfg.get("device")
-    if device is None:
-        params = list(model.parameters())
-        device = params[0].device if params else torch.device("cpu")
-    elif isinstance(device, str):
-        device = torch.device(device)
-
-    batch_size = int(cfg.get("batch_size", 64))
+    clamp_non_negative, eps = bool(cfg.get("clamp_non_negative", True)), float(cfg.get("eps", 1e-4))
+    device = torch.device(cfg.get("device") or next((p.device for p in model.parameters()), "cpu"))
+    bs = int(cfg.get("batch_size", 64))
 
     spectrum_1d = np.asarray(spectrum).ravel()
-    scale_factor = cfg.get("scale_factor")
-    if scale_factor is not None:
-        scale_x = max(float(scale_factor), eps)
-        spectrum_in = spectrum_1d / scale_x
-    elif norm_mode == "source_referenced":
-        scale_x = max(float(np.max(np.abs(spectrum_1d))), eps)
-        spectrum_in = spectrum_1d / scale_x
-    else:
-        scale_x = 1.0
-        spectrum_in = spectrum_1d
+    s_val = cfg.get("scale_factor", np.abs(spectrum_1d).max() if norm_mode == "source_referenced" else 1.0)
+    scale_x = max(float(s_val), eps) if (norm_mode != "none" or "scale_factor" in cfg) else 1.0
 
-    windows, start_indices = extract_sliding_windows(
-        spectrum_in, window_size=w_size, stride=s_step
-    )
-
+    windows, start_indices = extract_sliding_windows(spectrum_1d / scale_x, window_size=w_size, stride=s_step)
     model.eval()
-    pred_patches_list: list[np.ndarray] = []
     with torch.no_grad():
-        for i in range(0, len(windows), batch_size):
-            batch = torch.from_numpy(windows[i : i + batch_size]).float().to(device)
-            if cond is not None:
-                batch_cond = {
-                    k: v.repeat(len(batch), *([1] * (v.dim() - 1))) if isinstance(v, torch.Tensor) else v
-                    for k, v in cond.items()
-                }
-                out = model(batch, cond=batch_cond).cpu().numpy()
-            else:
-                out = model(batch).cpu().numpy()
-            pred_patches_list.append(out)
+        patches = [
+            (model(b, cond=_repeat_cond(cond, len(b))) if cond is not None else model(b)).cpu().numpy()
+            for i in range(0, len(windows), bs)
+            for b in [torch.as_tensor(windows[i : i + bs], dtype=torch.float32, device=device)]
+        ]
 
-    pred_patches = np.vstack(pred_patches_list)
-    reconstructed_norm = reconstruct_from_patches(
-        patches=pred_patches,
-        start_indices=start_indices,
-        original_length=len(spectrum_1d),
-        config={"window_size": w_size, "clamp_non_negative": False},
-    )
-
-    # Rescale to physical counts
-    reconstructed_phys = (
-        reconstructed_norm * scale_x
-        if (norm_mode != "none" or scale_factor is not None)
-        else reconstructed_norm
-    )
-
-    # Zero clamping at the final full spectrum reconstruction level
-    if clamp_non_negative:
-        reconstructed_final = np.clip(reconstructed_phys, 0.0, None)
-    else:
-        reconstructed_final = reconstructed_phys
-
-    return reconstructed_final
+    recon = reconstruct_from_patches(np.vstack(patches), start_indices, len(spectrum_1d), {"window_size": w_size})
+    return np.clip(recon * scale_x, 0.0, None) if clamp_non_negative else recon * scale_x
 
 
 def format_predicted_measurement_id(source_measurement_id: str, source_tool: str, target_tool: str) -> str:
-    """Format a predicted measurement session ID uniquely and deterministically.
-
-    Examples:
-        'NMG_M_J4_00001', source_tool='J4', target_tool='H1' -> 'NMG_P_J4H1_00001'
-        'M_J4_001', source_tool='J4', target_tool='H1' -> 'P_J4H1_001'
-        'BATCH_A_001', source_tool='J4', target_tool='H1' -> 'P_J4H1_BATCH_A_001'
-
-    Parameters
-    ----------
-    source_measurement_id : str
-        Original source measurement ID.
-    source_tool : str
-        Source tool identifier (e.g. 'J4').
-    target_tool : str
-        Target tool identifier (e.g. 'H1').
-
-    Returns
-    -------
-    str
-        Formatted prediction measurement ID.
+    """Format a predicted measurement session ID uniquely and
+    deterministically.
     """
-    tool_marker = f"_M_{source_tool}_"
-    if tool_marker in source_measurement_id:
-        mat_prefix, rest = source_measurement_id.rsplit(tool_marker, 1)
-        return f"{mat_prefix}_P_{source_tool}{target_tool}_{rest}"
-
-    if "_M_" in source_measurement_id:
-        mat_prefix, rest = source_measurement_id.rsplit("_M_", 1)
-        prefix_to_strip = f"{source_tool}_"
-        if rest.startswith(prefix_to_strip):
-            rest = rest[len(prefix_to_strip):]
-        return f"{mat_prefix}_P_{source_tool}{target_tool}_{rest}"
-
-    if source_measurement_id.startswith("M_"):
-        clean_suffix = source_measurement_id[2:]
-        prefix_to_strip = f"{source_tool}_"
-        if clean_suffix.startswith(prefix_to_strip):
-            clean_suffix = clean_suffix[len(prefix_to_strip):]
-        return f"P_{source_tool}{target_tool}_{clean_suffix}"
-    return f"P_{source_tool}{target_tool}_{source_measurement_id}"
+    p, tag = f"{source_tool}{target_tool}", f"{source_tool}_"
+    mat, _, rest = source_measurement_id.rpartition("_M_")
+    return f"{mat}_P_{p}_{rest.removeprefix(tag)}" if mat else f"P_{p}_{rest.removeprefix('M_').removeprefix(tag)}"
 
 
 def assemble_prediction_metadata(
     source_df: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Build standardized prediction metadata DataFrame for transferred spectra.
-
-    Parameters
-    ----------
-    source_df : pd.DataFrame
-        DataFrame of source rows being predicted.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary containing:
-        - 'source_tool' (str): Source tool identifier.
-        - 'target_tool' (str): Target tool identifier.
-        - 'n_points' (int): Number of spectral data points per region.
-        - 'session_splits' (dict[str, set[str]] | None): Pre-partitioned session sets.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing standardized prediction metadata.
+    """Build standardized prediction metadata DataFrame for transferred
+    spectra.
     """
     cfg = config or {}
+    source_tool, target_tool = str(cfg.get("source_tool", "")), str(cfg.get("target_tool", ""))
+    n_points, session_splits = int(cfg.get("n_points", 0)), cfg.get("session_splits")
 
-    source_tool = str(cfg.get("source_tool", ""))
-    target_tool = str(cfg.get("target_tool", ""))
-    n_points = int(cfg.get("n_points", 0))
-    session_splits = cfg.get("session_splits")
+    def _split(mid: str, cur: Any) -> str:
+        if not session_splits: return str(cur) if pd.notna(cur) else "unassigned"
+        return next((s for s in ("train", "val", "test") if mid in session_splits.get(s, set())), "unpaired")
 
-    records: list[dict[str, Any]] = []
-    for new_idx, (_, row) in enumerate(source_df.iterrows()):
-        orig_meas_id = str(row["measurement_id"])
-        pred_meas_id = format_predicted_measurement_id(orig_meas_id, source_tool, target_tool)
-
-        split_label = "unassigned"
-        if session_splits:
-            if orig_meas_id in session_splits.get("train", set()):
-                split_label = "train"
-            elif orig_meas_id in session_splits.get("val", set()):
-                split_label = "val"
-            elif orig_meas_id in session_splits.get("test", set()):
-                split_label = "test"
-            else:
-                split_label = "unpaired"
-        elif "split" in row and pd.notna(row["split"]):
-            split_label = str(row["split"])
-
-        meta_rec: dict[str, Any] = {
-            "spectrum_index": new_idx,
-            "material": row.get("material", "NMG"),
-            "tool": target_tool,
-            "measurement_id": pred_meas_id,
-            "die": row.get("die", 0),
-            "region": row.get("region"),
-            "n_points": n_points,
-            "time": row.get("time"),
-            "source_tool": source_tool,
-            "source_measurement_id": orig_meas_id,
-            "source_spectrum_index": int(row["spectrum_index"]),
-            "split": split_label,
-            "is_predicted": True,
+    return pd.DataFrame([
+        {
+            "spectrum_index": idx, "material": getattr(r, "material", "NMG"), "tool": target_tool,
+            "measurement_id": format_predicted_measurement_id(str(r.measurement_id), source_tool, target_tool),
+            "die": getattr(r, "die", 0), "region": getattr(r, "region", None), "n_points": n_points,
+            "time": getattr(r, "time", None), "source_tool": source_tool,
+            "source_measurement_id": str(r.measurement_id), "source_spectrum_index": int(r.spectrum_index),
+            "split": _split(str(r.measurement_id), getattr(r, "split", None)), "is_predicted": True,
+            **({"t7_code": r.t7_code} if hasattr(r, "t7_code") else {}),
         }
-        if "t7_code" in row:
-            meta_rec["t7_code"] = row["t7_code"]
-        records.append(meta_rec)
-
-    return pd.DataFrame(records)
+        for idx, r in enumerate(source_df.itertuples())
+    ])
 
 
 def predict_spectra(
@@ -238,217 +99,92 @@ def predict_spectra(
     data: tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any],
     config: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Apply trained models to source spectra to generate predicted target spectra.
-
-    Bundles input data into a single parameter following project clean interface rules.
-
-    Outputs standardized data containers:
-        (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted)
-
-    Parameters
-    ----------
-    models : dict[str, nn.Module]
-        Dictionary mapping spectral region name (e.g., 'Al2p') to its trained PyTorch model.
-    data : tuple[np.ndarray, np.ndarray, pd.DataFrame] | dict[str, Any]
-        Original measured data bundled as:
-        - tuple: (ary_intensity, ary_energy, meta_df), OR
-        - dict: {'ary_intensity': ..., 'ary_energy': ..., 'meta_df': ...}
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'source_tool' (str): Identifier of the source tool (default 'J4').
-        - 'target_tool' (str): Identifier of the target tool (default 'H1').
-        - 'measurement_ids' (list[str] | None): Specific source measurement IDs to predict
-          (default None = all sessions for source_tool).
-        - 'batch_size' (int): Batch size for inference (default 64).
-        - 'device' (str | torch.device | None): Computation device (default CPU/CUDA auto).
-        - 'normalization_mode' (str): Normalization strategy: 'source_referenced' (default),
-          'die_total_flux', or 'none'.
-        - 'clamp_non_negative' (bool): Whether to clamp final predicted intensities to non-negative (default True).
-        - 'eps' (float): Epsilon floor for source normalization scale (default 1e-4).
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        - ary_intensity_predicted: 2D numpy array of shape (N_predicted, N_points).
-        - ary_energy_predicted: 2D numpy array of shape (N_predicted, N_points).
-        - meta_df_predicted: DataFrame containing standardized prediction metadata.
+    """Apply trained models to source spectra to generate predicted
+    target spectra.
     """
-    if isinstance(data, (tuple, list)):
-        ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
-    elif isinstance(data, dict):
-        ary_intensity = data["ary_intensity"]
-        ary_energy = data["ary_energy"]
-        meta_df = data["meta_df"]
-    else:
-        raise TypeError(
-            f"Expected data to be a tuple (ary_intensity, ary_energy, meta_df) or dict, got {type(data)}"
-        )
+    if not isinstance(data, (tuple, list, dict)): raise TypeError(f"Expected tuple/dict, got {type(data)}")
+    d_vals = (data["ary_intensity"], data["ary_energy"], data["meta_df"]) if isinstance(data, dict) else data[:3]
+    ary_intensity, ary_energy, meta_df = d_vals
 
     cfg = config or {}
-    source_tool: str = cfg.get("source_tool", "J4")
-    target_tool: str = cfg.get("target_tool", "H1")
-    measurement_ids: list[str] | None = cfg.get("measurement_ids")
-    batch_size: int = int(cfg.get("batch_size", 64))
+    source_tool, target_tool = cfg.get("source_tool", "J4"), cfg.get("target_tool", "H1")
+    measurement_ids = cfg.get("measurement_ids")
+    batch_size = int(cfg.get("batch_size", 64))
     norm_mode = str(cfg.get("normalization_mode", "source_referenced")).lower()
-    clamp_non_negative: bool = bool(cfg.get("clamp_non_negative", True))
-    eps: float = float(cfg.get("eps", 1e-4))
-    device_str = cfg.get("device")
+    clamp_non_negative, eps = bool(cfg.get("clamp_non_negative", True)), float(cfg.get("eps", 1e-4))
+    device = torch.device(cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    if device_str is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    elif isinstance(device_str, str):
-        device = torch.device(device_str)
-    else:
-        device = device_str
+    def _film_cond(m: nn.Module, sub_df: pd.DataFrame, scale: np.ndarray, dev: torch.device) -> dict[str, Any] | None:
+        if not getattr(m, "use_film", False): return None
+        meta = [{**r, "tool_target": target_tool} for r in sub_df.to_dict("records")]
+        return prepare_film_condition_tensor(metadata=meta, scale_x=scale, device=dev, num_samples=len(sub_df))
 
-    # Filter source rows
-    condition = meta_df["tool"] == source_tool
-    if measurement_ids is not None:
-        condition = condition & meta_df["measurement_id"].isin(measurement_ids)
+    mask = meta_df["tool"] == source_tool
+    if measurement_ids: mask = mask & meta_df["measurement_id"].isin(measurement_ids)
+    source_df = meta_df[mask].copy()
+    if source_df.empty: raise ValueError(f"No source spectra found for {source_tool=}")
 
-    source_df = meta_df[condition].copy()
-
-    if source_df.empty:
-        raise ValueError(f"No source spectra found for tool='{source_tool}' with criteria: {cfg}")
-
-    # Set all models to eval mode on target device
     for m in models.values():
-        if isinstance(m, nn.Module):
-            m.eval()
-            m.to(device)
+        mod = m[0] if isinstance(m, (tuple, list)) else m
+        if isinstance(mod, nn.Module): mod.eval().to(device)
 
-    n_samples = len(source_df)
-    n_points = ary_intensity.shape[1]
+    predicted_intensities = np.zeros((len(source_df), ary_intensity.shape[1]), dtype=np.float32)
+    predicted_energies = np.array(ary_energy[source_df["spectrum_index"].astype(int).to_numpy()], dtype=np.float32)
+    flux_map = compute_die_total_flux(source_df, ary_intensity, ary_energy) if norm_mode == "die_total_flux" else {}
 
-    predicted_intensities = np.zeros((n_samples, n_points), dtype=np.float32)
-    predicted_energies = np.zeros((n_samples, n_points), dtype=np.float32)
-
-    # Map original rows to new index
-    source_indices = source_df["spectrum_index"].astype(int).to_numpy()
-    predicted_energies[:] = ary_energy[source_indices]
-
-    source_flux_map: dict[tuple[str, int], float] = {}
-    if norm_mode == "die_total_flux":
-        source_flux_map = compute_die_total_flux(source_df, ary_intensity, ary_energy)
-
-    # Process region-by-region in batches for vectorization speedup
     for region, group in source_df.groupby("region"):
-        group_new_indices = np.arange(len(source_df))[(source_df["region"] == region).to_numpy()]
+        group_new_indices = np.flatnonzero((source_df["region"] == region).to_numpy())
         orig_indices = group["spectrum_index"].astype(int).to_numpy()
 
-        if region in models:
-            model_entry = models[str(region)]
-            region_x = ary_intensity[orig_indices]
+        if region not in models:
+            warnings.warn(f"Region '{region}' not in models dictionary; falling back to identity pass-through.")
+            predicted_intensities[group_new_indices] = ary_intensity[orig_indices]
+            continue
 
-            if norm_mode == "die_total_flux" and source_flux_map:
-                scales = np.array([
-                    source_flux_map.get(
-                        (str(r_row["measurement_id"]), int(r_row["die"])),
-                        max(float(np.max(np.abs(ary_intensity[int(r_row["spectrum_index"])]))), eps),
-                    )
-                    for _, r_row in group.iterrows()
-                ], dtype=np.float32)[:, None]
-                region_x_in = region_x / scales
-            elif norm_mode == "source_referenced":
-                scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
-                region_x_in = region_x / scales
-            else:
-                scales = np.ones((len(region_x), 1), dtype=np.float32)
-                region_x_in = region_x
+        model_entry, region_x = models[str(region)], ary_intensity[orig_indices]
 
-            is_sw = bool(cfg.get("use_sliding_window", False)) or isinstance(model_entry, (tuple, list))
-
-            if is_sw:
-                if isinstance(model_entry, (tuple, list)):
-                    m_obj = model_entry[0]
-                    w_size = int(model_entry[1])
-                    s_step = int(model_entry[2])
-                else:
-                    m_obj = model_entry
-                    w_size = int(cfg.get("window_size", 15))
-                    s_step = int(cfg.get("stride", max(1, w_size // 2)))
-
-                m_params = list(m_obj.parameters())
-                m_dev = m_params[0].device if m_params else device
-
-                sw_preds = []
-                for idx_in_region, x_single in enumerate(region_x):
-                    sw_cond = None
-                    if getattr(m_obj, "use_film", False):
-                        sample_meta = group.iloc[idx_in_region : idx_in_region + 1].to_dict(orient="records")
-                        for r in sample_meta:
-                            r.setdefault("tool_target", target_tool)
-                        sample_scale = scales[idx_in_region : idx_in_region + 1]
-                        sw_cond = prepare_film_condition_tensor(
-                            metadata=sample_meta,
-                            scale_x=sample_scale,
-                            device=m_dev,
-                            num_samples=1,
-                        )
-                    recon = predict_sliding_window_spectrum(
-                        model=m_obj,
-                        spectrum=x_single,
-                        config={
-                            "window_size": w_size,
-                            "stride": s_step,
-                            "device": m_dev,
-                            "scale_factor": float(scales[idx_in_region, 0]),
-                            "normalization_mode": norm_mode,
-                            "clamp_non_negative": clamp_non_negative,
-                            "eps": eps,
-                        },
-                        cond=sw_cond,
-                    )
-                    sw_preds.append(recon)
-                pred_arr = np.vstack(sw_preds)
-            else:
-                model = model_entry
-                # Batch forward pass
-                preds = []
-                for i in range(0, len(region_x_in), batch_size):
-                    batch_x = region_x_in[i : i + batch_size]
-                    x_tensor = torch.from_numpy(batch_x.astype(np.float32)).to(device)
-                    cond = None
-                    if getattr(model, "use_film", False):
-                        batch_meta = group.iloc[i : i + batch_size].to_dict(orient="records")
-                        for r in batch_meta:
-                            r.setdefault("tool_target", target_tool)
-                        batch_scale = scales[i : i + batch_size]
-                        cond = prepare_film_condition_tensor(
-                            metadata=batch_meta,
-                            scale_x=batch_scale,
-                            device=device,
-                            num_samples=len(batch_x),
-                        )
-                    with torch.no_grad():
-                        y_pred = model(x_tensor, cond=cond).cpu().numpy() if cond is not None else model(x_tensor).cpu().numpy()
-                    preds.append(y_pred)
-
-                pred_arr = np.vstack(preds)
-                pred_arr = pred_arr * scales
-
-                # Zero clamping at final full spectrum reconstruction level
-                if clamp_non_negative:
-                    pred_arr = np.clip(pred_arr, 0.0, None)
-
-            predicted_intensities[group_new_indices] = pred_arr
+        if norm_mode == "die_total_flux" and flux_map:
+            def _fx(r: Any) -> float:
+                fb = max(float(np.abs(ary_intensity[int(r.spectrum_index)]).max()), eps)
+                return float(flux_map.get((str(r.measurement_id), int(r.die)), fb))
+            scales = np.array([_fx(r) for r in group.itertuples()], dtype=np.float32)[:, None]
+        elif norm_mode == "source_referenced":
+            scales = np.maximum(np.max(np.abs(region_x), axis=-1, keepdims=True), eps)
         else:
-            warnings.warn(
-                f"Region '{region}' not in models dictionary; falling back to identity pass-through."
-            )
-            fallback = ary_intensity[orig_indices]
-            if clamp_non_negative:
-                fallback = np.clip(fallback, 0.0, None)
-            predicted_intensities[group_new_indices] = fallback
+            scales = np.ones((len(region_x), 1), dtype=np.float32)
+        region_x_in = region_x / scales
 
-    meta_df_predicted = assemble_prediction_metadata(
-        source_df,
-        config={
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "n_points": n_points,
-            "session_splits": cfg.get("session_splits"),
-        },
-    )
+        is_sw = bool(cfg.get("use_sliding_window", False)) or isinstance(model_entry, (tuple, list))
 
+        if is_sw:
+            is_seq = isinstance(model_entry, (tuple, list))
+            m_obj = model_entry[0] if is_seq else model_entry
+            w_size = int(model_entry[1]) if is_seq else int(cfg.get("window_size", 15))
+            s_step = int(model_entry[2]) if is_seq else int(cfg.get("stride", max(1, w_size // 2)))
+            m_dev = next(m_obj.parameters()).device if list(m_obj.parameters()) else device
+            sw_cfg = dict(window_size=w_size, stride=s_step, device=m_dev, normalization_mode=norm_mode, eps=eps)
+            predicted_intensities[group_new_indices] = np.vstack([
+                predict_sliding_window_spectrum(
+                    m_obj, x_s, config={**sw_cfg, "scale_factor": float(scales[i, 0])},
+                    cond=_film_cond(m_obj, group.iloc[i : i + 1], scales[i : i + 1], m_dev),
+                )
+                for i, x_s in enumerate(region_x)
+            ])
+        else:
+            with torch.no_grad():
+                batches = [
+                    (torch.as_tensor(region_x_in[i : i + batch_size], dtype=torch.float32, device=device),
+                     _film_cond(model_entry, group.iloc[i : i + batch_size], scales[i : i + batch_size], device))
+                    for i in range(0, len(region_x_in), batch_size)
+                ]
+                preds = [
+                    (model_entry(bx, cond=c) if c is not None else model_entry(bx)).cpu().numpy()
+                    for bx, c in batches
+                ]
+            predicted_intensities[group_new_indices] = np.vstack(preds) * scales
+
+    if clamp_non_negative:
+        predicted_intensities = np.clip(predicted_intensities, 0.0, None)
+    meta_cfg = dict(source_tool=source_tool, target_tool=target_tool, session_splits=cfg.get("session_splits"))
+    meta_df_predicted = assemble_prediction_metadata(source_df, {**meta_cfg, "n_points": ary_intensity.shape[1]})
     return predicted_intensities, predicted_energies, meta_df_predicted
