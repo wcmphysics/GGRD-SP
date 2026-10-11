@@ -254,9 +254,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         self.assertIsInstance(model, DeepLabV3)
         self.assertEqual(model.n_points, 80)
 
-        # Alias test
-        alias_model = instantiate_model("deeplab", seq_len=40)
-        self.assertIsInstance(alias_model, DeepLabV3)
+        # Strict naming test: alias raises ValueError
+        with self.assertRaises(ValueError):
+            instantiate_model("deeplab", seq_len=40)
 
 
 class TestDeepLabV3PipelineIntegration(unittest.TestCase):

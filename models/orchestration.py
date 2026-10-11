@@ -62,13 +62,13 @@ def instantiate_model(
     """
     m_type = model_type.lower()
     cfg = config or {}
-    if m_type in ("resnet", "baseline"):
+    if m_type == "resnet":
         return ResNet1D(n_points=seq_len, config=cfg)
-    elif m_type in ("residual_unet", "unet_residual"):
+    elif m_type == "residual_unet":
         return ResidualUNet1D(n_points=seq_len, config=cfg)
     elif m_type == "unet":
         return ConventionalUNet1D(n_points=seq_len, config=cfg)
-    elif m_type in ("deeplabv3", "deeplab", "deeplabv3_1d"):
+    elif m_type == "deeplabv3":
         return DeepLabV3(n_points=seq_len, config=cfg)
     else:
         raise ValueError(
@@ -352,28 +352,22 @@ def run_spectral_pipeline(
         - 'bayesian_opt_results': Dict mapping region -> Ax optimization outputs.
         - 'predictions': Tuple (ary_intensity_pred, ary_energy_pred, meta_df_pred).
     """
-    # Unpack data container
-    if isinstance(data, pd.DataFrame):
-        meta_df = data
-        ary_intensity = kwargs.get("ary_intensity")
-        ary_energy = kwargs.get("ary_energy")
-    elif isinstance(data, (tuple, list)) and len(data) == 3:
-        if isinstance(data[0], pd.DataFrame):
-            meta_df, ary_intensity, ary_energy = data[0], data[1], data[2]
-        else:
-            ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
-    elif isinstance(data, dict):
-        meta_df = data.get("meta_df", data.get("metadata"))
-        ary_intensity = data.get("ary_intensity", data.get("intensity"))
-        ary_energy = data.get("ary_energy", data.get("energy"))
-    else:
-        meta_df = kwargs.get("meta_df")
-        ary_intensity = kwargs.get("ary_intensity")
-        ary_energy = kwargs.get("ary_energy")
-
-    if meta_df is None or ary_intensity is None or ary_energy is None:
+    # Unpack data container (strictly canonical tuple: ary_intensity, ary_energy, meta_df)
+    if not isinstance(data, (tuple, list)) or len(data) != 3:
         raise ValueError(
-            "run_spectral_pipeline requires meta_df, ary_intensity, and ary_energy."
+            "run_spectral_pipeline requires data as canonical tuple: "
+            "(ary_intensity, ary_energy, meta_df)."
+        )
+
+    ary_intensity, ary_energy, meta_df = data[0], data[1], data[2]
+    if (
+        not isinstance(ary_intensity, np.ndarray)
+        or not isinstance(ary_energy, np.ndarray)
+        or not isinstance(meta_df, pd.DataFrame)
+    ):
+        raise ValueError(
+            "run_spectral_pipeline expects data tuple elements of type: "
+            "(np.ndarray, np.ndarray, pd.DataFrame)."
         )
 
     cfg = dict(config or {})
