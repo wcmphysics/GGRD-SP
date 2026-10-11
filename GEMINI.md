@@ -104,5 +104,8 @@ The codes will be composed of mainly 5 parts
       2. DO NOT package coding lines into another module as it is merely moving lines to somewhere else rather than cutting down lines. 
       3. DO NOT rename variables to shorten the line counts. Variable names should be easy to understand for reader. 
       4. DO NOT just use `;` to put different lines into one line. This is not cutting down lines.
+      5. One coding line cannot exceed 120 characters. One documentation cannot exceed 72 characters.
+      5. Note that comment lines are not counted. You can use comments to maintain code clarity/readability when reducing code lines.
+      6. Comments line like docucmentation and input/output description should still be complete and comprehensive.
    - Ask me anything if there is something unclear to you
    - Always Propose your plans first for me to review. Only implement the plan if I approve
