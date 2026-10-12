@@ -105,6 +105,9 @@ def main() -> None:
         print("\nGenerating demonstration plots...")
         for plot_fn in (
             lambda: ut.plot_pairing_timeline(df_meta, plot_config={"source_tool": source_tool, "target_tool": target_tool}),
+            lambda: ut.plot_flux_and_averaged_intensity_vs_time(
+                ary_i, ary_e, df_meta, plot_config={"source_tool": source_tool, "target_tool": target_tool}
+            ),
             lambda: ut.plot_max_intensity_vs_time(ary_i, df_meta, region=example_region, die=0, plot_config={"hue": "tool"}),
             lambda: ut.plot_normalized_max_intensity_vs_time(ary_i, df_meta, ary_energy=ary_e, region=example_region, die=0, plot_config={"hue": "tool", "normalization_mode": "die_total_flux"}),
             lambda: ut.plot_tool_comparison(ary_e, ary_i, df_meta, compare_config={"tools": (source_tool, target_tool), "region": example_region, "die": 0}),
