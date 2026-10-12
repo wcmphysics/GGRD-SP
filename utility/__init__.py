@@ -36,6 +36,7 @@ from utility.visualization import (
     plot_training_history,
     plot_atomic_percentage_distributions,
     plot_atomic_percentage_mae,
+    plot_flux_and_averaged_intensity_vs_time,
 )
 
 __all__ = [
@@ -67,4 +68,5 @@ __all__ = [
     "plot_sliding_window_slices",
     "plot_atomic_percentage_distributions",
     "plot_atomic_percentage_mae",
+    "plot_flux_and_averaged_intensity_vs_time",
 ]
