@@ -6,8 +6,10 @@ background subtraction directly from ary_energy, ary_intensity, and meta_df.
 
 from __future__ import annotations
 
+import colorsys
 from typing import Any
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -2375,6 +2377,346 @@ def plot_atomic_percentage_mae(
     return fig, (ax_strip, ax_ecdf)
 
 
+def _derive_tool_die_shades(base_color: Any) -> dict[str, str]:
+    """Derive 3-tier colors (dark for center, medium for donut, light for edge) from a base color.
+
+    Parameters
+    ----------
+    base_color : Any
+        Base color name, hex code, or RGB tuple.
+
+    Returns
+    -------
+    dict[str, str]
+        Dictionary with keys 'center', 'donut', 'edge' mapping to hex colors.
+    """
+    norm_color = str(base_color).lower().strip()
+    if norm_color in ("black", "#000000", "#000", "k"):
+        return {
+            "center": "#000000",
+            "donut": "#555555",
+            "edge": "#999999",
+        }
+    if norm_color in ("red", "#ff0000", "#f00", "tab:red", "#d62728"):
+        return {
+            "center": "#8b0000",
+            "donut": "#d62728",
+            "edge": "#f4a582",
+        }
+    try:
+        r, g, b, _ = mcolors.to_rgba(base_color)
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        c_dark = colorsys.hls_to_rgb(h, max(0.12, l * 0.55), min(1.0, s * 1.15))
+        c_med = (r, g, b)
+        c_light = colorsys.hls_to_rgb(
+            h, min(0.85, l + (1.0 - l) * 0.55), max(0.2, s * 0.75)
+        )
+        return {
+            "center": mcolors.to_hex(c_dark),
+            "donut": mcolors.to_hex(c_med),
+            "edge": mcolors.to_hex(c_light),
+        }
+    except Exception:
+        return {
+            "center": "#333333",
+            "donut": "#777777",
+            "edge": "#bbbbbb",
+        }
+
+
+def plot_flux_and_averaged_intensity_vs_time(
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray,
+    meta_df: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+    *,
+    region: str | None = None,
+) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
+    """Plot total flux (upper panel) and averaged intensity (lower panel) vs. measurement time.
+
+    Displays all wafer dies on the timeline with 3-tier shading (dark for center, medium for
+    donut, light for edge) per tool, setting the source tool base color to black and target
+    tool to red by default.
+
+    Parameters
+    ----------
+    ary_intensity : np.ndarray
+        2D array of measured spectral intensities, shape (N_spectra, N_points).
+    ary_energy : np.ndarray
+        2D array of binding energies, shape (N_spectra, N_points). Mandatory for trapezoidal
+        numerical integration.
+    meta_df : pd.DataFrame
+        Metadata DataFrame containing 'spectrum_index', 'measurement_id', 'die', 'tool',
+        and 'time'.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary bundling options:
+        - 'source_tool' (str | None): Source tool name (base color: black).
+        - 'target_tool' (str | None): Target tool name (base color: red).
+        - 'connect_lines' / 'show_lines' (bool): Connect chronological points per tool and
+          die group (default False).
+        - 'die_groups' (dict[str, list[int]] | None): Mapping of 'center', 'donut', 'edge'
+          to die indices (default: center: [0], donut: [5-8], edge: [1-4]).
+        - 'tool_base_colors' (dict[str, str] | None): Custom base colors mapping per tool.
+        - 'title' (str | None): Custom supertitle for the figure.
+        - 'title_flux' (str | None): Custom title for upper panel.
+        - 'title_intensity' (str | None): Custom title for lower panel.
+        - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 7)).
+        - 'axes' (tuple[plt.Axes, plt.Axes] | None): Existing pair of matplotlib Axes.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+    region : str | None, optional
+        Target spectral region to filter. If None (default), aggregates across all measured
+        regions for the complete measurement. Takes precedence over plot_config['region'].
+
+    Returns
+    -------
+    tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]
+        The matplotlib Figure and tuple of (ax_flux, ax_intensity).
+
+    Raises
+    ------
+    ValueError
+        If ary_energy is None or shapes mismatch, or if meta_df is empty or filters match no data.
+    KeyError
+        If required metadata columns are missing.
+    """
+    if ary_energy is None:
+        raise ValueError(
+            "ary_energy must be provided as a 2D numpy array of binding energies matching ary_intensity."
+        )
+    if ary_intensity.ndim != 2 or ary_energy.ndim != 2:
+        raise ValueError(
+            f"ary_intensity and ary_energy must both be 2D arrays, got {ary_intensity.shape} and {ary_energy.shape}"
+        )
+    if ary_intensity.shape != ary_energy.shape:
+        raise ValueError(
+            f"Shape mismatch: ary_intensity {ary_intensity.shape} != ary_energy {ary_energy.shape}"
+        )
+    if meta_df.empty:
+        raise ValueError("meta_df cannot be empty.")
+
+    required_cols = {"spectrum_index", "measurement_id", "die", "tool", "time"}
+    missing = required_cols - set(meta_df.columns)
+    if missing:
+        raise KeyError(f"meta_df is missing required columns: {sorted(missing)}")
+
+    cfg = plot_config or {}
+    target_region = region if region is not None else cfg.get("region")
+
+    if target_region is not None:
+        if "region" not in meta_df.columns:
+            raise KeyError("meta_df must contain 'region' column when region is specified.")
+        work_df = meta_df[meta_df["region"] == target_region].copy()
+        if work_df.empty:
+            raise ValueError(f"No spectra match region='{target_region}' in meta_df.")
+    else:
+        work_df = meta_df.copy()
+
+    if not pd.api.types.is_datetime64_any_dtype(work_df["time"]):
+        try:
+            work_df["time"] = pd.to_datetime(work_df["time"], format="mixed")
+        except (ValueError, TypeError):
+            work_df["time"] = pd.to_datetime(work_df["time"])
+
+    die_groups_def = {
+        "center": [0],
+        "donut": [5, 6, 7, 8],
+        "edge": [1, 2, 3, 4],
+    }
+    die_groups = cfg.get("die_groups", die_groups_def)
+    die_to_group: dict[Any, str] = {}
+    for g_name, d_list in die_groups.items():
+        for d in d_list:
+            die_to_group[d] = g_name
+            try:
+                die_to_group[int(d)] = g_name
+                die_to_group[str(d)] = g_name
+            except (ValueError, TypeError):
+                pass
+
+    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+
+    indices = work_df["spectrum_index"].astype(int).values
+    work_df["_flux"] = np.abs(trapz_fn(ary_intensity[indices], x=ary_energy[indices], axis=1))
+    work_df["_intensity_sum"] = np.sum(ary_intensity[indices], axis=1)
+    work_df["_n_points"] = ary_intensity.shape[1]
+
+    # Aggregate by measurement_id and die across regions
+    agg_df = (
+        work_df.groupby(["measurement_id", "die", "tool", "time"], as_index=False)
+        .agg({"_flux": "sum", "_intensity_sum": "sum", "_n_points": "sum"})
+    )
+    agg_df["total_flux"] = agg_df["_flux"]
+    agg_df["avg_intensity"] = agg_df["_intensity_sum"] / np.maximum(agg_df["_n_points"], 1)
+    agg_df["die_group"] = agg_df["die"].map(lambda d: die_to_group.get(d, "donut"))
+
+    # Tool color mapping: Source tool -> black, Target tool -> red
+    source_tool = cfg.get("source_tool")
+    target_tool = cfg.get("target_tool")
+    if source_tool is None and "tool_target" in meta_df.columns:
+        valid_srcs = meta_df[meta_df["tool_target"].notna()]["tool"].dropna().unique()
+        if len(valid_srcs) > 0:
+            source_tool = str(valid_srcs[0])
+    if target_tool is None and "tool_target" in meta_df.columns:
+        valid_tgts = meta_df["tool_target"].dropna().unique()
+        if len(valid_tgts) > 0:
+            target_tool = str(valid_tgts[0])
+
+    unique_tools = list(pd.Series(agg_df["tool"].dropna().unique()))
+    if source_tool is None and len(unique_tools) >= 1:
+        source_tool = str(unique_tools[0])
+    if target_tool is None and len(unique_tools) >= 2:
+        target_tool = str(unique_tools[1])
+
+    tool_base_colors = dict(cfg.get("tool_base_colors", cfg.get("palette", {})) or {})
+    if source_tool and source_tool not in tool_base_colors:
+        tool_base_colors[source_tool] = "black"
+    if target_tool and target_tool not in tool_base_colors:
+        tool_base_colors[target_tool] = "red"
+
+    fallback_colors = ["tab:blue", "tab:green", "tab:purple", "tab:orange"]
+    for i, t in enumerate(unique_tools):
+        if t not in tool_base_colors:
+            tool_base_colors[t] = fallback_colors[i % len(fallback_colors)]
+
+    # Derive 3-tier shades per tool
+    tool_shades = {t: _derive_tool_die_shades(tool_base_colors[t]) for t in unique_tools}
+
+    figsize = tuple(cfg.get("figsize", (10, 7)))
+    custom_axes = cfg.get("axes")
+    if custom_axes is not None:
+        ax_flux, ax_intensity = custom_axes
+        fig = ax_flux.get_figure()
+    else:
+        fig, (ax_flux, ax_intensity) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    connect_lines = bool(cfg.get("connect_lines", cfg.get("show_lines", False)))
+    marker_sizes = {"center": 50.0, "donut": 38.0, "edge": 32.0}
+    alphas = {"center": 0.95, "donut": 0.85, "edge": 0.75}
+
+    group_order = ["edge", "donut", "center"]  # Plot center last so it sits on top
+
+    for tool in unique_tools:
+        tool_df = agg_df[agg_df["tool"] == tool]
+        shades = tool_shades[tool]
+
+        for g in group_order:
+            sub = tool_df[tool_df["die_group"] == g]
+            if sub.empty:
+                continue
+            color = shades[g]
+            sz = marker_sizes.get(g, 38.0)
+            al = alphas.get(g, 0.85)
+
+            ax_flux.scatter(
+                sub["time"],
+                sub["total_flux"],
+                color=color,
+                s=sz,
+                alpha=al,
+                zorder=3 if g == "center" else 2,
+            )
+            ax_intensity.scatter(
+                sub["time"],
+                sub["avg_intensity"],
+                color=color,
+                s=sz,
+                alpha=al,
+                zorder=3 if g == "center" else 2,
+            )
+
+        if connect_lines:
+            # Chronological connecting lines per die
+            for die_val in sorted(tool_df["die"].unique()):
+                d_sub = tool_df[tool_df["die"] == die_val].sort_values("time")
+                if len(d_sub) < 2:
+                    continue
+                d_grp = d_sub["die_group"].iloc[0]
+                line_color = shades.get(d_grp, "#777777")
+                ls = "-" if d_grp == "center" else ("--" if d_grp == "donut" else ":")
+                lw = 1.4 if d_grp == "center" else 1.0
+
+                ax_flux.plot(
+                    d_sub["time"],
+                    d_sub["total_flux"],
+                    color=line_color,
+                    linestyle=ls,
+                    linewidth=lw,
+                    alpha=0.65,
+                    zorder=1,
+                )
+                ax_intensity.plot(
+                    d_sub["time"],
+                    d_sub["avg_intensity"],
+                    color=line_color,
+                    linestyle=ls,
+                    linewidth=lw,
+                    alpha=0.65,
+                    zorder=1,
+                )
+
+    # Build clear, comprehensive legend
+    legend_handles: list[plt.Line2D] = []
+    group_labels = {
+        "center": "Center (Die 0)",
+        "donut": "Donut (Dies 5-8)",
+        "edge": "Edge (Dies 1-4)",
+    }
+    for tool in unique_tools:
+        shades = tool_shades[tool]
+        for g in ["center", "donut", "edge"]:
+            handle = plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="none",
+                markerfacecolor=shades[g],
+                markeredgecolor=shades[g],
+                markersize=7 if g == "center" else 5.5,
+                label=f"{tool} - {group_labels.get(g, g.capitalize())}",
+            )
+            legend_handles.append(handle)
+
+    reg_desc = f" [{target_region}]" if target_region is not None else " [All Regions]"
+    ax_flux.set_ylabel(f"Total Flux{reg_desc} (counts · eV)")
+    ax_flux.set_title(
+        cfg.get("title_flux", f"Total Flux vs. Time{reg_desc}"),
+        fontsize=11,
+        fontweight="bold",
+    )
+    ax_flux.grid(True, linestyle="--", alpha=0.5)
+    ax_flux.legend(
+        handles=legend_handles,
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        borderaxespad=0.0,
+        fontsize=8.5,
+        framealpha=0.9,
+    )
+
+    ax_intensity.set_ylabel(f"Averaged Intensity{reg_desc} (counts)")
+    ax_intensity.set_xlabel("Measurement Time")
+    ax_intensity.set_title(
+        cfg.get("title_intensity", f"Averaged Intensity vs. Time{reg_desc}"),
+        fontsize=11,
+        fontweight="bold",
+    )
+    ax_intensity.grid(True, linestyle="--", alpha=0.5)
+    plt.setp(ax_intensity.get_xticklabels(), rotation=25, ha="right")
+
+    fig_title = cfg.get(
+        "title",
+        f"Measurement Total Flux and Averaged Intensity Timeline{reg_desc}",
+    )
+    if fig_title:
+        fig.suptitle(fig_title, fontsize=12, fontweight="bold")
+
+    fig.tight_layout()
+    if cfg.get("show", False):
+        plt.show()
+
+    return fig, (ax_flux, ax_intensity)
+
+
 __all__ = [
     "plot_regional_spectra",
     "plot_tool_comparison",
@@ -2387,4 +2729,5 @@ __all__ = [
     "plot_sliding_window_slices",
     "plot_atomic_percentage_distributions",
     "plot_atomic_percentage_mae",
+    "plot_flux_and_averaged_intensity_vs_time",
 ]
