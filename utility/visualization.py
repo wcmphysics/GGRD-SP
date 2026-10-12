@@ -2378,7 +2378,9 @@ def plot_atomic_percentage_mae(
 
 
 def _derive_tool_die_shades(base_color: Any) -> dict[str, str]:
-    """Derive 3-tier colors (dark for center, medium for donut, light for edge) from a base color.
+    """Derive 3-tier colors from a base color.
+
+    Generates dark for center, medium for donut, and light for edge dies.
 
     Parameters
     ----------
@@ -2432,40 +2434,45 @@ def plot_flux_and_averaged_intensity_vs_time(
     *,
     region: str | None = None,
 ) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
-    """Plot total flux (upper panel) and averaged intensity (lower panel) vs. measurement time.
+    """Plot total flux and averaged intensity vs. measurement time.
 
-    Displays all wafer dies on the timeline with 3-tier shading (dark for center, medium for
-    donut, light for edge) per tool, setting the source tool base color to black and target
-    tool to red by default.
+    Upper panel shows total flux and lower panel shows averaged intensity.
+    Displays all wafer dies on the timeline with 3-tier shading (dark for
+    center, medium for donut, light for edge) per tool, setting the source
+    tool base color to black and target tool to red by default.
 
     Parameters
     ----------
     ary_intensity : np.ndarray
         2D array of measured spectral intensities, shape (N_spectra, N_points).
     ary_energy : np.ndarray
-        2D array of binding energies, shape (N_spectra, N_points). Mandatory for trapezoidal
-        numerical integration.
+        2D array of binding energies, shape (N_spectra, N_points). Mandatory
+        for trapezoidal numerical integration.
     meta_df : pd.DataFrame
-        Metadata DataFrame containing 'spectrum_index', 'measurement_id', 'die', 'tool',
-        and 'time'.
+        Metadata DataFrame containing 'spectrum_index', 'measurement_id',
+        'die', 'tool', and 'time'.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling options:
         - 'source_tool' (str | None): Source tool name (base color: black).
         - 'target_tool' (str | None): Target tool name (base color: red).
-        - 'connect_lines' / 'show_lines' (bool): Connect chronological points per tool and
-          die group (default False).
-        - 'die_groups' (dict[str, list[int]] | None): Mapping of 'center', 'donut', 'edge'
-          to die indices (default: center: [0], donut: [5-8], edge: [1-4]).
-        - 'tool_base_colors' (dict[str, str] | None): Custom base colors mapping per tool.
+        - 'connect_lines' / 'show_lines' (bool): Connect chronological points
+          per tool and die group (default False).
+        - 'die_groups' (dict[str, list[int]] | None): Mapping of 'center',
+          'donut', 'edge' to die indices (default: center: [0], donut: [5-8],
+          edge: [1-4]).
+        - 'tool_base_colors' (dict[str, str] | None): Custom base colors
+          mapping per tool.
         - 'title' (str | None): Custom supertitle for the figure.
         - 'title_flux' (str | None): Custom title for upper panel.
         - 'title_intensity' (str | None): Custom title for lower panel.
         - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 7)).
-        - 'axes' (tuple[plt.Axes, plt.Axes] | None): Existing pair of matplotlib Axes.
+        - 'axes' (tuple[plt.Axes, plt.Axes] | None): Existing pair of
+          matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
     region : str | None, optional
-        Target spectral region to filter. If None (default), aggregates across all measured
-        regions for the complete measurement. Takes precedence over plot_config['region'].
+        Target spectral region to filter. If None (default), aggregates across
+        all measured regions for the complete measurement. Takes precedence
+        over plot_config['region'].
 
     Returns
     -------
@@ -2475,7 +2482,8 @@ def plot_flux_and_averaged_intensity_vs_time(
     Raises
     ------
     ValueError
-        If ary_energy is None or shapes mismatch, or if meta_df is empty or filters match no data.
+        If ary_energy is None or shapes mismatch, or if meta_df is empty or
+        filters match no data.
     KeyError
         If required metadata columns are missing.
     """
@@ -2626,7 +2634,10 @@ def plot_flux_and_averaged_intensity_vs_time(
 
         if connect_lines:
             # Chronological connecting lines per die
-            for die_val in sorted(tool_df["die"].unique()):
+            for die_val in sorted(
+                tool_df["die"].unique(),
+                key=lambda d: (0, int(d)) if str(d).isdigit() else (1, str(d)),
+            ):
                 d_sub = tool_df[tool_df["die"] == die_val].sort_values("time")
                 if len(d_sub) < 2:
                     continue
