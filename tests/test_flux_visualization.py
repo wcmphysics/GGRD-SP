@@ -25,7 +25,7 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Generate synthetic spectra dataset with paired source and target tools."""
+        """Generate synthetic spectra dataset with paired tools."""
         cls.ary_intensity, cls.ary_energy, cls.meta_df = generate_pseudo_measurements(
             {
                 "material": "NMG",
@@ -47,7 +47,7 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         )
 
     def test_derive_tool_die_shades(self) -> None:
-        """Test derivation of 3-tier colors from black, red, and custom colors."""
+        """Test 3-tier colors from black, red, and custom colors."""
         black_shades = _derive_tool_die_shades("black")
         self.assertEqual(black_shades["center"], "#000000")
         self.assertEqual(black_shades["donut"], "#555555")
@@ -88,7 +88,8 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         self.assertIn("Averaged Intensity", ax_intensity.get_ylabel())
         self.assertEqual(ax_intensity.get_xlabel(), "Measurement Time")
 
-        # Verify legend labels and 3-tier colors for source (black) and target (red)
+        # Verify legend labels and 3-tier colors:
+        # source (black) and target (red)
         leg = ax_flux.get_legend()
         self.assertIsNotNone(leg)
         leg_texts = [t.get_text() for t in leg.get_texts()]
@@ -130,6 +131,49 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         )
         self.assertGreater(len(ax_flux.lines), 0)
         self.assertGreater(len(ax_intensity.lines), 0)
+        plt.close(fig)
+
+    def test_show_lines_alias_and_precedence(self) -> None:
+        """Test show_lines alias and region argument precedence."""
+        # Explicit kwarg takes precedence over config
+        fig, (ax_flux, ax_intensity) = plot_flux_and_averaged_intensity_vs_time(
+            self.ary_intensity,
+            self.ary_energy,
+            self.meta_df,
+            plot_config={"show_lines": True, "region": "Al2p", "show": False},
+            region="Ti2p",
+        )
+        self.assertGreater(len(ax_flux.lines), 0)
+        self.assertIn("Ti2p", ax_flux.get_ylabel())
+        plt.close(fig)
+
+    def test_mixed_die_types_with_connecting_lines(self) -> None:
+        """Test robust sorting when die column contains mixed int and str."""
+        mixed_meta = self.meta_df.copy()
+        mixed_meta["die"] = mixed_meta["die"].map(
+            lambda d: f"die_{d}" if d in [1, 2] else d
+        )
+        fig, (ax_flux, ax_intensity) = plot_flux_and_averaged_intensity_vs_time(
+            self.ary_intensity,
+            self.ary_energy,
+            mixed_meta,
+            plot_config={"connect_lines": True, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertGreater(len(ax_flux.lines), 0)
+        plt.close(fig)
+
+    def test_single_die_dataset(self) -> None:
+        """Test dataset containing only a single wafer die."""
+        single_die_meta = self.meta_df[self.meta_df["die"] == 0].copy()
+        fig, (ax_flux, ax_intensity) = plot_flux_and_averaged_intensity_vs_time(
+            self.ary_intensity,
+            self.ary_energy,
+            single_die_meta,
+            plot_config={"connect_lines": True, "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertGreater(len(ax_flux.collections), 0)
         plt.close(fig)
 
     def test_custom_axes_injection(self) -> None:
