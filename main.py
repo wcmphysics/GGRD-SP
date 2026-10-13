@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 from models import run_spectral_pipeline
 import utility as ut
+import visualization as vz
 
 
 def main() -> None:
@@ -104,24 +105,24 @@ def main() -> None:
     if show_plots:
         print("\nGenerating demonstration plots...")
         for plot_fn in (
-            lambda: ut.plot_pairing_timeline(df_meta, plot_config={"source_tool": source_tool, "target_tool": target_tool}),
-            lambda: ut.plot_flux_and_averaged_intensity_vs_time(
+            lambda: vz.plot_pairing_timeline(df_meta, plot_config={"source_tool": source_tool, "target_tool": target_tool}),
+            lambda: vz.plot_flux_and_averaged_intensity_vs_time(
                 ary_i, ary_e, df_meta, plot_config={"source_tool": source_tool, "target_tool": target_tool}
             ),
-            lambda: ut.plot_max_intensity_vs_time(ary_i, df_meta, region=example_region, die=0, plot_config={"hue": "tool"}),
-            lambda: ut.plot_normalized_max_intensity_vs_time(ary_i, df_meta, ary_energy=ary_e, region=example_region, die=0, plot_config={"hue": "tool", "normalization_mode": "die_total_flux"}),
-            lambda: ut.plot_tool_comparison(ary_e, ary_i, df_meta, compare_config={"tools": (source_tool, target_tool), "region": example_region, "die": 0}),
-            lambda: ut.plot_shirley_background(ary_e, ary_i, df_meta, plot_config={"measurement_id": sample_meas_id, "die": 0}),
-            lambda: ut.plot_training_history(results["histories"]),
-            lambda: ut.plot_prediction_comparison(data_orig, data_pred, config={"session_splits": results.get("session_splits"), "die": 0}),
-            lambda: ut.plot_atomic_percentage_distributions(df_at_samples),
-            lambda: ut.plot_atomic_percentage_mae(df_at_samples),
+            lambda: vz.plot_max_intensity_vs_time(ary_i, df_meta, region=example_region, die=0, plot_config={"hue": "tool"}),
+            lambda: vz.plot_normalized_max_intensity_vs_time(ary_i, df_meta, ary_energy=ary_e, region=example_region, die=0, plot_config={"hue": "tool", "normalization_mode": "die_total_flux"}),
+            lambda: vz.plot_tool_comparison(ary_e, ary_i, df_meta, compare_config={"tools": (source_tool, target_tool), "region": example_region, "die": 0}),
+            lambda: vz.plot_shirley_background(ary_e, ary_i, df_meta, plot_config={"measurement_id": sample_meas_id, "die": 0}),
+            lambda: vz.plot_training_history(results["histories"]),
+            lambda: vz.plot_prediction_comparison(data_orig, data_pred, config={"session_splits": results.get("session_splits"), "die": 0}),
+            lambda: vz.plot_atomic_percentage_distributions(df_at_samples),
+            lambda: vz.plot_atomic_percentage_mae(df_at_samples),
         ):
             plot_fn()
         if use_sliding_window:
             ex = df_meta[(df_meta["measurement_id"] == sample_meas_id) & (df_meta["region"] == example_region) & (df_meta["die"] == 0)]
             if not ex.empty:
-                ut.plot_sliding_window_slices(ary_i[int(ex.iloc[0]["spectrum_index"])], ary_e[int(ex.iloc[0]["spectrum_index"])], plot_config={"region": example_region})
+                vz.plot_sliding_window_slices(ary_i[int(ex.iloc[0]["spectrum_index"])], ary_e[int(ex.iloc[0]["spectrum_index"])], plot_config={"region": example_region})
         print("Showing plots (close plot windows to finish execution)...")
         plt.show()
 
