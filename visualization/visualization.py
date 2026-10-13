@@ -364,7 +364,9 @@ def _render_intensity_time_series(meta_df: pd.DataFrame, y_calc: Any, cfg: dict[
     tags = ([f"Region: {t_reg}"] if t_reg else []) + ([f"Die: {t_die}"] if t_die is not None else []) + [
         f"{str(k).capitalize()}: {v}" for k, v in filts.items() if k not in ("region", "die")
     ]
-    _finalize_plot(ax, cfg, fig=fig, title=cfg.get("title") or f"{d_title}{f' ({', '.join(tags)})' if tags else ''}",
+    tag_suffix = f" ({', '.join(tags)})" if tags else ""
+    title = cfg.get("title") or f"{d_title}{tag_suffix}"    
+    _finalize_plot(ax, cfg, fig=fig, title=title,
                    xlabel="Measurement Time", ylabel=cfg.get("ylabel") or d_ylabel, invert_x=False, grid_alpha=0.5)
     return fig, ax
 
