@@ -212,6 +212,110 @@ class TestFiLMModulation(unittest.TestCase):
             prepare_film_condition_tensor(metadata=None, num_samples=1)
         self.assertIn("tool_index", str(ctx3.exception))
 
+    def test_film_generator_window_energy_input_dimensions(self) -> None:
+        """Verify FiLM input dimension is 16 when sliding window and energy
+        encoding are active, and 14 otherwise.
+        """
+        # Both on: in_dim should be 14 + 2 = 16
+        fg_on = FiLMGenerator(
+            [16],
+            config={"use_sliding_window": True, "encode_window_energy": True},
+        )
+        self.assertTrue(fg_on.encode_window_energy)
+        self.assertEqual(fg_on.mlp[0].in_features, 16)
+
+        # Sliding window off: encode_window_energy must be ignored (in_dim=14)
+        fg_sw_off = FiLMGenerator(
+            [16],
+            config={"use_sliding_window": False, "encode_window_energy": True},
+        )
+        self.assertFalse(fg_sw_off.encode_window_energy)
+        self.assertEqual(fg_sw_off.mlp[0].in_features, 14)
+
+        # Energy encoding flag off: in_dim=14
+        fg_flag_off = FiLMGenerator(
+            [16],
+            config={"use_sliding_window": True, "encode_window_energy": False},
+        )
+        self.assertFalse(fg_flag_off.encode_window_energy)
+        self.assertEqual(fg_flag_off.mlp[0].in_features, 14)
+
+    def test_prepare_film_condition_tensor_with_window_energy(self) -> None:
+        """Verify window energy bounds are scaled by energy_scale_ev."""
+        meta = [{"die": 0, "tool_index": 0, "tool_target_index": 1}]
+        we = np.array([[100.0, 106.0]])
+
+        # Default scale: 1000.0 eV
+        cond_default = prepare_film_condition_tensor(
+            metadata=meta,
+            window_energy=we,
+            num_samples=1,
+        )
+        self.assertIn("window_energy", cond_default)
+        self.assertAlmostEqual(cond_default["window_energy"][0, 0].item(), 0.1, places=4)
+        self.assertAlmostEqual(cond_default["window_energy"][0, 1].item(), 0.106, places=4)
+
+        # Custom scale: 500.0 eV
+        cond_custom = prepare_film_condition_tensor(
+            metadata=meta,
+            window_energy=we,
+            num_samples=1,
+            config={"energy_scale_ev": 500.0},
+        )
+        self.assertAlmostEqual(cond_custom["window_energy"][0, 0].item(), 0.2, places=4)
+        self.assertAlmostEqual(cond_custom["window_energy"][0, 1].item(), 0.212, places=4)
+
+    def test_spectrum_patch_dataset_yields_window_energy(self) -> None:
+        """Verify SpectrumPatchDataset extracts window energy bounds."""
+        from models.dataset import SpectrumPatchDataset
+
+        n_pts = 30
+        x = np.ones((2, n_pts), dtype=np.float32)
+        y = np.ones((2, n_pts), dtype=np.float32)
+        energy = np.linspace(70.0, 100.0, n_pts, dtype=np.float32)
+        full_ds = SpectrumPairDataset(
+            x, y,
+            energy=np.tile(energy, (2, 1)),
+            metadata=[{"die": 0, "tool_index": 0, "tool_target_index": 1}] * 2,
+            config={"normalization_mode": "none"},
+        )
+        patch_ds = SpectrumPatchDataset(full_ds, window_size=10, stride=5)
+        self.assertGreater(len(patch_ds), 0)
+        item = patch_ds[0]
+        self.assertIn("window_energy", item)
+        self.assertEqual(item["window_energy"].shape, (2,))
+        # Window 0 starts at index 0 (energy[0]=70.0) and ends at 9 (energy[9])
+        self.assertAlmostEqual(item["window_energy"][0].item(), energy[0], places=3)
+        self.assertAlmostEqual(item["window_energy"][1].item(), energy[9], places=3)
+
+    def test_resnet_with_window_energy_film_forward_backward(self) -> None:
+        """Verify ResNet1D forward and backward pass with window energy FiLM."""
+        patch_len = 10
+        model = ResNet1D(
+            n_points=patch_len,
+            config={
+                "hidden_channels": 16,
+                "use_film": True,
+                "use_sliding_window": True,
+                "encode_window_energy": True,
+                "energy_scale_ev": 1000.0,
+            },
+        )
+        x = torch.randn(2, patch_len)
+        meta = [{"die": 0, "tool_index": 0, "tool_target_index": 1}] * 2
+        we = torch.tensor([[70.0, 80.0], [75.0, 85.0]], dtype=torch.float32)
+        cond = prepare_film_condition_tensor(
+            metadata=meta,
+            window_energy=we,
+            num_samples=2,
+            config={"energy_scale_ev": 1000.0},
+        )
+        out = model(x, cond=cond)
+        self.assertEqual(out.shape, (2, patch_len))
+        loss = torch.sum(out ** 2)
+        loss.backward()
+        self.assertIsNotNone(model.film_gen.mlp[0].weight.grad)
+
 
 if __name__ == "__main__":
     unittest.main()
