@@ -58,7 +58,7 @@ The codes will be composed of the following key stages
    - need a dedicated config for this part
    - the cost function is mainly composed of a weighted average error among all regions (default is equal weight for all region but tunable by user via the config)
    - the error in each region is defined by several weighted components (each weights are configurable ): 
-      1. mean-squared error (MSE)
+      1. mean-squared error (MSE) from I_pre/max(I_target) and I_target/max(I_target), with an option to turn off the max(I_target) normalization
       2. cosine smilarity (default weight=0)
       3. L2 regularization term (default weight=0)
    - the cost function should be able to handle patched dataset when sliding window is turn on
