@@ -17,7 +17,7 @@ from utility.quantification import (
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
 )
-from utility.visualization import plot_shirley_background
+from visualization import plot_shirley_background
 
 
 class TestQuantification(unittest.TestCase):
@@ -625,7 +625,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
 
     def test_plot_atomic_percentage_distributions_success(self) -> None:
         """Verify successful generation of 2-panel figure with box and stripplots."""
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         fig, (ax_abs, ax_diff) = plot_atomic_percentage_distributions(
             self.df_samples,
@@ -655,7 +655,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
 
     def test_plot_atomic_percentage_distributions_filter(self) -> None:
         """Verify filtering by splits and elements works properly."""
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         fig, (ax_abs, ax_diff) = plot_atomic_percentage_distributions(
             self.df_samples,
@@ -669,21 +669,21 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
 
     def test_plot_atomic_percentage_distributions_empty_raises(self) -> None:
         """Verify ValueError when df_at_samples is empty."""
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         with self.assertRaises(ValueError):
             plot_atomic_percentage_distributions(pd.DataFrame())
 
     def test_plot_atomic_percentage_distributions_missing_cols_raises(self) -> None:
         """Verify KeyError when required columns are missing."""
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         with self.assertRaises(KeyError):
             plot_atomic_percentage_distributions(pd.DataFrame({"split": ["train"], "dummy": [1]}))
 
     def test_plot_atomic_percentage_distributions_filter_empty_raises(self) -> None:
         """Verify ValueError when no records match filter."""
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         with self.assertRaises(ValueError):
             plot_atomic_percentage_distributions(
@@ -694,7 +694,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_distributions_custom_axes(self) -> None:
         """Verify passing existing axes tuple into plot_config works cleanly."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_distributions
+        from visualization import plot_atomic_percentage_distributions
 
         fig, (ax1, ax2) = plt.subplots(1, 2)
         returned_fig, (ret_ax1, ret_ax2) = plot_atomic_percentage_distributions(
@@ -708,7 +708,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_mae_from_samples(self) -> None:
         """Verify plot_atomic_percentage_mae generates 2-panel figure with strip and ECDF plots."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
@@ -758,7 +758,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_mae_ecdf_splits(self) -> None:
         """Verify configurable ecdf_splits defaults to train and test, and respects custom configuration."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         df_with_val = pd.concat([
             self.df_samples,
@@ -805,7 +805,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_mae_without_overall(self) -> None:
         """Verify include_overall=False excludes Overall category."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
@@ -820,7 +820,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_mae_filters(self) -> None:
         """Verify filtering by split and elements."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         fig, (ax_strip, ax_ecdf) = plot_atomic_percentage_mae(
             self.df_samples,
@@ -839,7 +839,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
 
     def test_plot_atomic_percentage_mae_error_handling(self) -> None:
         """Verify error handling on invalid or empty DataFrames."""
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         # Empty DataFrame
         with self.assertRaises(ValueError):
@@ -863,7 +863,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
     def test_plot_atomic_percentage_mae_custom_axis(self) -> None:
         """Verify passing an existing pair of matplotlib Axes objects."""
         import matplotlib.pyplot as plt
-        from utility.visualization import plot_atomic_percentage_mae
+        from visualization import plot_atomic_percentage_mae
 
         fig, (custom_ax1, custom_ax2) = plt.subplots(1, 2, figsize=(12, 5))
         returned_fig, (ret_ax1, ret_ax2) = plot_atomic_percentage_mae(

@@ -13,7 +13,7 @@ from utility.pairing import (
     pair_source_target_spectra,
 )
 from utility.pseudo_measurement import generate_pseudo_measurements
-from utility.visualization import plot_pairing_timeline
+from visualization import plot_pairing_timeline
 
 
 class TestPairing(unittest.TestCase):
@@ -421,7 +421,7 @@ class TestPairingVisualization(unittest.TestCase):
 
     def test_calculate_staggered_levels_logic(self) -> None:
         """Verify staggered level assignment correctly separates close timestamps."""
-        from utility.visualization import _calculate_staggered_levels
+        from visualization.visualization import _calculate_staggered_levels
 
         base = pd.Timestamp("2026-01-01 12:00:00")
         # 3 points very close together within 1 minute of each other in a 10-hour span

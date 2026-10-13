@@ -14,7 +14,7 @@ import pandas as pd
 
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
-from utility.visualization import (
+from visualization.visualization import (
     _derive_tool_die_shades,
     plot_flux_and_averaged_intensity_vs_time,
 )

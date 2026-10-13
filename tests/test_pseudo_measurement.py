@@ -1,4 +1,4 @@
-"""Unit tests for utility/pseudo_measurement.py and utility/visualization.py."""
+"""Unit tests for utility/pseudo_measurement.py and visualization."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from utility.pseudo_measurement import (
     get_default_measurement_config,
     pseudo_voigt,
 )
-from utility.visualization import (
+from visualization import (
     plot_regional_spectra,
     plot_tool_comparison,
 )
