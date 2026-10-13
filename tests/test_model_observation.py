@@ -12,10 +12,15 @@ matplotlib.use("Agg")  # Non-interactive backend for testing
 import numpy as np
 import pandas as pd
 
-from models.orchestration import run_spectral_pipeline
+from models.cost import create_cost_function
+from models.dataset import create_regional_datasets
+from models.inference import predict_spectra
+from models.orchestration import perform_model_training_and_bayesian_optimization
 from utility.evaluation import calculate_prediction_metrics
+from utility.normalization import normalize_spectral_data
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
+from utility.splitting import split_measurement_sessions
 from visualization import (
     plot_max_intensity_vs_time,
     plot_normalized_max_intensity_vs_time,
@@ -41,6 +46,9 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 "seed": 42,
             }
         )
+        cls.ary_intensity, cls.ary_energy, cls.meta_df = normalize_spectral_data(
+            cls.ary_intensity, cls.ary_energy, cls.meta_df
+        )
         cls.meta_df = pair_source_target_spectra(
             cls.meta_df,
             {
@@ -49,18 +57,36 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 "time_threshold_hours": 12.0,
             },
         )
-        cls.pipeline_res = run_spectral_pipeline(
-            data=(cls.ary_intensity, cls.ary_energy, cls.meta_df),
-            model_type="resnet",
+        cls.meta_df, _, cls.session_splits = split_measurement_sessions(
+            cls.meta_df,
+            {"source_tool": "J4", "target_tool": "H1", "seed": 42},
+        )
+        reg_ds = create_regional_datasets(
+            cls.meta_df,
+            cls.ary_intensity,
+            cls.ary_energy,
+            {"regions": ["Al2p", "Ti2p"], "source_tool": "J4", "target_tool": "H1"},
+        )
+        criterion = create_cost_function()
+        train_res = perform_model_training_and_bayesian_optimization(
+            reg_ds,
+            criterion,
             config={
-                "regions": ["Al2p", "Ti2p"],
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "use_bayesian_opt": False,
+                "model_type": "resnet",
                 "train_config": {"epochs": 3, "batch_size": 8, "hidden_channels": 8, "kernel_size": 3},
-                "predict_source": True,
             },
         )
+        data_orig = (cls.ary_intensity, cls.ary_energy, cls.meta_df)
+        pred_res = predict_spectra(
+            train_res["models"],
+            data=data_orig,
+            config={"source_tool": "J4", "target_tool": "H1", "session_splits": cls.session_splits},
+        )
+        cls.pipeline_res = {
+            **train_res,
+            "predictions": pred_res,
+            "session_splits": cls.session_splits,
+        }
 
     def test_plot_training_history(self) -> None:
         """Test training history curve plotting."""

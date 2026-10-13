@@ -17,7 +17,6 @@ from models.dataset import (
     split_session_datasets,
 )
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.orchestration import run_spectral_pipeline
 from models.resnet import ResNet1D
 from models.trainer import evaluate, train_model_region
 from utility.pairing import pair_source_target_spectra
@@ -434,32 +433,6 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertIn("best_val_loss", ax_res)
         self.assertEqual(len(ax_res["trials_data"]), 2)
         self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
-
-    def test_run_resnet_pipeline(self) -> None:
-        """Test full ResNet pipeline execution."""
-        pipeline_res = run_spectral_pipeline(
-            data=(self.ary_intensity, self.ary_energy, self.meta_df),
-            model_type="resnet",
-            config={
-                "regions": ["Al2p"],
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "use_bayesian_opt": False,
-                "train_config": {"epochs": 2, "batch_size": 8, "hidden_channels": 8, "kernel_size": 3},
-                "predict_source": True,
-            },
-        )
-
-        self.assertIn("models", pipeline_res)
-        self.assertIn("Al2p", pipeline_res["models"])
-        self.assertIn("session_splits", pipeline_res)
-        self.assertIn("test_evaluation", pipeline_res)
-        self.assertIn("Al2p", pipeline_res["test_evaluation"])
-        self.assertIsNotNone(pipeline_res["predictions"])
-        pred_int, pred_eng, pred_df = pipeline_res["predictions"]
-        self.assertGreater(len(pred_df), 0)
-        self.assertIn("split", pred_df.columns)
-        self.assertTrue(set(pred_df["split"].unique()).issubset({"train", "val", "test", "unpaired"}))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
 from models.deeplabv3 import ASPP1D, DeepLabV3, DeepLabV3_1D, ResNet1DBackbone
-from models.orchestration import instantiate_model, run_spectral_pipeline
+from models.orchestration import instantiate_model
 from models.trainer import train_model_region
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
@@ -312,87 +312,6 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
         self.assertIn("best_val_loss", train_res)
         self.assertLess(train_res["best_val_loss"], float("inf"))
         self.assertIsInstance(train_res["model"], DeepLabV3)
-
-    def test_run_deeplabv3_pipeline_full_spectrum(self) -> None:
-        """Verify run_deeplabv3_pipeline runs successfully without sliding window."""
-        pipeline_cfg = {
-            "model_type": "deeplabv3",
-            "use_sliding_window": False,
-            "regions": ["Al2p"],
-            "source_tool": "J4",
-            "target_tool": "H1",
-            "train_ratio": 0.5,
-            "val_ratio": 0.25,
-            "test_ratio": 0.25,
-            "seed": 42,
-            "train_config": {
-                "epochs": 2,
-                "batch_size": 4,
-                "learning_rate": 1e-3,
-                "backbone_channels": 8,
-                "aspp_channels": 8,
-                "kernel_size": 3,
-                "verbose": False,
-            },
-            "predict_source": True,
-        }
-
-        results = run_spectral_pipeline(
-            data=(self.ary_intensity, self.ary_energy, self.paired_meta),
-            model_type="deeplabv3",
-            config=pipeline_cfg,
-        )
-
-        self.assertIn("models", results)
-        self.assertIn("Al2p", results["models"])
-        self.assertIsInstance(results["models"]["Al2p"], DeepLabV3)
-        self.assertIn("predictions", results)
-        pred_int, pred_ene, pred_meta = results["predictions"]
-        self.assertEqual(pred_int.shape[1], 40)
-        self.assertEqual(pred_ene.shape[1], 40)
-        self.assertTrue(len(pred_meta) > 0)
-
-    def test_run_deeplabv3_pipeline_sliding_window(self) -> None:
-        """Verify run_deeplabv3_pipeline runs successfully with sliding window patch mode."""
-        pipeline_cfg = {
-            "model_type": "deeplabv3",
-            "use_sliding_window": True,
-            "regions": ["Al2p"],
-            "source_tool": "J4",
-            "target_tool": "H1",
-            "train_ratio": 0.5,
-            "val_ratio": 0.25,
-            "test_ratio": 0.25,
-            "seed": 42,
-            "window_size_points": 15,
-            "sliding_stride_points": 5,
-            "train_config": {
-                "epochs": 2,
-                "batch_size": 4,
-                "learning_rate": 1e-3,
-                "backbone_channels": 8,
-                "aspp_channels": 8,
-                "kernel_size": 3,
-                "verbose": False,
-            },
-            "predict_source": True,
-        }
-
-        results = run_spectral_pipeline(
-            data=(self.ary_intensity, self.ary_energy, self.paired_meta),
-            model_type="deeplabv3",
-            config=pipeline_cfg,
-        )
-
-        self.assertIn("models", results)
-        self.assertIn("Al2p", results["models"])
-        model_tuple = results["models"]["Al2p"]
-        self.assertIsInstance(model_tuple, tuple)
-        self.assertIsInstance(model_tuple[0], DeepLabV3)
-        self.assertIn("predictions", results)
-        pred_int, pred_ene, pred_meta = results["predictions"]
-        self.assertEqual(pred_int.shape[1], 40)
-        self.assertTrue(len(pred_meta) > 0)
 
     def test_bayesian_optimization_deeplabv3(self) -> None:
         """Verify Ax Bayesian optimization searches DeepLabV3 hyperparameters."""

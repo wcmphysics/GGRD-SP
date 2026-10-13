@@ -10,7 +10,6 @@ import torch
 
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPairDataset
-from models.orchestration import run_spectral_pipeline
 from models.trainer import train_model_region
 from models.unet import (
     ConventionalUNet1D,
@@ -139,75 +138,6 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
         self.assertIn("best_val_loss", res)
         self.assertEqual(len(res["history"]["train_loss"]), 3)
         self.assertIsInstance(res["model"], UNet1D)
-
-    def test_run_unet_pipeline_full_spectrum_mode(self) -> None:
-        """Verify full regional spectrum pipeline produces standardized output containers."""
-        res = run_spectral_pipeline(
-            data=(self.ary_int, self.ary_ene, self.meta_df),
-            model_type="unet",
-            config={
-                "use_sliding_window": False,
-                "regions": ["Al2p"],
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "val_ratio": 0.25,
-                "train_config": {
-                    "epochs": 2,
-                    "batch_size": 4,
-                    "base_channels": 8,
-                    "depth": 2,
-                    "kernel_size": 3,
-                },
-                "predict_source": True,
-            },
-        )
-
-        self.assertIn("Al2p", res["models"])
-        self.assertIsInstance(res["models"]["Al2p"], UNet1D)
-        self.assertIn("Al2p", res["evaluation"])
-
-        # Check prediction containers
-        pred_int, pred_ene, pred_meta = res["predictions"]
-        self.assertEqual(pred_int.shape[1], 40)
-        self.assertEqual(pred_ene.shape[1], 40)
-        self.assertTrue(len(pred_meta) > 0)
-        self.assertIn("t7_code", pred_meta.columns)
-        self.assertTrue((pred_meta["tool"] == "H1").all())
-        self.assertTrue(pred_meta["is_predicted"].all())
-
-    def test_run_unet_pipeline_sliding_window_mode(self) -> None:
-        """Verify sliding window patch mode works end-to-end with UNet1D."""
-        res = run_spectral_pipeline(
-            data=(self.ary_int, self.ary_ene, self.meta_df),
-            model_type="unet",
-            config={
-                "use_sliding_window": True,
-                "regions": ["Al2p"],
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "val_ratio": 0.25,
-                "window_size_points": 15,
-                "sliding_stride_points": 5,
-                "train_config": {
-                    "epochs": 2,
-                    "batch_size": 8,
-                    "base_channels": 8,
-                    "depth": 2,
-                    "kernel_size": 3,
-                },
-                "predict_source": True,
-            },
-        )
-
-        self.assertIn("Al2p", res["models"])
-        # In sliding window mode, models[reg] is (model, window_size, stride)
-        model_tuple = res["models"]["Al2p"]
-        self.assertIsInstance(model_tuple, tuple)
-        self.assertIsInstance(model_tuple[0], UNet1D)
-
-        pred_int, pred_ene, pred_meta = res["predictions"]
-        self.assertEqual(pred_int.shape[1], 40)
-        self.assertTrue(len(pred_meta) > 0)
 
 
 if __name__ == "__main__":

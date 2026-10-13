@@ -12,7 +12,6 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
 from models.dataset import SpectrumPatchDataset, split_session_datasets
 from models.inference import predict_sliding_window_spectrum
-from models.orchestration import run_spectral_pipeline
 from models.resnet import ResNet1D
 from models.trainer import evaluate_sliding_window, train_model_region
 from utility.pairing import pair_source_target_spectra
@@ -262,30 +261,6 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         self.assertIn("best_parameters", ax_res)
         self.assertIn("best_val_loss", ax_res)
         self.assertEqual(len(ax_res["trials_data"]), 2)
-
-    def test_run_sliding_window_pipeline(self) -> None:
-        """Test full sliding window spectral pipeline execution."""
-        pipeline_res = run_spectral_pipeline(
-            data=(self.ary_intensity, self.ary_energy, self.meta_df),
-            model_type="resnet",
-            use_sliding_window=True,
-            config={
-                "regions": ["Al2p"],
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "window_size_ev": 2.0,
-                "sliding_stride_ev": 1.0,
-                "use_bayesian_opt": False,
-                "train_config": {"epochs": 2, "batch_size": 16, "hidden_channels": 8, "kernel_size": 3},
-                "predict_source": True,
-            },
-        )
-        self.assertIn("models", pipeline_res)
-        self.assertIn("Al2p", pipeline_res["models"])
-        self.assertIsNotNone(pipeline_res["predictions"])
-        pred_int, pred_eng, pred_df = pipeline_res["predictions"]
-        self.assertGreater(len(pred_df), 0)
-        self.assertEqual(pred_int.shape[1], 60)
 
     def test_optimize_sliding_window_invalid_parameters(self) -> None:
         """Verify that Ax optimization raises ValueError on invalid parameters."""
