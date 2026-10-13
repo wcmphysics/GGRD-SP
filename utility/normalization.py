@@ -19,7 +19,7 @@ def normalize_spectral_data(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Normalize spectral intensity arrays by total flux, regional max, or none.
+    """Normalize spectral intensity arrays.
 
     Parameters
     ----------
@@ -29,11 +29,12 @@ def normalize_spectral_data(
         2D binding energy array of shape (N_total, N_points).
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'measurement_id', 'die', and
-        'spectrum_index'.
+        'spectrum_index' (and 'spectrum_index_target' for
+        'source_regional_max').
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'normalization_mode': 'total_flux' (default), 'regional_max', or
-          'no_normalization'.
+        - 'normalization_mode': 'total_flux' (default), 'regional_max',
+          'source_regional_max', or 'no_normalization'.
         - 'eps': minimum positive floor (default 1e-6).
 
     Returns
@@ -70,13 +71,31 @@ def normalize_spectral_data(
                 peak = float(np.max(np.abs(ary_intensity[idx])))
                 scale = max(peak, eps)
                 ary_norm[idx] = ary_norm[idx] / scale
+
+    elif norm_mode == "source_regional_max":
+        if "spectrum_index_target" not in df_meta.columns:
+            raise ValueError(
+                "normalization_mode='source_regional_max' requires paired "
+                "metadata containing 'spectrum_index_target'. Run pairing "
+                "before normalization."
+            )
+        paired_mask = df_meta["spectrum_index_target"].notna()
+        for _, row in df_meta[paired_mask].iterrows():
+            src_idx = int(row["spectrum_index"])
+            tgt_idx = int(row["spectrum_index_target"])
+            if 0 <= src_idx < n_total and 0 <= tgt_idx < n_total:
+                src_peak = float(np.max(np.abs(ary_intensity[src_idx])))
+                scale = max(src_peak, eps)
+                ary_norm[src_idx] = ary_intensity[src_idx] / scale
+                ary_norm[tgt_idx] = ary_intensity[tgt_idx] / scale
+
     elif norm_mode == "no_normalization":
         pass
     else:
         raise ValueError(
             f"Unknown normalization_mode '{norm_mode}'. "
-            "Supported options are 'total_flux', 'regional_max', and "
-            "'no_normalization'."
+            "Supported options are 'total_flux', 'regional_max', "
+            "'source_regional_max', and 'no_normalization'."
         )
 
     return ary_norm, ary_energy, df_meta
