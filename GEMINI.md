@@ -108,6 +108,9 @@ The codes will be composed of the following key stages
       - U-net:
          - the same as residual u-net but now no shortcut. Namely from "y = x + UNet(x)" to just "y = UNet(x)".
          - the model has one U-Net model for each regional spectrum
+   - dedicated 'film_config' enables FiLM; with sliding windows,
+     'encode_window_energy' encodes patch energy bounds normalized by
+     'energy_scale_ev'.
 8. Prediction from model
    - use the trained model from the training part to do prediction here
    - predict target spectra on train/validation/test data for model performance observation later
