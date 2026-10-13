@@ -6,11 +6,17 @@ from models.bayesian_opt import (
     optimize_model_hyperparameters,
     run_ax_search,
 )
-from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
+from models.cost import (
+    CompositeSpectralLoss,
+    NormalizedMSELoss,
+    create_cost_function,
+    format_loss_log10,
+)
 from models.dataset import (
     SpectrumPairDataset,
     SpectrumPatchDataset,
     create_dataloaders,
+    create_regional_datasets,
     partition_measurement_sessions,
     split_session_datasets,
 )
@@ -24,7 +30,7 @@ from models.inference import (
 )
 from models.orchestration import (
     instantiate_model,
-    run_spectral_pipeline,
+    perform_model_training_and_bayesian_optimization,
 )
 from models.resnet import ResNet1D
 from models.trainer import (
@@ -52,12 +58,14 @@ __all__ = [
     # Cost
     "CompositeSpectralLoss",
     "NormalizedMSELoss",
+    "create_cost_function",
     "format_loss_log10",
     # Conditioning & Datasets
     "prepare_film_condition_tensor",
     "SpectrumPairDataset",
     "SpectrumPatchDataset",
     "create_dataloaders",
+    "create_regional_datasets",
     "partition_measurement_sessions",
     "split_session_datasets",
     # Training & Evaluation
@@ -74,6 +82,5 @@ __all__ = [
     "predict_spectra",
     "predict_sliding_window_spectrum",
     # Orchestration pipelines
-    "run_spectral_pipeline",
+    "perform_model_training_and_bayesian_optimization",
 ]
-

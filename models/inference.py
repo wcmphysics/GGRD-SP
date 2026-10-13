@@ -103,8 +103,8 @@ def predict_spectra(
     target spectra.
     """
     if not isinstance(data, (tuple, list, dict)): raise TypeError(f"Expected tuple/dict, got {type(data)}")
-    d_vals = (data["ary_intensity"], data["ary_energy"], data["meta_df"]) if isinstance(data, dict) else data[:3]
-    ary_intensity, ary_energy, meta_df = d_vals
+    d_vals = (data["ary_intensity"], data["ary_energy"], data["df_meta"]) if isinstance(data, dict) else data[:3]
+    ary_intensity, ary_energy, df_meta = d_vals
 
     cfg = config or {}
     source_tool, target_tool = cfg.get("source_tool", "J4"), cfg.get("target_tool", "H1")
@@ -119,10 +119,13 @@ def predict_spectra(
         meta = [{**r, "tool_target": target_tool} for r in sub_df.to_dict("records")]
         return prepare_film_condition_tensor(metadata=meta, scale_x=scale, device=dev, num_samples=len(sub_df))
 
-    mask = meta_df["tool"] == source_tool
-    if measurement_ids: mask = mask & meta_df["measurement_id"].isin(measurement_ids)
-    source_df = meta_df[mask].copy()
-    if source_df.empty: raise ValueError(f"No source spectra found for {source_tool=}")
+    mask = df_meta["tool"] == source_tool
+    if "split" in df_meta.columns:
+        mask = mask & df_meta["split"].isin(["train", "val", "test"])
+    if measurement_ids:
+        mask = mask & df_meta["measurement_id"].isin(measurement_ids)
+    source_df = df_meta[mask].copy()
+    if source_df.empty: raise ValueError(f"No source spectra found for {source_tool=} in train/val/test splits")
 
     for m in models.values():
         mod = m[0] if isinstance(m, (tuple, list)) else m
@@ -186,5 +189,5 @@ def predict_spectra(
     if clamp_non_negative:
         predicted_intensities = np.clip(predicted_intensities, 0.0, None)
     meta_cfg = dict(source_tool=source_tool, target_tool=target_tool, session_splits=cfg.get("session_splits"))
-    meta_df_predicted = assemble_prediction_metadata(source_df, {**meta_cfg, "n_points": ary_intensity.shape[1]})
-    return predicted_intensities, predicted_energies, meta_df_predicted
+    df_meta_predicted = assemble_prediction_metadata(source_df, {**meta_cfg, "n_points": ary_intensity.shape[1]})
+    return predicted_intensities, predicted_energies, df_meta_predicted
