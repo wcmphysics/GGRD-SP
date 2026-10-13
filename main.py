@@ -52,7 +52,7 @@ def main() -> None:
     }
 
     # Stage 3: Normalization configuration (by total flux across regions)
-    normalization_config = {"normalization_mode": "total_flux"}
+    normalization_config = {"normalization_mode": "source_regional_max"}
 
     # Stage 4: Train-val-test measurement session splitting configuration
     splitting_config = {
