@@ -6,7 +6,12 @@ import unittest
 import torch
 import torch.nn as nn
 
-from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
+from models.cost import (
+    CompositeSpectralLoss,
+    NormalizedMSELoss,
+    create_cost_function,
+    format_loss_log10,
+)
 
 
 class TestCostFunctions(unittest.TestCase):
@@ -70,7 +75,7 @@ class TestCostFunctions(unittest.TestCase):
         self.assertAlmostEqual(loss.item(), 0.12, places=4)
 
     def test_format_loss_log10(self) -> None:
-        """Verify format_loss_log10 formats valid and invalid loss values correctly."""
+        """Verify format_loss_log10 formats loss values correctly."""
         self.assertIn("log10: -2.0000", format_loss_log10(0.01))
         self.assertIn("log10: N/A", format_loss_log10(0.0))
         self.assertIn("log10: N/A", format_loss_log10(-0.5))
@@ -110,6 +115,36 @@ class TestCostFunctions(unittest.TestCase):
         )
         self.assertIn("best_val_loss", res)
         self.assertFalse(np.isnan(res["best_val_loss"]))
+
+    def test_normalized_by_target_max_toggle(self) -> None:
+        """Verify normalized_by_target_max toggles division by true maximum."""
+        y_true = torch.tensor([[10.0, 20.0, 10.0]])
+        y_pred = torch.tensor([[5.0, 20.0, 10.0]])
+
+        # Default: normalized_by_target_max=True
+        # norm_true = [0.5, 1.0, 0.5], norm_pred = [0.25, 1.0, 0.5]
+        # MSE = ((0.25 - 0.5)^2) / 3 = 0.0625 / 3 = 0.020833
+        crit_norm = NormalizedMSELoss(normalized_by_target_max=True)
+        loss_norm = crit_norm(y_pred, y_true)
+        self.assertAlmostEqual(loss_norm.item(), 0.0625 / 3.0, places=5)
+
+        # Disabled: normalized_by_target_max=False
+        # Unnormalized MSE = (5.0 - 10.0)^2 / 3 = 25.0 / 3 = 8.333333
+        crit_unnorm = NormalizedMSELoss(normalized_by_target_max=False)
+        loss_unnorm = crit_unnorm(y_pred, y_true)
+        self.assertAlmostEqual(loss_unnorm.item(), 25.0 / 3.0, places=5)
+
+    def test_create_cost_function_respects_normalized_by_target_max(self) -> None:
+        """Verify create_cost_function passes normalized_by_target_max."""
+        y_true = torch.tensor([[10.0, 20.0, 10.0]])
+        y_pred = torch.tensor([[5.0, 20.0, 10.0]])
+
+        crit_unnorm = create_cost_function(
+            config={"normalized_by_target_max": False}
+        )
+        self.assertFalse(crit_unnorm.normalized_by_target_max)
+        loss = crit_unnorm(y_pred, y_true)
+        self.assertAlmostEqual(loss.item(), 25.0 / 3.0, places=5)
 
 
 if __name__ == "__main__":
