@@ -1,0 +1,78 @@
+"""Spectral normalization utilities for GGRD-SP."""
+
+from __future__ import annotations
+
+from typing import Any
+import numpy as np
+import pandas as pd
+
+
+def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
+    """Compute trapezoidal integration robustly across NumPy versions."""
+    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
+    return float(trapz_fn(y, x))
+
+
+def normalize_spectral_data(
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray,
+    df_meta: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """Normalize spectral intensity arrays by total flux or regional maximum.
+
+    Parameters
+    ----------
+    ary_intensity : np.ndarray
+        2D intensity array of shape (N_total, N_points).
+    ary_energy : np.ndarray
+        2D binding energy array of shape (N_total, N_points).
+    df_meta : pd.DataFrame
+        Metadata DataFrame containing 'measurement_id', 'die', and
+        'spectrum_index'.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'normalization_mode': 'total_flux' (default) or 'regional_max'.
+        - 'eps': minimum positive floor (default 1e-6).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity_normalized, ary_energy, df_meta).
+    """
+    cfg = config or {}
+    norm_mode = str(cfg.get("normalization_mode", "total_flux")).lower()
+    eps = float(cfg.get("eps", 1e-6))
+
+    ary_norm = ary_intensity.astype(np.float32, copy=True)
+    n_total = len(ary_norm)
+
+    if norm_mode == "total_flux":
+        for (_, _), group in df_meta.groupby(["measurement_id", "die"]):
+            total_flux = 0.0
+            indices: list[int] = []
+            for _, row in group.iterrows():
+                idx = int(row["spectrum_index"])
+                if 0 <= idx < n_total:
+                    indices.append(idx)
+                    area = abs(_trapezoid(ary_intensity[idx], ary_energy[idx]))
+                    total_flux += area
+
+            scale = max(total_flux, eps)
+            for idx in indices:
+                ary_norm[idx] = ary_norm[idx] / scale
+
+    elif norm_mode == "regional_max":
+        for _, row in df_meta.iterrows():
+            idx = int(row["spectrum_index"])
+            if 0 <= idx < n_total:
+                peak = float(np.max(np.abs(ary_intensity[idx])))
+                scale = max(peak, eps)
+                ary_norm[idx] = ary_norm[idx] / scale
+    else:
+        raise ValueError(
+            f"Unknown normalization_mode '{norm_mode}'. "
+            "Supported options are 'total_flux' and 'regional_max'."
+        )
+
+    return ary_norm, ary_energy, df_meta
