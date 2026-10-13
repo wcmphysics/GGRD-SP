@@ -1,4 +1,4 @@
-"""Unit tests for utility/quantification.py and Shirley background visualization."""
+"""Unit tests for utility/quantification.py and Shirley background."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from utility.quantification import (
     calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,
+    compute_die_total_flux,
     determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
@@ -201,6 +202,30 @@ class TestQuantification(unittest.TestCase):
         self.assertTrue((df_per_die[at_cols] == 0.0).all().all())
         self.assertFalse(df_per_die.isna().any().any())
 
+    def test_compute_die_total_flux(self) -> None:
+        """Verify compute_die_total_flux sums integrated areas across
+        regions for each die.
+        """
+        n_points = 10
+        ary_int = np.ones((4, n_points), dtype=np.float32) * 5.0
+        ary_ene = np.tile(np.linspace(10.0, 20.0, n_points, dtype=np.float32), (4, 1))
+
+        # 2 regions for M1 on Die 0, 2 regions for M1 on Die 1
+        df_meta_sample = pd.DataFrame([
+            {"spectrum_index": 0, "measurement_id": "M1", "die": 0, "region": "Al2p"},
+            {"spectrum_index": 1, "measurement_id": "M1", "die": 0, "region": "Ti2p"},
+            {"spectrum_index": 2, "measurement_id": "M1", "die": 1, "region": "Al2p"},
+            {"spectrum_index": 3, "measurement_id": "M1", "die": 1, "region": "Ti2p"},
+        ])
+
+        flux_map = compute_die_total_flux(df_meta_sample, ary_int, ary_ene)
+        # Each spectrum integral over [10, 20] with height 5 is 50.0.
+        # 2 regions = 100.0.
+        self.assertIn(("M1", 0), flux_map)
+        self.assertIn(("M1", 1), flux_map)
+        self.assertAlmostEqual(flux_map[("M1", 0)], 100.0, places=2)
+        self.assertAlmostEqual(flux_map[("M1", 1)], 100.0, places=2)
+
 
 class TestShirleyVisualization(unittest.TestCase):
     """Test suite for Shirley background plotting utilities."""
@@ -309,8 +334,8 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         )
         self.assertEqual(raw_i1, 50.0)
 
-        # With 1.0 eV averaging, the centered window [-0.5 eV, +0.5 eV] reflects neighbors
-        # and smooths out the spike
+        # With 1.0 eV averaging, the centered window [-0.5 eV, +0.5 eV]
+        # reflects neighbors and smooths out the spike
         _, _, avg_i1, _ = determine_shirley_endpoints(
             self.energy, noisy_int, config={"strategy": "edge", "average_width_ev": 1.0}
         )

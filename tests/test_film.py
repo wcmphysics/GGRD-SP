@@ -1,4 +1,4 @@
-"""Unit tests for Feature-wise Linear Modulation (FiLM) in models/film.py and models/resnet.py."""
+"""Unit tests for Feature-wise Linear Modulation (FiLM) in models."""
 
 from __future__ import annotations
 
@@ -81,7 +81,9 @@ class TestFiLMModulation(unittest.TestCase):
         np.testing.assert_allclose(beta2.detach().numpy(), 0.0, atol=1e-5)
 
     def test_resnet_with_film_forward_and_backward(self) -> None:
-        """Verify ResNet1D with use_film=True runs forward pass and gradients update FiLM parameters."""
+        """Verify ResNet1D with use_film=True runs forward pass and gradients
+        update FiLM parameters.
+        """
         n_points = 50
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 16, "use_film": True})
 
@@ -101,8 +103,10 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIsNotNone(model.film_gen.die_embedding.weight.grad)
         self.assertIsNotNone(model.film_gen.mlp[0].weight.grad)
 
-    def test_resnet_backward_compatibility_without_film(self) -> None:
-        """Verify ResNet1D without use_film behaves identically as unconditioned model."""
+    def test_resnet_without_film(self) -> None:
+        """Verify ResNet1D without use_film behaves identically as
+        unconditioned model.
+        """
         n_points = 40
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 8, "use_film": False})
         x = torch.ones(2, n_points)
@@ -135,7 +139,10 @@ class TestFiLMModulation(unittest.TestCase):
         n_points = 32
         model = ResidualUNet1D(n_points=n_points, config={"base_channels": 8, "depth": 2, "use_film": True})
         x = torch.randn(2, n_points)
-        meta = [{"die": 1, "tool_index": 0, "tool_target_index": 1}, {"die": 4, "tool_index": 0, "tool_target_index": 1}]
+        meta = [
+            {"die": 1, "tool_index": 0, "tool_target_index": 1},
+            {"die": 4, "tool_index": 0, "tool_target_index": 1},
+        ]
         cond = prepare_film_condition_tensor(metadata=meta, num_samples=2)
 
         out = model(x, cond=cond)
@@ -181,7 +188,9 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond3["tool_tgt"][0].item(), 1)
 
     def test_missing_tool_index_raises_loud_error(self) -> None:
-        """Verify prepare_film_condition_tensor raises ValueError when tool index is missing."""
+        """Verify prepare_film_condition_tensor raises ValueError when tool
+        index is missing.
+        """
         # Missing tool_index
         with self.assertRaises(ValueError) as ctx1:
             prepare_film_condition_tensor(

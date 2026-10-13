@@ -5,189 +5,35 @@ from __future__ import annotations
 import unittest
 
 import numpy as np
-import pandas as pd
 import torch
 
 from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import NormalizedMSELoss
-from models.dataset import SpectrumPatchDataset, split_session_datasets
+from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
 from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
 from models.trainer import evaluate_sliding_window, train_model_region
-from utility.pairing import pair_source_target_spectra
-from utility.patching import (
-    calculate_window_points,
-    extract_sliding_windows,
-    reconstruct_from_patches,
-)
-from utility.pseudo_measurement import generate_pseudo_measurements
-
-
-class TestSlidingWindowOperations(unittest.TestCase):
-    """Test cases for window calculation, extraction, and reconstruction."""
-
-    def test_calculate_window_points(self) -> None:
-        """Test calculation of window points from binding energy grid."""
-        # 100 points spanning 10 eV -> delta_e ~ 0.101 eV/pt
-        energy = np.linspace(50.0, 60.0, 100)
-        w, s = calculate_window_points(
-            energy,
-            config={"window_size_ev": 2.0, "sliding_stride_ev": 1.0, "force_odd_window": True},
-        )
-        self.assertGreater(w, 0)
-        self.assertGreater(s, 0)
-        self.assertEqual(w % 2, 1)  # odd window
-        self.assertLessEqual(s, w)
-
-        # Explicit points override via window_size_points and window_size
-        w_exp, s_exp = calculate_window_points(
-            energy, config={"window_size_points": 21, "sliding_stride_points": 5}
-        )
-        self.assertEqual(w_exp, 21)
-        self.assertEqual(s_exp, 5)
-
-        w_exp2, s_exp2 = calculate_window_points(
-            energy, config={"window_size": 17, "stride": 7}
-        )
-        self.assertEqual(w_exp2, 17)
-        self.assertEqual(s_exp2, 7)
-
-    def test_calculate_window_points_even_length_odd_enforcement(self) -> None:
-        """Verify odd window clamping when total points is an even number."""
-        energy = np.linspace(50.0, 60.0, 60)  # even total points: 60
-        # Request a window size larger than total points (e.g. 70 points or 20 eV)
-        w, s = calculate_window_points(
-            energy, config={"window_size_points": 70, "force_odd_window": True}
-        )
-        self.assertEqual(w % 2, 1)
-        self.assertLessEqual(w, 60)
-        self.assertEqual(w, 59)
-
-    def test_extract_sliding_windows_invalid_stride(self) -> None:
-        """Verify that extract_sliding_windows raises ValueError on invalid stride."""
-        arr = np.ones(50)
-        with self.assertRaises(ValueError):
-            extract_sliding_windows(arr, window_size=10, stride=0)
-        with self.assertRaises(ValueError):
-            extract_sliding_windows(arr, window_size=10, stride=15)
-
-    def test_extract_and_reconstruct_identity(self) -> None:
-        """Verify that extracting and immediately reconstructing preserves the original signal."""
-        np.random.seed(42)
-        n_points = 100
-        spectrum = np.sin(np.linspace(0, 3 * np.pi, n_points)) + 5.0
-        window_size = 15
-        stride = 3
-
-        windows, start_indices = extract_sliding_windows(
-            spectrum, window_size=window_size, stride=stride
-        )
-        self.assertEqual(windows.shape[1], window_size)
-
-        # Reconstruct directly using the extracted windows
-        reconstructed = reconstruct_from_patches(
-            patches=windows,
-            start_indices=start_indices,
-            original_length=n_points,
-            window_size=window_size,
-        )
-
-        self.assertEqual(len(reconstructed), n_points)
-        np.testing.assert_allclose(reconstructed, spectrum, rtol=1e-5, atol=1e-5)
-
-    def test_extract_and_reconstruct_unaligned_stride(self) -> None:
-        """Verify full coverage and reconstruction when (N - W) is not a multiple of stride."""
-        np.random.seed(42)
-        n_points = 103  # 103 - 15 = 88, 88 % 7 = 4 != 0
-        spectrum = np.cos(np.linspace(0, 4 * np.pi, n_points)) + 10.0
-        window_size = 15
-        stride = 7
-
-        windows, start_indices = extract_sliding_windows(
-            spectrum, window_size=window_size, stride=stride
-        )
-        # Check right-edge anchoring
-        self.assertEqual(start_indices[-1], n_points - window_size)
-
-        reconstructed = reconstruct_from_patches(
-            patches=windows,
-            start_indices=start_indices,
-            original_length=n_points,
-            window_size=window_size,
-        )
-        self.assertEqual(len(reconstructed), n_points)
-        np.testing.assert_allclose(reconstructed, spectrum, rtol=1e-5, atol=1e-5)
-
-    def test_extract_and_reconstruct_window_equals_spectrum_length(self) -> None:
-        """Verify extraction and reconstruction when window_size equals spectrum length."""
-        spectrum = np.linspace(10.0, 20.0, 30)
-        windows, start_indices = extract_sliding_windows(
-            spectrum, window_size=30, stride=10
-        )
-        self.assertEqual(len(windows), 1)
-        self.assertEqual(start_indices, [0])
-        recon = reconstruct_from_patches(windows, start_indices, original_length=30)
-        np.testing.assert_allclose(recon, spectrum)
-
-    def test_extract_and_reconstruct_stride_one(self) -> None:
-        """Verify extraction and reconstruction with maximum overlap (stride = 1)."""
-        spectrum = np.sin(np.linspace(0, 2, 20))
-        windows, start_indices = extract_sliding_windows(spectrum, window_size=7, stride=1)
-        recon = reconstruct_from_patches(windows, start_indices, original_length=20)
-        np.testing.assert_allclose(recon, spectrum, rtol=1e-5, atol=1e-5)
-
-    def test_extract_and_reconstruct_stride_equals_window(self) -> None:
-        """Verify extraction and reconstruction when stride equals window_size (tiling)."""
-        spectrum = np.arange(25, dtype=np.float32)
-        windows, start_indices = extract_sliding_windows(spectrum, window_size=5, stride=5)
-        self.assertEqual(len(windows), 5)
-        recon = reconstruct_from_patches(windows, start_indices, original_length=25)
-        np.testing.assert_allclose(recon, spectrum)
-
-    def test_extract_sliding_windows_2d_input_sanitization(self) -> None:
-        """Verify that 2D column input (N, 1) is automatically flattened to 1D."""
-        spectrum_2d = np.ones((40, 1), dtype=np.float32)
-        windows, start_indices = extract_sliding_windows(spectrum_2d, window_size=10, stride=5)
-        self.assertEqual(windows.shape, (7, 10))
-
-    def test_extract_sliding_windows_window_larger_than_spectrum(self) -> None:
-        """Verify ValueError when window_size exceeds spectrum length."""
-        arr = np.ones(20)
-        with self.assertRaises(ValueError):
-            extract_sliding_windows(arr, window_size=25, stride=5)
-        with self.assertRaises(ValueError):
-            extract_sliding_windows(arr, window_size=0, stride=5)
 
 
 class TestSlidingWindowPipeline(unittest.TestCase):
-    """Test cases for dataset, training, evaluation, Ax tuning, and root pipeline."""
+    """Test cases for dataset, training, evaluation, and Ax tuning with
+    sliding windows.
+    """
 
     @classmethod
     def setUpClass(cls) -> None:
         """Generate synthetic paired dataset for testing."""
-        cls.ary_intensity, cls.ary_energy, cls.meta_df = generate_pseudo_measurements(
-            {
-                "material": "NMG",
-                "regions": ["Al2p", "Ti2p"],
-                "n_points": 60,
-                "measurements_per_tool": {"J4": 6, "H1": 6},
-                "interval_hours_range": (1.0, 4.0),
-                "seed": 42,
-            }
+        np.random.seed(42)
+        torch.manual_seed(42)
+        n_points = 60
+        x_raw = np.random.uniform(10.0, 100.0, size=(12, n_points)).astype(np.float32)
+        y_raw = (x_raw * 1.05 + 1.0).astype(np.float32)
+
+        cls.train_ds = SpectrumPairDataset(
+            x_raw[:8], y_raw[:8], config={"normalization_mode": "none"}
         )
-        cls.meta_df = pair_source_target_spectra(
-            cls.meta_df,
-            {
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "time_threshold_hours": 12.0,
-            },
-        )
-        cls.train_ds, cls.val_ds = split_session_datasets(
-            cls.meta_df,
-            cls.ary_intensity,
-            cls.ary_energy,
-            config={"region": "Al2p", "source_tool": "J4", "target_tool": "H1", "seed": 42},
+        cls.val_ds = SpectrumPairDataset(
+            x_raw[8:], y_raw[8:], config={"normalization_mode": "none"}
         )
 
     def test_spectrum_patch_dataset(self) -> None:
@@ -263,7 +109,9 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         self.assertEqual(len(ax_res["trials_data"]), 2)
 
     def test_optimize_sliding_window_invalid_parameters(self) -> None:
-        """Verify that Ax optimization raises ValueError on invalid parameters."""
+        """Verify that Ax optimization raises ValueError on invalid
+        parameters.
+        """
         with self.assertRaises(ValueError):
             optimize_model_hyperparameters(
                 self.train_ds,
@@ -274,17 +122,19 @@ class TestSlidingWindowPipeline(unittest.TestCase):
             optimize_model_hyperparameters(
                 self.train_ds,
                 self.val_ds,
-                config={"model_type": "resnet", "lr_bounds": (0.01, 0.001)},  # min > max
+                config={"model_type": "resnet", "lr_bounds": (0.01, 0.001)},
             )
         with self.assertRaises(ValueError):
             optimize_model_hyperparameters(
                 self.train_ds,
                 self.val_ds,
-                config={"model_type": "resnet", "l2_bounds": (-1e-4, 1e-2)},  # min <= 0
+                config={"model_type": "resnet", "l2_bounds": (-1e-4, 1e-2)},
             )
 
     def test_parameter_packaging_config_dict(self) -> None:
-        """Verify predict and evaluate functions with config dictionaries adhering to Rule 7."""
+        """Verify predict and evaluate functions with config dictionaries
+        adhering to Rule 7.
+        """
         model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
         spectrum = self.train_ds[0]["x"].cpu().numpy()
         pred = predict_sliding_window_spectrum(

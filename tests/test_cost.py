@@ -12,7 +12,7 @@ from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_lo
 class TestCostFunctions(unittest.TestCase):
     """Test suite for NormalizedMSELoss and CompositeSpectralLoss."""
 
-    def test_normalized_mse_backward_compatibility(self) -> None:
+    def test_normalized_mse_computation(self) -> None:
         """Verify default NormalizedMSELoss computes standard normalized MSE."""
         criterion = NormalizedMSELoss()
         y_true = torch.tensor([[10.0, 20.0, 10.0]])
