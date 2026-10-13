@@ -49,6 +49,9 @@ class NormalizedMSELoss(nn.Module):
         Weight for normalized MSE loss component (default 1.0).
     w_shape : float, optional
         Weight for scale-invariant cosine shape distance (default 0.0).
+    normalized_by_target_max : bool, optional
+        Whether to divide intensities by the maximum intensity of the true
+        spectrum (default True).
     config : dict[str, Any] | None, optional
         Optional configuration dictionary packaging loss weights.
     """
@@ -62,6 +65,7 @@ class NormalizedMSELoss(nn.Module):
         region_weights: dict[str, float] | None = None,
         w_mse: float = 1.0,
         w_shape: float = 0.0,
+        normalized_by_target_max: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -72,6 +76,9 @@ class NormalizedMSELoss(nn.Module):
         self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
         self.w_mse = float(cfg.get("w_mse", w_mse))
         self.w_shape = float(cfg.get("w_shape", w_shape))
+        self.normalized_by_target_max = bool(
+            cfg.get("normalized_by_target_max", normalized_by_target_max)
+        )
 
     def forward(
         self,
@@ -114,16 +121,19 @@ class NormalizedMSELoss(nn.Module):
         if y_true.dim() == 3 and y_true.size(1) == 1:
             y_true = y_true.squeeze(1)
 
-        if max_val is None:
-            max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
+        if self.normalized_by_target_max:
+            if max_val is None:
+                max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
+            else:
+                max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
+                if max_val.dim() == 1 and y_pred.dim() >= 2:
+                    max_val = max_val.unsqueeze(-1)
+            max_val = torch.clamp(max_val, min=self.eps)
+            norm_pred = y_pred / max_val
+            norm_true = y_true / max_val
         else:
-            max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
-            if max_val.dim() == 1 and y_pred.dim() >= 2:
-                max_val = max_val.unsqueeze(-1)
-        max_val = torch.clamp(max_val, min=self.eps)
-
-        norm_pred = y_pred / max_val
-        norm_true = y_true / max_val
+            norm_pred = y_pred
+            norm_true = y_true
 
         total_loss = 0.0 * torch.sum(y_pred)
 
@@ -132,7 +142,8 @@ class NormalizedMSELoss(nn.Module):
             mse_loss = torch.mean((norm_pred - norm_true) ** 2)
             total_loss = total_loss + self.w_mse * mse_loss
 
-        # 2. Scale-invariant Cosine Shape distance component (1 - cos(y_pred, y_true))
+        # 2. Scale-invariant Cosine Shape distance component
+        # (1 - cos(y_pred, y_true))
         if self.w_shape > 0.0:
             pred_norm = torch.linalg.vector_norm(norm_pred, dim=-1, keepdim=True).clamp(min=self.eps)
             true_norm = torch.linalg.vector_norm(norm_true, dim=-1, keepdim=True).clamp(min=self.eps)
@@ -177,6 +188,9 @@ class CompositeSpectralLoss(NormalizedMSELoss):
     region_weights : dict[str, float] | None, optional
         Optional regional weighting mapping region names to error multipliers
         (default None).
+    normalized_by_target_max : bool, optional
+        Whether to divide intensities by the maximum intensity of the true
+        spectrum (default True).
     config : dict[str, Any] | None, optional
         Configuration dictionary packaging loss options.
     """
@@ -190,6 +204,7 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         l2_weight: float = 0.0,
         eps: float = 1e-4,
         region_weights: dict[str, float] | None = None,
+        normalized_by_target_max: bool = True,
         **kwargs: Any,
     ) -> None:
         cfg = dict(config or {})
@@ -198,6 +213,7 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         cfg.setdefault("w_mse", w_mse)
         cfg.setdefault("l2_weight", l2_weight)
         cfg.setdefault("eps", eps)
+        cfg.setdefault("normalized_by_target_max", normalized_by_target_max)
         if region_weights is not None:
             cfg.setdefault("region_weights", region_weights)
         super().__init__(config=cfg)
@@ -214,6 +230,7 @@ def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
         - 'w_shape': weight for cosine similarity shape component (default 0.0).
         - 'l2_weight': weight for parameter L2 regularization (default 0.0).
         - 'region_weights': optional dict of per-region weights (default None).
+        - 'normalized_by_target_max': normalize by true max (default True).
         - 'cost_type': 'normalized_mse' (default) or 'composite'.
         - 'eps': minimum positive floor (default 1e-4).
 

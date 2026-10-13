@@ -84,6 +84,7 @@ def main() -> None:
         "w_shape": 0.0,
         "l2_weight": 1e-6,
         "cost_type": "normalized_mse",
+        "normalized_by_target_max": True,
     }
 
     # Stage 7: Neural network training and Bayesian optimization configuration
