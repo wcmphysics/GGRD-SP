@@ -146,6 +146,45 @@ class TestCostFunctions(unittest.TestCase):
         loss = crit_unnorm(y_pred, y_true)
         self.assertAlmostEqual(loss.item(), 25.0 / 3.0, places=5)
 
+    def test_intensity_gradient_mse_computation(self) -> None:
+        """Verify gradient MSE component computed via central difference."""
+        y_true = torch.tensor([[0.0, 4.0, 8.0, 12.0]])
+        y_pred = torch.tensor([[0.0, 2.0, 4.0, 6.0]])
+
+        # Normalized: true max = 12.0, norm gradients are 1/3 vs 1/6
+        # grad diff = -1/6, MSE = 1/36
+        crit_norm = NormalizedMSELoss(
+            w_mse=0.0, w_gradient=1.0, normalized_by_target_max=True
+        )
+        loss_norm = crit_norm(y_pred, y_true)
+        self.assertAlmostEqual(loss_norm.item(), 1.0 / 36.0, places=5)
+
+        # Unnormalized: true max not divided, gradients are 4.0 vs 2.0
+        # grad diff = -2.0, MSE = 4.0
+        crit_unnorm = NormalizedMSELoss(
+            w_mse=0.0, w_gradient=1.0, normalized_by_target_max=False
+        )
+        loss_unnorm = crit_unnorm(y_pred, y_true)
+        self.assertAlmostEqual(loss_unnorm.item(), 4.0, places=5)
+
+    def test_w_gradient_default_zero(self) -> None:
+        """Verify w_gradient defaults to zero and leaves MSE loss unaffected."""
+        y_true = torch.tensor([[0.0, 4.0, 8.0, 12.0]])
+        y_pred = torch.tensor([[0.0, 2.0, 4.0, 6.0]])
+
+        crit_default = NormalizedMSELoss(w_mse=1.0)
+        self.assertEqual(crit_default.w_gradient, 0.0)
+
+        crit_zero = NormalizedMSELoss(w_mse=1.0, w_gradient=0.0)
+        loss_def = crit_default(y_pred, y_true).item()
+        loss_zero = crit_zero(y_pred, y_true).item()
+        self.assertEqual(loss_def, loss_zero)
+
+    def test_create_cost_function_respects_w_gradient(self) -> None:
+        """Verify create_cost_function properly configures w_gradient."""
+        crit = create_cost_function(config={"w_gradient": 0.25})
+        self.assertEqual(crit.w_gradient, 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()
