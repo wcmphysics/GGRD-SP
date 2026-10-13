@@ -28,8 +28,10 @@ class TestCostFunctions(unittest.TestCase):
         self.assertAlmostEqual(loss_pert.item(), 0.0625 / 3.0, places=5)
 
     def test_cosine_shape_loss_scale_invariance(self) -> None:
-        """Verify cosine shape loss is 0.0 when shapes are identical up to arbitrary scalar scaling."""
-        criterion = CompositeSpectralLoss(w_shape=1.0, w_mse=0.0, w_scale=0.0)
+        """Verify cosine shape loss is 0.0 when shapes are identical up to
+        arbitrary scalar scaling.
+        """
+        criterion = CompositeSpectralLoss(w_shape=1.0, w_mse=0.0)
 
         y_true = torch.tensor([[2.0, 8.0, 4.0, 1.0]])
         # Prediction has completely different scale (e.g. 2.5x higher)
@@ -46,21 +48,6 @@ class TestCostFunctions(unittest.TestCase):
         y_pred = torch.tensor([[1.0, 5.0, 2.0]])
         loss_zero = criterion(y_pred, y_true)
         self.assertAlmostEqual(loss_zero.item(), 0.0, places=5)
-
-    def test_scale_penalty_triggers_on_amplitude_discrepancy(self) -> None:
-        """Verify w_scale penalizes peak amplitude ratio mismatch."""
-        criterion_no_scale = CompositeSpectralLoss(w_shape=1.0, w_mse=0.0, w_scale=0.0)
-        criterion_with_scale = CompositeSpectralLoss(w_shape=1.0, w_mse=0.0, w_scale=1.0)
-
-        y_true = torch.tensor([[2.0, 10.0, 4.0]])
-        y_pred = y_true * 1.5  # 50% scale mismatch
-
-        loss_no_scale = criterion_no_scale(y_pred, y_true)
-        loss_with_scale = criterion_with_scale(y_pred, y_true)
-
-        self.assertAlmostEqual(loss_no_scale.item(), 0.0, places=5)
-        # Scale penalty: ((15 / 10) - 1)^2 = 0.5^2 = 0.25
-        self.assertAlmostEqual(loss_with_scale.item(), 0.25, places=4)
 
     def test_l2_regularization_included(self) -> None:
         """Verify L2 weight regularization is added when l2_weight > 0."""
@@ -97,7 +84,9 @@ class TestCostFunctions(unittest.TestCase):
         self.assertAlmostEqual(loss.item(), 0.0, places=6)
 
     def test_train_model_region_respects_composite_loss(self) -> None:
-        """Verify train_model_region accepts cost_type='composite' and trains without errors."""
+        """Verify train_model_region accepts cost_type='composite' and trains
+        without errors.
+        """
         from models.dataset import SpectrumPairDataset
         from models.trainer import train_model_region
         import numpy as np

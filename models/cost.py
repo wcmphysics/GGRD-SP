@@ -1,4 +1,4 @@
-"""Cost function definitions for spectral sequence-to-sequence transformation."""
+"""Cost functions for spectral sequence-to-sequence transformation."""
 
 from __future__ import annotations
 
@@ -29,12 +29,12 @@ def format_loss_log10(loss_val: float) -> str:
 
 
 class NormalizedMSELoss(nn.Module):
-    """Normalized Mean Squared Error loss with optional shape, scale, and L2 regularization.
+    """Normalized Mean Squared Error loss with shape and L2 regularization.
 
     Normalizes true and predicted spectra by the maximum intensity of the true
-    spectrum, then computes a weighted combination of Normalized MSE, Cosine Shape Loss,
-    and Scale Penalty:
-        loss = w_mse * L_mse + w_shape * L_shape + w_scale * L_scale + l2_weight * L2_penalty
+    spectrum, then computes a weighted combination of Normalized MSE, Cosine
+    Shape Loss, and L2 penalty:
+        loss = w_mse * L_mse + w_shape * L_shape + l2_weight * L2_penalty
 
     Parameters
     ----------
@@ -43,13 +43,12 @@ class NormalizedMSELoss(nn.Module):
     eps : float, optional
         Small positive floor to prevent division by zero (default 1e-4).
     region_weights : dict[str, float] | None, optional
-        Optional regional weighting mapping region names to error multipliers (default None).
+        Optional regional weighting mapping region names to error multipliers
+        (default None).
     w_mse : float, optional
         Weight for normalized MSE loss component (default 1.0).
     w_shape : float, optional
         Weight for scale-invariant cosine shape distance (default 0.0).
-    w_scale : float, optional
-        Weight for relative peak amplitude scale discrepancy (default 0.0).
     config : dict[str, Any] | None, optional
         Optional configuration dictionary packaging loss weights.
     """
@@ -63,7 +62,6 @@ class NormalizedMSELoss(nn.Module):
         region_weights: dict[str, float] | None = None,
         w_mse: float = 1.0,
         w_shape: float = 0.0,
-        w_scale: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -74,7 +72,6 @@ class NormalizedMSELoss(nn.Module):
         self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
         self.w_mse = float(cfg.get("w_mse", w_mse))
         self.w_shape = float(cfg.get("w_shape", w_shape))
-        self.w_scale = float(cfg.get("w_scale", w_scale))
 
     def forward(
         self,
@@ -92,15 +89,20 @@ class NormalizedMSELoss(nn.Module):
         Parameters
         ----------
         y_pred : torch.Tensor
-            Predicted intensity of shape (batch_size, n_points) or (batch_size, 1, n_points).
+            Predicted intensity of shape (batch_size, n_points) or
+            (batch_size, 1, n_points).
         y_true : torch.Tensor
-            Target intensity of shape (batch_size, n_points) or (batch_size, 1, n_points).
+            Target intensity of shape (batch_size, n_points) or
+            (batch_size, 1, n_points).
         model : nn.Module | None, optional
-            The model instance, needed to compute L2 regularization if l2_weight > 0.
+            The model instance, needed to compute L2 regularization if
+            l2_weight > 0.
         max_val : torch.Tensor | None, optional
-            Precomputed normalization maximum tensor. If None, computes max(|y_true|) per sample.
+            Precomputed normalization maximum tensor. If None, computes
+            max(|y_true|) per sample.
         region : str | None, optional
-            Name of the spectral region (used for regional weighting if configured).
+            Name of the spectral region (used for regional weighting if
+            configured).
 
         Returns
         -------
@@ -139,13 +141,6 @@ class NormalizedMSELoss(nn.Module):
             shape_loss = torch.mean(1.0 - cosine_sim)
             total_loss = total_loss + self.w_shape * shape_loss
 
-        # 3. Peak amplitude scale discrepancy component
-        if self.w_scale > 0.0:
-            p_max, _ = torch.max(torch.abs(y_pred), dim=-1, keepdim=True)
-            scale_ratio = p_max / max_val
-            scale_loss = torch.mean((scale_ratio - 1.0) ** 2)
-            total_loss = total_loss + self.w_scale * scale_loss
-
         # Apply regional weighting if specified
         if region is not None and region in self.region_weights:
             weight = float(self.region_weights[region])
@@ -167,7 +162,7 @@ class NormalizedMSELoss(nn.Module):
 
 
 class CompositeSpectralLoss(NormalizedMSELoss):
-    """Composite spectral loss combining scale-invariant cosine shape loss and normalized MSE.
+    """Composite loss combining scale-invariant cosine shape and normalized MSE.
 
     Parameters
     ----------
@@ -175,14 +170,13 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         Weight for scale-invariant cosine shape distance (default 0.5).
     w_mse : float, optional
         Weight for normalized MSE loss component (default 0.5).
-    w_scale : float, optional
-        Weight for relative scale error (default 0.0).
     l2_weight : float, optional
         Weight for model parameter L2 regularization (default 0.0).
     eps : float, optional
         Small positive floor to prevent division by zero (default 1e-4).
     region_weights : dict[str, float] | None, optional
-        Optional regional weighting mapping region names to error multipliers (default None).
+        Optional regional weighting mapping region names to error multipliers
+        (default None).
     config : dict[str, Any] | None, optional
         Configuration dictionary packaging loss options.
     """
@@ -193,7 +187,6 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         *,
         w_shape: float = 0.5,
         w_mse: float = 0.5,
-        w_scale: float = 0.0,
         l2_weight: float = 0.0,
         eps: float = 1e-4,
         region_weights: dict[str, float] | None = None,
@@ -203,7 +196,6 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         cfg.update(kwargs)
         cfg.setdefault("w_shape", w_shape)
         cfg.setdefault("w_mse", w_mse)
-        cfg.setdefault("w_scale", w_scale)
         cfg.setdefault("l2_weight", l2_weight)
         cfg.setdefault("eps", eps)
         if region_weights is not None:
@@ -220,8 +212,7 @@ def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
         Configuration dictionary:
         - 'w_mse': weight for mean-squared error component (default 1.0).
         - 'w_shape': weight for cosine similarity shape component (default 0.0).
-        - 'w_scale': weight for peak scale discrepancy component (default 0.0).
-        - 'l2_weight': weight for model parameter L2 regularization (default 0.0).
+        - 'l2_weight': weight for parameter L2 regularization (default 0.0).
         - 'region_weights': optional dict of per-region weights (default None).
         - 'cost_type': 'normalized_mse' (default) or 'composite'.
         - 'eps': minimum positive floor (default 1e-4).
