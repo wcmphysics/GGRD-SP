@@ -17,11 +17,19 @@ The codes will be composed of the following key stages
    - it is possible to have many kinds of materials in the data.
 2. Normalization of spectral data
    - need a dedicated config for this part
-   - inputs are `ary_intensity`, `ary_energy`, and `meta_df`
-   - 2 options for performing normalization: by total flux (default) or regional maximum intensity
-   - for normalization by total flux, intensity of every regional spectra from a die in a measurement was divided by the total flux of that die in that measurement (summation of flux among all regions for that specific die and that specific measurement)
-   - for normalization by regional maximum intensity, intensity of a regional spectrum is divided by the maximum intensity of that specific regional spectrum 
-   - output are `ary_intensity` (normalization applied), `ary_energy`, and `meta_df`
+   - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
+   - 3 options for performing normalization: by total flux (default), regional
+     maximum intensity, or no normalization ('no_normalization')
+   - for normalization by total flux, intensity of every regional spectra from a
+     die in a measurement was divided by the total flux of that die in that
+     measurement (summation of flux among all regions for that specific die and
+     that specific measurement)
+   - for normalization by regional maximum intensity, intensity of a regional
+     spectrum is divided by the maximum intensity of that specific regional
+     spectrum 
+   - for no normalization ('no_normalization'), intensity array is left unscaled
+   - output are `ary_intensity` (normalization applied), `ary_energy`, and
+     `df_meta`
 3. Pairing source and target spectra
    - allow users to specify source tool and target tool
    - for every measurement in the source tool, we find/map a measurement from the target tool

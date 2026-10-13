@@ -19,7 +19,7 @@ def normalize_spectral_data(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Normalize spectral intensity arrays by total flux or regional maximum.
+    """Normalize spectral intensity arrays by total flux, regional max, or none.
 
     Parameters
     ----------
@@ -32,7 +32,8 @@ def normalize_spectral_data(
         'spectrum_index'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'normalization_mode': 'total_flux' (default) or 'regional_max'.
+        - 'normalization_mode': 'total_flux' (default), 'regional_max', or
+          'no_normalization'.
         - 'eps': minimum positive floor (default 1e-6).
 
     Returns
@@ -69,10 +70,13 @@ def normalize_spectral_data(
                 peak = float(np.max(np.abs(ary_intensity[idx])))
                 scale = max(peak, eps)
                 ary_norm[idx] = ary_norm[idx] / scale
+    elif norm_mode == "no_normalization":
+        pass
     else:
         raise ValueError(
             f"Unknown normalization_mode '{norm_mode}'. "
-            "Supported options are 'total_flux' and 'regional_max'."
+            "Supported options are 'total_flux', 'regional_max', and "
+            "'no_normalization'."
         )
 
     return ary_norm, ary_energy, df_meta
