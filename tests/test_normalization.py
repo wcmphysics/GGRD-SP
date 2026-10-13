@@ -74,6 +74,72 @@ class TestNormalization(unittest.TestCase):
         np.testing.assert_array_equal(norm_e, self.ary_energy)
         pd.testing.assert_frame_equal(meta, self.df_meta)
 
+    def test_normalize_source_regional_max(self) -> None:
+        """Verify source_regional_max divides paired source and target by
+        source peak while leaving unpaired spectra unscaled.
+        """
+        paired_meta = pd.DataFrame(
+            [
+                {
+                    "spectrum_index": 0,
+                    "measurement_id": "M1",
+                    "die": 0,
+                    "region": "Al2p",
+                    "tool": "J4",
+                    "spectrum_index_target": 2,
+                },
+                {
+                    "spectrum_index": 1,
+                    "measurement_id": "M1",
+                    "die": 0,
+                    "region": "Ti2p",
+                    "tool": "J4",
+                    "spectrum_index_target": None,
+                },
+                {
+                    "spectrum_index": 2,
+                    "measurement_id": "M2",
+                    "die": 0,
+                    "region": "Al2p",
+                    "tool": "H1",
+                    "spectrum_index_target": None,
+                },
+                {
+                    "spectrum_index": 3,
+                    "measurement_id": "M2",
+                    "die": 0,
+                    "region": "Ti2p",
+                    "tool": "H1",
+                    "spectrum_index_target": None,
+                },
+            ]
+        )
+        norm_i, norm_e, meta = normalize_spectral_data(
+            self.ary_intensity,
+            self.ary_energy,
+            paired_meta,
+            config={"normalization_mode": "source_regional_max"},
+        )
+        # Source 0 (peak 100): 100 / 100 = 1.0
+        np.testing.assert_allclose(norm_i[0], 1.0, rtol=1e-5)
+        # Paired Target 2 (orig 300): 300 / 100 = 3.0
+        np.testing.assert_allclose(norm_i[2], 3.0, rtol=1e-5)
+        # Unpaired Source 1: left unscaled at 200.0
+        np.testing.assert_allclose(norm_i[1], 200.0, rtol=1e-5)
+        # Unpaired Target 3: left unscaled at 400.0
+        np.testing.assert_allclose(norm_i[3], 400.0, rtol=1e-5)
+
+    def test_normalize_source_regional_max_missing_columns_raises(self) -> None:
+        """Verify ValueError is raised if pairing columns are missing."""
+        with self.assertRaises(ValueError) as ctx:
+            normalize_spectral_data(
+                self.ary_intensity,
+                self.ary_energy,
+                self.df_meta,
+                config={"normalization_mode": "source_regional_max"},
+            )
+        self.assertIn("spectrum_index_target", str(ctx.exception))
+
     def test_invalid_normalization_mode_raises(self) -> None:
         """Verify ValueError is raised for unrecognized normalization_mode."""
         with self.assertRaises(ValueError):
