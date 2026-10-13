@@ -15,28 +15,42 @@ The codes will be composed of the following key stages
    - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded 
    - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array
    - it is possible to have many kinds of materials in the data.
-2. Normalization of spectral data
+2. Pairing source and target spectra
+   - allow users to specify source tool and target tool
+   - for every measurement in the source tool, we find/map a measurement
+     from the target tool
+   - this source to target mapping must be 1-to-1 (no multiple source
+     measurement is linked to the same target measurement)
+   - the mapping maps measurements from the source tool to the target tool,
+     the die and region in that measurement will also be paired accordingly
+     (spectrum from die A region B of the source measurement will map to the
+     same die A and the same region B in the target measurement)
+   - the time difference between source and target measurement should be lower
+     than a user-specified threshold (default to 12 hours)
+   - store this pairing information in the meta data dataframe (add columns
+     like tool_target, measurement_id_target, spectrum_index_target)
+3. Normalization of spectral data
    - need a dedicated config for this part
    - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
-   - 3 options for performing normalization: by total flux (default), regional
-     maximum intensity, or no normalization ('no_normalization')
+   - 4 options for performing normalization: by total flux (default),
+     regional maximum intensity ('regional_max'), source regional maximum
+     intensity ('source_regional_max'), or no normalization ('no_normalization')
    - for normalization by total flux, intensity of every regional spectra from a
      die in a measurement was divided by the total flux of that die in that
      measurement (summation of flux among all regions for that specific die and
      that specific measurement)
    - for normalization by regional maximum intensity, intensity of a regional
      spectrum is divided by the maximum intensity of that specific regional
-     spectrum 
+     spectrum
+   - for normalization by source regional maximum intensity
+     ('source_regional_max'), this normalization is applied to each region
+     individually. For each paired record, both the source regional spectrum
+     and its paired target regional spectrum are divided by the maximum
+     intensity of that source regional spectrum. Unpaired spectra are not
+     scaled (left unscaled)
    - for no normalization ('no_normalization'), intensity array is left unscaled
    - output are `ary_intensity` (normalization applied), `ary_energy`, and
      `df_meta`
-3. Pairing source and target spectra
-   - allow users to specify source tool and target tool
-   - for every measurement in the source tool, we find/map a measurement from the target tool
-   - this source to target mapping must be 1-to-1 (no multiple source measurement is linked to the same target measurement)
-   - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accodringly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement) 
-   - the time difference between source and target measurement should be lower than a user-specified threshold (default to 12 hours) 
-   - store this pairing information in the meta data dataframe (add columns like tool_target, measurement_id_target, spectrum_index_target)
 4. Train-val-test data splitting 
    - need a dedicated config for this part
    - the splitting is based on measurement and its corresponding dies and regions follow that splitting
