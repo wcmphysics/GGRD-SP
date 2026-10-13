@@ -100,6 +100,7 @@ class UNet1D(nn.Module):
         self.residual = bool(cfg.get("residual", True))
         self.activation = str(cfg.get("activation", "relu"))
         self.use_film = bool(cfg.get("use_film", False))
+        self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
 
         if self.depth < 1:
             raise ValueError(f"depth must be >= 1, got {self.depth}")

@@ -66,6 +66,7 @@ class ResNet1D(nn.Module):
         use_batch_norm = bool(effective_config.get("use_batch_norm", True))
         padding_mode = str(effective_config.get("padding_mode", "reflect"))
         self.use_film = bool(effective_config.get("use_film", False))
+        self.energy_scale_ev = float(effective_config.get("energy_scale_ev", 1000.0))
         self.n_points = n_points
 
         # Validate that kernel size is positive and odd to ensure symmetric padding

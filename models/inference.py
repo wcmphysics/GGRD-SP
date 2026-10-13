@@ -27,6 +27,7 @@ def predict_sliding_window_spectrum(
     spectrum: np.ndarray,
     config: dict[str, Any] | None = None,
     cond: dict[str, torch.Tensor] | None = None,
+    energy: np.ndarray | torch.Tensor | None = None,
 ) -> np.ndarray:
     """Transform a full 1D spectrum using a trained sliding window
     patch model.
@@ -44,13 +45,36 @@ def predict_sliding_window_spectrum(
     scale_x = max(float(s_val), eps) if (norm_mode != "none" or "scale_factor" in cfg) else 1.0
 
     windows, start_indices = extract_sliding_windows(spectrum_1d / scale_x, window_size=w_size, stride=s_step)
+    film_gen = getattr(model, "film_gen", None)
+    encode_energy = bool(getattr(film_gen, "encode_window_energy", False))
+    energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
+
+    energy_np = None
+    if energy is not None:
+        energy_np = energy.cpu().numpy() if isinstance(energy, torch.Tensor) else np.asarray(energy)
+
     model.eval()
     with torch.no_grad():
-        patches = [
-            (model(b, cond=_repeat_cond(cond, len(b))) if cond is not None else model(b)).cpu().numpy()
-            for i in range(0, len(windows), bs)
-            for b in [torch.as_tensor(windows[i : i + bs], dtype=torch.float32, device=device)]
-        ]
+        patches = []
+        for i in range(0, len(windows), bs):
+            b_wins = torch.as_tensor(windows[i : i + bs], dtype=torch.float32, device=device)
+            b_cond = _repeat_cond(cond, len(b_wins)) if cond is not None else None
+            if b_cond is not None and encode_energy:
+                if energy_np is not None:
+                    bounds = [
+                        [
+                            float(energy_np[s]),
+                            float(energy_np[min(s + w_size - 1, len(energy_np) - 1)]),
+                        ]
+                        for s in start_indices[i : i + bs]
+                    ]
+                else:
+                    bounds = [[0.0, 0.0]] * len(b_wins)
+                scale_floor = max(energy_scale_ev, 1e-6)
+                we_t = torch.tensor(bounds, dtype=torch.float32, device=device) / scale_floor
+                b_cond["window_energy"] = we_t
+            out = model(b_wins, cond=b_cond) if b_cond is not None else model(b_wins)
+            patches.append(out.cpu().numpy())
 
     recon = reconstruct_from_patches(np.vstack(patches), start_indices, len(spectrum_1d), {"window_size": w_size})
     return np.clip(recon * scale_x, 0.0, None) if clamp_non_negative else recon * scale_x
@@ -168,8 +192,11 @@ def predict_spectra(
             sw_cfg = dict(window_size=w_size, stride=s_step, device=m_dev, normalization_mode=norm_mode, eps=eps)
             predicted_intensities[group_new_indices] = np.vstack([
                 predict_sliding_window_spectrum(
-                    m_obj, x_s, config={**sw_cfg, "scale_factor": float(scales[i, 0])},
+                    m_obj,
+                    x_s,
+                    config={**sw_cfg, "scale_factor": float(scales[i, 0])},
                     cond=_film_cond(m_obj, group.iloc[i : i + 1], scales[i : i + 1], m_dev),
+                    energy=ary_energy[orig_indices[i]],
                 )
                 for i, x_s in enumerate(region_x)
             ])

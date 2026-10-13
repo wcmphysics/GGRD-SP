@@ -88,11 +88,22 @@ def main() -> None:
         "normalized_by_target_max": True,
     }
 
+    # Dedicated Feature-wise Linear Modulation (FiLM) configuration
+    film_config = {
+        "use_film": True,
+        "encode_window_energy": True,
+        "energy_scale_ev": 1000.0,
+        "die_embed_dim": 4,
+        "tool_embed_dim": 4,
+        "hidden_dim": 32,
+    }
+
     # Stage 7: Neural network training and Bayesian optimization configuration
     training_config = {
         "model_type": model_type,
         "use_sliding_window": use_sliding_window,
-        "use_film": False,
+        "use_film": film_config["use_film"],
+        "film_config": film_config,
         "use_bayesian_opt": False,
         "bayesian_opt_config": {
             "num_trials": 5,
@@ -132,6 +143,7 @@ def main() -> None:
         "target_tool": target_tool,
         "normalization_mode": "none",
         "clamp_non_negative": True,
+        "film_config": film_config,
     }
 
     metrics_report_config = {

@@ -200,8 +200,12 @@ def perform_model_training_and_bayesian_optimization(
         region_model_type = str(
             region_train_config.get("model_type", default_model_type),
         ).lower()
+        film_cfg = dict(pipeline_config.get("film_config") or {})
         region_use_film = bool(
-            region_train_config.get("use_film", pipeline_config.get("use_film", False)),
+            region_train_config.get(
+                "use_film",
+                film_cfg.get("use_film", pipeline_config.get("use_film", False)),
+            ),
         )
         region_use_bayesian_opt = bool(
             region_bo_config.get(
@@ -215,6 +219,7 @@ def perform_model_training_and_bayesian_optimization(
 
         region_train_config.update(
             {
+                **film_cfg,
                 "model_type": region_model_type,
                 "use_sliding_window": is_sw,
                 "window_size": window_size_points,

@@ -26,8 +26,14 @@ def _batch_cond(
     if not getattr(model, "use_film", False):
         return None
     num_samples = n if n is not None else len(batch["x"])
+    energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
     return prepare_film_condition_tensor(
-        batch.get("meta"), scale_x=batch.get("scale_x"), device=dev, num_samples=num_samples,
+        batch.get("meta"),
+        scale_x=batch.get("scale_x"),
+        window_energy=batch.get("window_energy"),
+        device=dev,
+        num_samples=num_samples,
+        config={"energy_scale_ev": energy_scale_ev},
     )
 
 
@@ -158,7 +164,11 @@ def evaluate_sliding_window(
     for idx in range(len(full_val_dataset)):
         it = full_val_dataset[idx]
         rec = predict_sliding_window_spectrum(
-            model, it["x"].cpu().numpy(), config=p_cfg, cond=_batch_cond(model, it, device, 1),
+            model,
+            it["x"].cpu().numpy(),
+            config=p_cfg,
+            cond=_batch_cond(model, it, device, 1),
+            energy=it.get("energy"),
         )
         yp = torch.from_numpy(rec).float().unsqueeze(0).to(device)
         total += crit(yp, it["y"].unsqueeze(0).to(device), model=None).item()
