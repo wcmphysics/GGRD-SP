@@ -90,7 +90,7 @@ def main() -> None:
 
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
-        "use_film": True,
+        "use_film": False,
         "encode_window_energy": True,
         "energy_scale_ev": 1000.0,
         "die_embed_dim": 4,
