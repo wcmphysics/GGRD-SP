@@ -62,7 +62,11 @@ def _parse_tool_index(val: Any, field_name: str) -> int:
 def prepare_film_condition_tensor(
     metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
     scale_x: torch.Tensor | np.ndarray | None = None,
-    device: torch.device | None = None, num_samples: int = 1,
+    device: torch.device | None = None,
+    num_samples: int = 1,
+    window_energy: torch.Tensor | np.ndarray | None = None,
+    config: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, torch.Tensor]:
     """Extract and pack conditioning features from metadata.
 
@@ -81,6 +85,14 @@ def prepare_film_condition_tensor(
         PyTorch computation device.
     num_samples : int, optional
         Batch size fallback when metadata is empty (default 1).
+    window_energy : torch.Tensor | np.ndarray | None, optional
+        Starting and ending binding energies of the window patch,
+        shape (B, 2).
+    config : dict[str, Any] | None, optional
+        Optional configuration containing 'energy_scale_ev' (default
+        1000.0).
+    **kwargs : Any
+        Keyword arguments for backward compatibility.
 
     Returns
     -------
@@ -91,7 +103,11 @@ def prepare_film_condition_tensor(
         - 'tool_tgt': LongTensor (B,)
         - 'log_flux_src': FloatTensor (B, 1)
         - 'delta_time_days': FloatTensor (B, 1)
+        - 'window_energy': FloatTensor (B, 2) (if provided)
     """
+    cfg = {**(config or {}), **kwargs}
+    energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
+
     meta = metadata.to_dict(orient="records") if isinstance(metadata, pd.DataFrame) else metadata
     lens = [
         len(v) for v in meta.values() if isinstance(v, (list, tuple, np.ndarray, torch.Tensor))
@@ -116,13 +132,32 @@ def prepare_film_condition_tensor(
     t_src = [_parse_tool_index(x, "tool_index") for x in _col("tool_index")]
     t_tgt = [_parse_tool_index(x, "tool_target_index") for x in _col("tool_target_index")]
     dt = [_parse_time_diff(t1, t2) for t1, t2 in zip(_col("time"), _col("time_target"))]
-    return {
+
+    ret: dict[str, torch.Tensor] = {
         "die": torch.tensor([_parse_die(x) for x in _col("die")], dtype=torch.long, device=device),
         "tool_src": torch.tensor(t_src, dtype=torch.long, device=device),
         "tool_tgt": torch.tensor(t_tgt, dtype=torch.long, device=device),
         "log_flux_src": log_f.to(device) if device is not None else log_f,
         "delta_time_days": torch.tensor(dt, dtype=torch.float32, device=device).unsqueeze(-1),
     }
+
+    # Extract window energy bounds if provided explicitly or in metadata
+    we_data = window_energy
+    if we_data is None:
+        we_from_meta = _col("window_energy")
+        if any(x is not None for x in we_from_meta):
+            we_data = we_from_meta
+
+    if we_data is not None:
+        if isinstance(we_data, torch.Tensor):
+            we_t = we_data.clone().detach().float()
+        else:
+            we_t = torch.as_tensor(np.asarray(we_data), dtype=torch.float32)
+        we_2d = we_t.view(n, 2) if we_t.numel() == 2 * n else we_t.view(-1, 2)
+        scale_floor = max(energy_scale_ev, 1e-6)
+        ret["window_energy"] = (we_2d / scale_floor).to(device) if device is not None else (we_2d / scale_floor)
+
+    return ret
 
 
 class FiLMGenerator(nn.Module):
@@ -142,6 +177,8 @@ class FiLMGenerator(nn.Module):
         - 'num_tools' (int): Maximum tools count (default 8).
         - 'tool_embed_dim' (int): Tool embedding dim (default 4).
         - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
+        - 'use_sliding_window' (bool): Whether sliding window is used.
+        - 'encode_window_energy' (bool): Whether to encode window energy.
     """
 
     def __init__(self, channels_list: list[int], config: dict[str, Any] | None = None) -> None:
@@ -149,9 +186,19 @@ class FiLMGenerator(nn.Module):
         cfg = config or {}
         num_dies, die_dim = int(cfg.get("num_dies", 9)), int(cfg.get("die_embed_dim", 4))
         num_tools, tool_dim = int(cfg.get("num_tools", 8)), int(cfg.get("tool_embed_dim", 4))
-        hidden_dim, in_dim = int(cfg.get("hidden_dim", 32)), die_dim + (2 * tool_dim) + 2
+        hidden_dim = int(cfg.get("hidden_dim", 32))
+
+        # Activate window energy encoding when both sliding window
+        # and encoding flag are active
+        use_sw = bool(cfg.get("use_sliding_window", False))
+        encode_energy = bool(cfg.get("encode_window_energy", False))
+        self.encode_window_energy = use_sw and encode_energy
+        energy_dim = 2 if self.encode_window_energy else 0
+
+        in_dim = die_dim + (2 * tool_dim) + 2 + energy_dim
         self.channels_list = list(channels_list)
-        self.die_embedding, self.tool_embedding = nn.Embedding(num_dies, die_dim), nn.Embedding(num_tools, tool_dim)
+        self.die_embedding = nn.Embedding(num_dies, die_dim)
+        self.tool_embedding = nn.Embedding(num_tools, tool_dim)
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim), nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True),
@@ -169,7 +216,8 @@ class FiLMGenerator(nn.Module):
         ----------
         cond : dict[str, torch.Tensor]
             Conditioning features with 'die', 'tool_src',
-            'tool_tgt', 'log_flux_src', and 'delta_time_days'.
+            'tool_tgt', 'log_flux_src', 'delta_time_days', and
+            optionally 'window_energy'.
 
         Returns
         -------
@@ -186,13 +234,23 @@ class FiLMGenerator(nn.Module):
             k: v.to(target_device) if isinstance(v, torch.Tensor) and v.device != target_device else v
             for k, v in cond.items()
         }
-        raw_feat = torch.cat([
+        feat_list = [
             self.die_embedding(cond_dev["die"]),
             self.tool_embedding(cond_dev["tool_src"]),
             self.tool_embedding(cond_dev["tool_tgt"]),
             cond_dev["log_flux_src"],
             cond_dev["delta_time_days"],
-        ], dim=-1)
+        ]
+        if self.encode_window_energy:
+            we = cond_dev.get("window_energy")
+            if we is None:
+                raise KeyError(
+                    "FiLMGenerator expects 'window_energy' in conditioning dictionary "
+                    "when encode_window_energy=True and use_sliding_window=True."
+                )
+            feat_list.append(we)
+
+        raw_feat = torch.cat(feat_list, dim=-1)
         h = self.mlp(raw_feat)
         modulations = []
         for gamma_proj, beta_proj in zip(self.gamma_projs, self.beta_projs):

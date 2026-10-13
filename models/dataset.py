@@ -133,10 +133,13 @@ class SpectrumPatchDataset(Dataset):
         self.window_size, self.stride = window_size, stride
         x_patches_list, y_patches_list, max_vals_list = [], [], []
         meta_list, scale_x_list, scale_y_list = [], [], []
+        energy_bounds_list: list[list[float]] = []
 
         for idx in range(len(full_dataset)):
             item = full_dataset[idx]
-            x_win, _ = extract_sliding_windows(item["x"].cpu().numpy(), window_size, stride)
+            x_win, start_indices = extract_sliding_windows(
+                item["x"].cpu().numpy(), window_size, stride
+            )
             y_win, _ = extract_sliding_windows(item["y"].cpu().numpy(), window_size, stride)
             x_patches_list.append(x_win)
             y_patches_list.append(y_win)
@@ -144,17 +147,32 @@ class SpectrumPatchDataset(Dataset):
             for k, lst in (("meta", meta_list), ("scale_x", scale_x_list), ("scale_y", scale_y_list)):
                 if k in item: lst.extend([item[k]] * len(x_win))
 
+            e_tensor = item.get("energy")
+            if e_tensor is not None:
+                e_arr = e_tensor.cpu().numpy() if isinstance(e_tensor, torch.Tensor) else np.asarray(e_tensor)
+                for s in start_indices:
+                    end_idx = min(s + window_size - 1, len(e_arr) - 1)
+                    energy_bounds_list.append([float(e_arr[s]), float(e_arr[end_idx])])
+            else:
+                energy_bounds_list.extend([[0.0, 0.0]] * len(x_win))
+
         if not x_patches_list: raise ValueError("No patches could be extracted from the dataset.")
 
         self.x = torch.from_numpy(np.vstack(x_patches_list).astype(np.float32))
         self.y = torch.from_numpy(np.vstack(y_patches_list).astype(np.float32))
         self.max_vals = torch.tensor(max_vals_list, dtype=torch.float32).unsqueeze(1)
         self.meta_list, self.scale_x_list, self.scale_y_list = meta_list, scale_x_list, scale_y_list
+        self.window_energy = torch.tensor(energy_bounds_list, dtype=torch.float32)
 
     def __len__(self) -> int: return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        ret: dict[str, Any] = {"x": self.x[idx], "y": self.y[idx], "max_val": self.max_vals[idx]}
+        ret: dict[str, Any] = {
+            "x": self.x[idx],
+            "y": self.y[idx],
+            "max_val": self.max_vals[idx],
+            "window_energy": self.window_energy[idx],
+        }
         for key, lst in (("meta", self.meta_list), ("scale_x", self.scale_x_list), ("scale_y", self.scale_y_list)):
             if lst and idx < len(lst): ret[key] = lst[idx]
         return ret
