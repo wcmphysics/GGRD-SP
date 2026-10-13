@@ -49,6 +49,8 @@ class NormalizedMSELoss(nn.Module):
         Weight for normalized MSE loss component (default 1.0).
     w_shape : float, optional
         Weight for scale-invariant cosine shape distance (default 0.0).
+    w_gradient : float, optional
+        Weight for intensity gradient MSE component (default 0.0).
     normalized_by_target_max : bool, optional
         Whether to divide intensities by the maximum intensity of the true
         spectrum (default True).
@@ -65,6 +67,7 @@ class NormalizedMSELoss(nn.Module):
         region_weights: dict[str, float] | None = None,
         w_mse: float = 1.0,
         w_shape: float = 0.0,
+        w_gradient: float = 0.0,
         normalized_by_target_max: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -76,6 +79,7 @@ class NormalizedMSELoss(nn.Module):
         self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
         self.w_mse = float(cfg.get("w_mse", w_mse))
         self.w_shape = float(cfg.get("w_shape", w_shape))
+        self.w_gradient = float(cfg.get("w_gradient", w_gradient))
         self.normalized_by_target_max = bool(
             cfg.get("normalized_by_target_max", normalized_by_target_max)
         )
@@ -152,6 +156,13 @@ class NormalizedMSELoss(nn.Module):
             shape_loss = torch.mean(1.0 - cosine_sim)
             total_loss = total_loss + self.w_shape * shape_loss
 
+        # 3. Intensity gradient MSE component (central difference)
+        if self.w_gradient > 0.0:
+            grad_pred = torch.gradient(norm_pred, dim=-1)[0]
+            grad_true = torch.gradient(norm_true, dim=-1)[0]
+            grad_loss = torch.mean((grad_pred - grad_true) ** 2)
+            total_loss = total_loss + self.w_gradient * grad_loss
+
         # Apply regional weighting if specified
         if region is not None and region in self.region_weights:
             weight = float(self.region_weights[region])
@@ -181,6 +192,8 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         Weight for scale-invariant cosine shape distance (default 0.5).
     w_mse : float, optional
         Weight for normalized MSE loss component (default 0.5).
+    w_gradient : float, optional
+        Weight for intensity gradient MSE component (default 0.0).
     l2_weight : float, optional
         Weight for model parameter L2 regularization (default 0.0).
     eps : float, optional
@@ -201,6 +214,7 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         *,
         w_shape: float = 0.5,
         w_mse: float = 0.5,
+        w_gradient: float = 0.0,
         l2_weight: float = 0.0,
         eps: float = 1e-4,
         region_weights: dict[str, float] | None = None,
@@ -211,6 +225,7 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         cfg.update(kwargs)
         cfg.setdefault("w_shape", w_shape)
         cfg.setdefault("w_mse", w_mse)
+        cfg.setdefault("w_gradient", w_gradient)
         cfg.setdefault("l2_weight", l2_weight)
         cfg.setdefault("eps", eps)
         cfg.setdefault("normalized_by_target_max", normalized_by_target_max)
@@ -228,6 +243,7 @@ def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
         Configuration dictionary:
         - 'w_mse': weight for mean-squared error component (default 1.0).
         - 'w_shape': weight for cosine similarity shape component (default 0.0).
+        - 'w_gradient': weight for gradient MSE component (default 0.0).
         - 'l2_weight': weight for parameter L2 regularization (default 0.0).
         - 'region_weights': optional dict of per-region weights (default None).
         - 'normalized_by_target_max': normalize by true max (default True).

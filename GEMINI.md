@@ -60,7 +60,9 @@ The codes will be composed of the following key stages
    - the error in each region is defined by several weighted components (each weights are configurable ): 
       1. mean-squared error (MSE) from I_pre/max(I_target) and I_target/max(I_target), with an option to turn off the max(I_target) normalization
       2. cosine smilarity (default weight=0)
-      3. L2 regularization term (default weight=0)
+      3. mean-squared error (MSE) between gradient of predicted and true
+         intensity (central difference, default weight=0)
+      4. L2 regularization term (default weight=0)
    - the cost function should be able to handle patched dataset when sliding window is turn on
 7. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
    - need a dedicated config for this part
