@@ -46,9 +46,6 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 "seed": 42,
             }
         )
-        cls.ary_intensity, cls.ary_energy, cls.meta_df = normalize_spectral_data(
-            cls.ary_intensity, cls.ary_energy, cls.meta_df
-        )
         cls.meta_df = pair_source_target_spectra(
             cls.meta_df,
             {
@@ -56,6 +53,9 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 "target_tool": "H1",
                 "time_threshold_hours": 12.0,
             },
+        )
+        cls.ary_intensity, cls.ary_energy, cls.meta_df = normalize_spectral_data(
+            cls.ary_intensity, cls.ary_energy, cls.meta_df
         )
         cls.meta_df, _, cls.session_splits = split_measurement_sessions(
             cls.meta_df,

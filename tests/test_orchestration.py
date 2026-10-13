@@ -41,11 +41,11 @@ class TestOrchestrationPipeline(unittest.TestCase):
             "seed": 123,
         }
         ary_i, ary_e, df_meta = generate_pseudo_measurements(pseudo_cfg)
-        ary_i, ary_e, df_meta = normalize_spectral_data(ary_i, ary_e, df_meta)
         df_meta = pair_source_target_spectra(
             df_meta,
             config={"source_tool": "J4", "target_tool": "H1", "time_threshold_hours": 12.0},
         )
+        ary_i, ary_e, df_meta = normalize_spectral_data(ary_i, ary_e, df_meta)
         df_meta, _, session_splits = split_measurement_sessions(
             df_meta, config={"source_tool": "J4", "target_tool": "H1", "seed": 42}
         )

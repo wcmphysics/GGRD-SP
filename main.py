@@ -42,10 +42,7 @@ def main() -> None:
         },
     }
 
-    # Stage 2: Normalization configuration (by total flux across regions)
-    normalization_config = {"normalization_mode": "total_flux"}
-
-    # Stage 3: 1-to-1 temporal pairing configuration
+    # Stage 2: 1-to-1 temporal pairing configuration
     pairing_config = {
         "source_tool": source_tool,
         "target_tool": target_tool,
@@ -53,6 +50,9 @@ def main() -> None:
         "method": "optimal",
         "material": None,
     }
+
+    # Stage 3: Normalization configuration (by total flux across regions)
+    normalization_config = {"normalization_mode": "total_flux"}
 
     # Stage 4: Train-val-test measurement session splitting configuration
     splitting_config = {
@@ -152,21 +152,9 @@ def main() -> None:
     )
 
     # =========================================================================
-    # STAGE 2: NORMALIZATION OF SPECTRAL DATA
+    # STAGE 2: PAIRING SOURCE AND TARGET SPECTRA
     # =========================================================================
-    print("\n=== Stage 2: Normalization ===")
-    ary_intensity, ary_energy, df_meta = utility.normalize_spectral_data(
-        ary_intensity, ary_energy, df_meta, normalization_config
-    )
-    print(
-        f"Normalized intensity by {normalization_config['normalization_mode']}; "
-        f"max={ary_intensity.max():.4f}"
-    )
-
-    # =========================================================================
-    # STAGE 3: PAIRING SOURCE AND TARGET SPECTRA
-    # =========================================================================
-    print("\n=== Stage 3: 1-to-1 Tool Pairing ===")
+    print("\n=== Stage 2: 1-to-1 Tool Pairing ===")
     df_meta = utility.pair_source_target_spectra(df_meta, pairing_config)
     df_source_tool = df_meta[df_meta["tool"] == source_tool]
     print(
@@ -185,6 +173,18 @@ def main() -> None:
     df_meta["tool_index"] = df_meta["tool"].map(tool_index_mapping)
     df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_index_mapping)
     training_config["num_tools"] = len(tool_index_mapping)
+
+    # =========================================================================
+    # STAGE 3: NORMALIZATION OF SPECTRAL DATA
+    # =========================================================================
+    print("\n=== Stage 3: Normalization ===")
+    ary_intensity, ary_energy, df_meta = utility.normalize_spectral_data(
+        ary_intensity, ary_energy, df_meta, normalization_config
+    )
+    print(
+        f"Normalized intensity by {normalization_config['normalization_mode']}; "
+        f"max={ary_intensity.max():.4f}"
+    )
 
     # =========================================================================
     # STAGE 4: TRAIN-VAL-TEST DATA SPLITTING
