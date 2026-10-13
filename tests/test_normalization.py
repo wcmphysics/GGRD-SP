@@ -35,7 +35,7 @@ class TestNormalization(unittest.TestCase):
         )
 
     def test_normalize_by_total_flux(self) -> None:
-        """Verify total_flux mode divides each region by die total flux across regions."""
+        """Verify total_flux mode divides each region by die total flux."""
         norm_i, norm_e, meta = normalize_spectral_data(
             self.ary_intensity,
             self.ary_energy,
@@ -51,7 +51,7 @@ class TestNormalization(unittest.TestCase):
         np.testing.assert_allclose(norm_i[0], expected_0, rtol=1e-5)
 
     def test_normalize_by_regional_max(self) -> None:
-        """Verify regional_max mode normalizes each regional spectrum to peak 1.0."""
+        """Verify regional_max mode normalizes each spectrum to peak 1.0."""
         norm_i, norm_e, meta = normalize_spectral_data(
             self.ary_intensity,
             self.ary_energy,
@@ -60,6 +60,19 @@ class TestNormalization(unittest.TestCase):
         )
         for idx in range(4):
             self.assertAlmostEqual(float(norm_i[idx].max()), 1.0, places=5)
+
+    def test_normalize_no_normalization(self) -> None:
+        """Verify no_normalization mode leaves intensity unscaled."""
+        norm_i, norm_e, meta = normalize_spectral_data(
+            self.ary_intensity,
+            self.ary_energy,
+            self.df_meta,
+            config={"normalization_mode": "no_normalization"},
+        )
+        self.assertEqual(norm_i.shape, self.ary_intensity.shape)
+        np.testing.assert_array_equal(norm_i, self.ary_intensity)
+        np.testing.assert_array_equal(norm_e, self.ary_energy)
+        pd.testing.assert_frame_equal(meta, self.df_meta)
 
     def test_invalid_normalization_mode_raises(self) -> None:
         """Verify ValueError is raised for unrecognized normalization_mode."""
