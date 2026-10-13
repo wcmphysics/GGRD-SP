@@ -209,3 +209,29 @@ class CompositeSpectralLoss(NormalizedMSELoss):
         if region_weights is not None:
             cfg.setdefault("region_weights", region_weights)
         super().__init__(config=cfg)
+
+
+def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
+    """Create a spectral cost function according to configuration.
+
+    Parameters
+    ----------
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'w_mse': weight for mean-squared error component (default 1.0).
+        - 'w_shape': weight for cosine similarity shape component (default 0.0).
+        - 'w_scale': weight for peak scale discrepancy component (default 0.0).
+        - 'l2_weight': weight for model parameter L2 regularization (default 0.0).
+        - 'region_weights': optional dict of per-region weights (default None).
+        - 'cost_type': 'normalized_mse' (default) or 'composite'.
+        - 'eps': minimum positive floor (default 1e-4).
+
+    Returns
+    -------
+    nn.Module
+        Configured loss function module ready for training.
+    """
+    cfg = config or {}
+    cost_type = str(cfg.get("cost_type", "normalized_mse")).lower()
+    loss_class = CompositeSpectralLoss if "composite" in cost_type else NormalizedMSELoss
+    return loss_class(config=cfg)
