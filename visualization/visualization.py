@@ -80,7 +80,7 @@ def _finish_fig(fig: plt.Figure, cfg: dict[str, Any], title: str | None = None) 
         plt.show()
 
 
-def _check_meta(df: pd.DataFrame, req_cols: set[str], name: str = "meta_df") -> None:
+def _check_meta(df: pd.DataFrame, req_cols: set[str], name: str = "df_meta") -> None:
     """Validate DataFrame presence and required column existence."""
     if df.empty:
         raise ValueError(f"{name} cannot be empty.")
@@ -88,7 +88,7 @@ def _check_meta(df: pd.DataFrame, req_cols: set[str], name: str = "meta_df") -> 
         raise KeyError(f"{name} missing columns: {sorted(missing)}")
 
 
-def plot_regional_spectra(ary_energy: np.ndarray, ary_intensity: np.ndarray, meta_df: pd.DataFrame,
+def plot_regional_spectra(ary_energy: np.ndarray, ary_intensity: np.ndarray, df_meta: pd.DataFrame,
                           plot_config: dict[str, Any] | None = None) -> tuple[plt.Figure, plt.Axes]:
     """Plot regional spectra filtered by metadata attributes.
 
@@ -98,7 +98,7 @@ def plot_regional_spectra(ary_energy: np.ndarray, ary_intensity: np.ndarray, met
         2D array of binding energies, shape (N_total, N_points).
     ary_intensity : np.ndarray
         2D array of intensities, shape (N_total, N_points).
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame containing spectrum details and 'spectrum_index'.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
@@ -121,16 +121,16 @@ def plot_regional_spectra(ary_energy: np.ndarray, ary_intensity: np.ndarray, met
     Raises
     ------
     KeyError
-        If filter key is not found in meta_df columns.
+        If filter key is not found in df_meta columns.
     ValueError
-        If meta_df is empty or no spectra match specified filters.
+        If df_meta is empty or no spectra match specified filters.
     """
-    if meta_df.empty:
-        raise ValueError("meta_df cannot be empty")
-    cfg, df = plot_config or {}, meta_df.copy()
+    if df_meta.empty:
+        raise ValueError("df_meta cannot be empty")
+    cfg, df = plot_config or {}, df_meta.copy()
     for k, v in (cfg.get("filters") or {}).items():
         if k not in df.columns:
-            raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(df.columns)}")
+            raise KeyError(f"Filter key '{k}' not found in df_meta columns: {list(df.columns)}")
         df = df[df[k] == v]
     if not cfg.get("filters"):
         df = df[df["measurement_id"] == df["measurement_id"].iloc[0]]
@@ -151,7 +151,7 @@ def plot_regional_spectra(ary_energy: np.ndarray, ary_intensity: np.ndarray, met
     return fig, ax
 
 
-def plot_tool_comparison(ary_energy: np.ndarray, ary_intensity: np.ndarray, meta_df: pd.DataFrame,
+def plot_tool_comparison(ary_energy: np.ndarray, ary_intensity: np.ndarray, df_meta: pd.DataFrame,
                           compare_config: dict[str, Any] | None = None) -> tuple[plt.Figure, plt.Axes]:
     """Plot an overlay comparison of spectra between two tools.
 
@@ -161,7 +161,7 @@ def plot_tool_comparison(ary_energy: np.ndarray, ary_intensity: np.ndarray, meta
         2D array of binding energies.
     ary_intensity : np.ndarray
         2D array of intensities.
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame.
     compare_config : dict[str, Any] | None, optional
         Dictionary bundling comparison options:
@@ -184,14 +184,14 @@ def plot_tool_comparison(ary_energy: np.ndarray, ary_intensity: np.ndarray, meta
     KeyError
         If required metadata columns are missing.
     ValueError
-        If meta_df is empty, fewer than 2 tools given, or no spectra match.
+        If df_meta is empty, fewer than 2 tools given, or no spectra match.
     """
-    _check_meta(meta_df, {"region", "die", "tool", "spectrum_index"})
+    _check_meta(df_meta, {"region", "die", "tool", "spectrum_index"})
     cfg = compare_config or {}
     region, die, tools = cfg.get("region", "Al2p"), int(cfg.get("die", 0)), list(cfg.get("tools", ("J4", "J5")))
     if len(tools) < 2:
         raise ValueError(f"At least 2 tools required for comparison, got {len(tools)}: {tools}")
-    sub = meta_df[(meta_df["region"] == region) & (meta_df["die"] == die)]
+    sub = df_meta[(df_meta["region"] == region) & (df_meta["die"] == die)]
     fig, ax = _prepare_canvas(cfg.get("ax"), figsize=(8, 5))
     plotted = 0
     for t in tools:
@@ -238,13 +238,13 @@ def _calculate_staggered_levels(times: list[pd.Timestamp], max_levels: int = 3,
     return assigned
 
 
-def plot_pairing_timeline(meta_df: pd.DataFrame, plot_config: dict[str, Any] | None = None
+def plot_pairing_timeline(df_meta: pd.DataFrame, plot_config: dict[str, Any] | None = None
                           ) -> tuple[plt.Figure, plt.Axes]:
     """Plot timeline of measurement sessions and connect 1-to-1 paired sessions.
 
     Parameters
     ----------
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame with pairing columns ('tool_target',
         'measurement_id_target', 'time_target', 'time_diff_hours').
     plot_config : dict[str, Any] | None, optional
@@ -270,12 +270,12 @@ def plot_pairing_timeline(meta_df: pd.DataFrame, plot_config: dict[str, Any] | N
     Raises
     ------
     KeyError
-        If required columns are missing from meta_df.
+        If required columns are missing from df_meta.
     ValueError
         If no measurement sessions exist for source or target tool.
     """
-    _check_meta(meta_df, {"tool", "measurement_id", "time"})
-    cfg, df = plot_config or {}, meta_df.copy()
+    _check_meta(df_meta, {"tool", "measurement_id", "time"})
+    cfg, df = plot_config or {}, df_meta.copy()
     src_tool, tgt_tool = cfg.get("source_tool", "J4"), cfg.get("target_tool", "J5")
     for col in ("time", "time_target"):
         if col in df.columns:
@@ -330,22 +330,22 @@ def plot_pairing_timeline(meta_df: pd.DataFrame, plot_config: dict[str, Any] | N
     return fig, ax
 
 
-def _render_intensity_time_series(meta_df: pd.DataFrame, y_calc: Any, cfg: dict[str, Any],
+def _render_intensity_time_series(df_meta: pd.DataFrame, y_calc: Any, cfg: dict[str, Any],
                                   region: str | None, die: int | None, d_title: str, d_ylabel: str
                                   ) -> tuple[plt.Figure, plt.Axes]:
-    """Resolve criteria, filter meta_df, compute y series, and render plot."""
-    if meta_df.empty:
-        raise ValueError("meta_df cannot be empty")
+    """Resolve criteria, filter df_meta, compute y series, and render plot."""
+    if df_meta.empty:
+        raise ValueError("df_meta cannot be empty")
     filts = dict(cfg.get("filters") or {})
     t_reg = str(r) if (r := region or cfg.get("region") or filts.get("region")) is not None else None
     d = die if die is not None else (cfg.get("die") if "die" in cfg else filts.get("die"))
     t_die = int(d) if d is not None and str(d).isdigit() else d
     comb = {**filts, **({"region": t_reg} if t_reg is not None else {}),
             **({"die": t_die} if t_die is not None else {})}
-    df = meta_df.copy()
+    df = df_meta.copy()
     for k, v in comb.items():
         if k not in df.columns:
-            raise KeyError(f"Filter key '{k}' not found in meta_df columns: {list(df.columns)}")
+            raise KeyError(f"Filter key '{k}' not found in df_meta columns: {list(df.columns)}")
         df = df[((df["die"] == v) | (df["die"] == str(v))) if (k == "die" and str(v).isdigit()) else (df[k] == v)]
     if df.empty:
         raise ValueError(f"No spectra match filters (region={t_reg!r}, die={t_die!r}, filters={comb}).")
@@ -371,7 +371,7 @@ def _render_intensity_time_series(meta_df: pd.DataFrame, y_calc: Any, cfg: dict[
     return fig, ax
 
 
-def plot_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd.DataFrame,
+def plot_max_intensity_vs_time(ary_intensity: np.ndarray, df_meta: pd.DataFrame,
                                plot_config: dict[str, Any] | None = None, *,
                                region: str | None = None, die: int | None = None) -> tuple[plt.Figure, plt.Axes]:
     """Plot maximum intensity over measurement time.
@@ -380,7 +380,7 @@ def plot_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd.DataFrame,
     ----------
     ary_intensity : np.ndarray
         2D array of measured spectral intensities, shape (N_spectra, N_points).
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame with 'time', 'spectrum_index', and hue column.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
@@ -410,19 +410,19 @@ def plot_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd.DataFrame,
     Raises
     ------
     ValueError
-        If meta_df is empty or no spectra match filters.
+        If df_meta is empty or no spectra match filters.
     KeyError
-        If required columns are missing from meta_df.
+        If required columns are missing from df_meta.
     """
     cfg, hue = plot_config or {}, str((plot_config or {}).get("hue", "tool"))
-    _check_meta(meta_df, {"time", "spectrum_index", hue})
+    _check_meta(df_meta, {"time", "spectrum_index", hue})
     return _render_intensity_time_series(
-        meta_df, lambda df: np.max(ary_intensity[df["spectrum_index"].astype(int).values], axis=1),
+        df_meta, lambda df: np.max(ary_intensity[df["spectrum_index"].astype(int).values], axis=1),
         cfg, region, die, f"Maximum Intensity vs. Time (hue={hue})", "Maximum Intensity (counts)"
     )
 
 
-def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd.DataFrame,
+def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, df_meta: pd.DataFrame,
                                           ary_energy: np.ndarray | None = None,
                                           plot_config: dict[str, Any] | None = None, *,
                                           region: str | None = None, die: int | None = None
@@ -433,7 +433,7 @@ def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd
     ----------
     ary_intensity : np.ndarray
         2D array of measured spectral intensities, shape (N_spectra, N_points).
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame containing spectrum details and 'spectrum_index'.
     ary_energy : np.ndarray | None, optional
         2D array of binding energies, shape (N_spectra, N_points).
@@ -467,18 +467,18 @@ def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd
     Raises
     ------
     ValueError
-        If meta_df is empty, no records match filters, or unsupported mode.
+        If df_meta is empty, no records match filters, or unsupported mode.
     KeyError
-        If required columns are missing from meta_df.
+        If required columns are missing from df_meta.
     """
     cfg, hue = plot_config or {}, str((plot_config or {}).get("hue", "tool"))
     norm_mode = str(cfg.get("normalization_mode", "die_total_flux")).lower()
-    _check_meta(meta_df, {"time", "spectrum_index", hue})
+    _check_meta(df_meta, {"time", "spectrum_index", hue})
     if norm_mode not in ("die_total_flux", "spectrum_area"):
         raise ValueError(f"Unsupported normalization_mode '{norm_mode}'. Must be 'die_total_flux' or 'spectrum_area'.")
     if norm_mode == "die_total_flux":
-        _check_meta(meta_df, {"measurement_id", "die"})
-        f_map = compute_die_total_flux(meta_df, ary_intensity, ary_energy)
+        _check_meta(df_meta, {"measurement_id", "die"})
+        f_map = compute_die_total_flux(df_meta, ary_intensity, ary_energy)
         y_calc = lambda df: [float(m) / max(float(f_map.get((str(r["measurement_id"]), int(r["die"])), 1.0)), 1e-4)
                              for m, (_, r) in zip(np.max(ary_intensity[df["spectrum_index"].astype(int).values],
                                                          axis=1), df.iterrows())]
@@ -491,11 +491,11 @@ def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, meta_df: pd
                          else float(np.sum(ary_intensity[i])), 1e-4) for i in idx]
             return np.max(ary_intensity[idx], axis=1) / np.array(areas)
         d_lbl = "Max Intensity / Spectrum Integrated Area (1/eV)"
-    return _render_intensity_time_series(meta_df, y_calc, cfg, region, die,
+    return _render_intensity_time_series(df_meta, y_calc, cfg, region, die,
                                          f"Normalized Maximum Intensity vs. Time (hue={hue})", d_lbl)
 
 
-def plot_shirley_background(ary_energy: np.ndarray, ary_intensity: np.ndarray, meta_df: pd.DataFrame,
+def plot_shirley_background(ary_energy: np.ndarray, ary_intensity: np.ndarray, df_meta: pd.DataFrame,
                             plot_config: dict[str, Any] | None = None) -> tuple[plt.Figure, Any]:
     """Plot regional spectrum with Shirley background and net peak area.
 
@@ -505,7 +505,7 @@ def plot_shirley_background(ary_energy: np.ndarray, ary_intensity: np.ndarray, m
         2D array of binding energies.
     ary_intensity : np.ndarray
         2D array of measured intensities.
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
@@ -533,7 +533,7 @@ def plot_shirley_background(ary_energy: np.ndarray, ary_intensity: np.ndarray, m
     """
     cfg = plot_config or {}
     die, target_region = int(cfg.get("die", 0)), cfg.get("region")
-    subset = meta_df[meta_df["die"] == die]
+    subset = df_meta[df_meta["die"] == die]
     meas_id = cfg.get("measurement_id") or (str(subset["measurement_id"].iloc[0]) if not subset.empty else None)
     if meas_id is not None:
         subset = subset[subset["measurement_id"] == meas_id]
@@ -626,9 +626,9 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
     Parameters
     ----------
     data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Tuple of (ary_intensity_orig, ary_energy_orig, meta_df_orig).
+        Tuple of (ary_intensity_orig, ary_energy_orig, df_meta_orig).
     data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Tuple of (ary_intensity_pred, ary_energy_pred, meta_df_pred).
+        Tuple of (ary_intensity_pred, ary_energy_pred, df_meta_pred).
     config : dict[str, Any] | None, optional
         Dictionary bundling options:
         - 'measurement_id' (str | None): Source measurement session ID.
@@ -663,7 +663,7 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
                  (list(meta_orig.dropna(subset=["measurement_id_target"])["measurement_id"].astype(str))
                   if "measurement_id_target" in meta_orig else []))
         if not (meas_id := next((c for c in (cands or list(p_ids)) if c in p_ids), None)):
-            raise ValueError("No paired source measurements found in meta_df_orig.")
+            raise ValueError("No paired source measurements found in df_meta_orig.")
     src_rows = meta_orig[(meta_orig["measurement_id"] == meas_id) & (meta_orig["die"] == die)]
     if src_rows.empty:
         raise ValueError(f"No source spectrum matching meas_id='{meas_id}', die={die}.")
@@ -1013,7 +1013,7 @@ def _derive_tool_die_shades(base_color: Any) -> dict[str, str]:
 
 
 def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_energy: np.ndarray,
-                                             meta_df: pd.DataFrame, plot_config: dict[str, Any] | None = None, *,
+                                             df_meta: pd.DataFrame, plot_config: dict[str, Any] | None = None, *,
                                              region: str | None = None
                                              ) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
     """Plot total flux and averaged intensity vs. measurement time.
@@ -1030,7 +1030,7 @@ def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_ener
     ary_energy : np.ndarray
         2D array of binding energies, shape (N_spectra, N_points). Mandatory
         for trapezoidal numerical integration.
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame containing 'spectrum_index', 'measurement_id',
         'die', 'tool', and 'time'.
     plot_config : dict[str, Any] | None, optional
@@ -1062,22 +1062,22 @@ def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_ener
     Raises
     ------
     ValueError
-        If ary_energy is None or shapes mismatch, or if meta_df is empty or
+        If ary_energy is None or shapes mismatch, or if df_meta is empty or
         filters match no data.
     KeyError
         If required metadata columns are missing.
     """
     if ary_energy is None or ary_intensity.ndim != 2 or ary_energy.ndim != 2 or ary_intensity.shape != ary_energy.shape:
         raise ValueError("ary_intensity and ary_energy must both be 2D arrays with identical matching shapes.")
-    _check_meta(meta_df, {"spectrum_index", "measurement_id", "die", "tool", "time"})
+    _check_meta(df_meta, {"spectrum_index", "measurement_id", "die", "tool", "time"})
 
     cfg = plot_config or {}
-    t_reg, work_df = (region if region is not None else cfg.get("region")), meta_df.copy()
+    t_reg, work_df = (region if region is not None else cfg.get("region")), df_meta.copy()
     if t_reg is not None:
-        if "region" not in meta_df.columns:
-            raise KeyError("meta_df must contain 'region' column when region is specified.")
+        if "region" not in df_meta.columns:
+            raise KeyError("df_meta must contain 'region' column when region is specified.")
         if (work_df := work_df[work_df["region"] == t_reg]).empty:
-            raise ValueError(f"No spectra match region='{t_reg}' in meta_df.")
+            raise ValueError(f"No spectra match region='{t_reg}' in df_meta.")
 
     die_groups = cfg.get("die_groups", {"center": [0], "donut": [5, 6, 7, 8], "edge": [1, 2, 3, 4]})
     die_to_group = {k: g for g, d_list in die_groups.items() for d in d_list
@@ -1095,7 +1095,7 @@ def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_ener
     agg["die_group"] = agg["die"].map(lambda d: die_to_group.get(d, "donut"))
 
     u_tools = list(pd.Series(agg["tool"].dropna().unique()))
-    p_s = meta_df.dropna(subset=["tool_target"]) if "tool_target" in meta_df else pd.DataFrame()
+    p_s = df_meta.dropna(subset=["tool_target"]) if "tool_target" in df_meta else pd.DataFrame()
     s_tool = cfg.get("source_tool") or (p_s["tool"].iloc[0] if not p_s.empty else (u_tools[0] if u_tools else None))
     t_tool = (cfg.get("target_tool") or
               (p_s["tool_target"].iloc[0] if not p_s.empty else (u_tools[1] if len(u_tools) > 1 else None)))
