@@ -25,9 +25,9 @@ def calculate_prediction_metrics(
     Parameters
     ----------
     data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Original measured data (ary_intensity, ary_energy, meta_df).
+        Original measured data (ary_intensity, ary_energy, df_meta).
     data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Predicted data (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+        Predicted data (ary_intensity_predicted, ary_energy_predicted, df_meta_predicted).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'regions' (list[str] | None): Specific regions to evaluate (default all).
@@ -38,8 +38,8 @@ def calculate_prediction_metrics(
     tuple[pd.DataFrame, pd.DataFrame]
         (df_per_sample, df_summary_by_region)
     """
-    ary_intensity_orig, _, meta_df_orig = data_original
-    ary_intensity_pred, _, meta_df_pred = data_predicted
+    ary_intensity_orig, _, df_meta_orig = data_original
+    ary_intensity_pred, _, df_meta_pred = data_predicted
 
     cfg = config or {}
     regions_filter = cfg.get("regions")
@@ -48,7 +48,7 @@ def calculate_prediction_metrics(
     records: list[dict[str, Any]] = []
 
     # Iterate over predicted spectra records
-    for _, pred_row in meta_df_pred.iterrows():
+    for _, pred_row in df_meta_pred.iterrows():
         region = str(pred_row["region"])
         if regions_filter is not None and region not in regions_filter:
             continue
@@ -57,20 +57,20 @@ def calculate_prediction_metrics(
         die = int(pred_row["die"])
         pred_idx = int(pred_row["spectrum_index"])
 
-        # Find matching source row in meta_df_orig to obtain paired target measurement ID
-        src_match = meta_df_orig[
-            (meta_df_orig["measurement_id"] == src_meas_id)
-            & (meta_df_orig["region"] == region)
-            & (meta_df_orig["die"] == die)
+        # Find matching source row in df_meta_orig to obtain paired target measurement ID
+        src_match = df_meta_orig[
+            (df_meta_orig["measurement_id"] == src_meas_id)
+            & (df_meta_orig["region"] == region)
+            & (df_meta_orig["die"] == die)
         ]
         if src_match.empty or pd.isna(src_match["measurement_id_target"].iloc[0]):
             continue
 
         tgt_meas_id = str(src_match["measurement_id_target"].iloc[0])
-        tgt_match = meta_df_orig[
-            (meta_df_orig["measurement_id"] == tgt_meas_id)
-            & (meta_df_orig["region"] == region)
-            & (meta_df_orig["die"] == die)
+        tgt_match = df_meta_orig[
+            (df_meta_orig["measurement_id"] == tgt_meas_id)
+            & (df_meta_orig["region"] == region)
+            & (df_meta_orig["die"] == die)
         ]
         if tgt_match.empty:
             continue
@@ -105,10 +105,10 @@ def calculate_prediction_metrics(
 
     df_per_sample = pd.DataFrame(records)
     if df_per_sample.empty:
-        if not meta_df_pred.empty:
+        if not df_meta_pred.empty:
             warnings.warn(
                 "calculate_prediction_metrics found zero matching target records for "
-                f"{len(meta_df_pred)} prediction rows in meta_df_orig."
+                f"{len(df_meta_pred)} prediction rows in df_meta_orig."
             )
         df_summary = pd.DataFrame(
             columns=[

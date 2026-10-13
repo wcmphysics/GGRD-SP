@@ -351,7 +351,7 @@ def generate_pseudo_measurements(
     tuple[np.ndarray, np.ndarray, pd.DataFrame]
         - ary_intensity: 2D array of shape (N_total, N_points)
         - ary_energy: 2D array of shape (N_total, N_points)
-        - meta_df: DataFrame of length N_total describing each spectrum
+        - df_meta: DataFrame of length N_total describing each spectrum
     """
     merged_config = get_default_measurement_config()
     if config is not None:
@@ -515,6 +515,6 @@ def generate_pseudo_measurements(
 
                     spectrum_idx += 1
 
-    meta_df = pd.DataFrame(meta_records)
+    df_meta = pd.DataFrame(meta_records)
 
-    return ary_intensity, ary_energy, meta_df
+    return ary_intensity, ary_energy, df_meta

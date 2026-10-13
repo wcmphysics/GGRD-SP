@@ -194,7 +194,7 @@ def _match_sessions_greedy(
 
 
 def pair_source_target_spectra(
-    meta_df: pd.DataFrame,
+    df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Pair source tool spectra to target tool spectra enforcing 1-to-1 session matching.
@@ -212,7 +212,7 @@ def pair_source_target_spectra(
 
     Parameters
     ----------
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame containing: 'tool', 'measurement_id', 'time',
         'die', 'region', and 'spectrum_index'.
     config : dict[str, Any] | None, optional
@@ -227,7 +227,7 @@ def pair_source_target_spectra(
     Raises
     ------
     KeyError
-        If required columns are missing from meta_df.
+        If required columns are missing from df_meta.
     ValueError
         If configuration parameters are invalid.
     """
@@ -245,11 +245,11 @@ def pair_source_target_spectra(
     match_t7_code: bool = bool(merged_config.get("match_t7_code", True))
 
     required_cols = {"tool", "measurement_id", "time", "die", "region", "spectrum_index"}
-    missing_cols = required_cols - set(meta_df.columns)
+    missing_cols = required_cols - set(df_meta.columns)
     if missing_cols:
-        raise KeyError(f"meta_df is missing required columns: {sorted(missing_cols)}")
+        raise KeyError(f"df_meta is missing required columns: {sorted(missing_cols)}")
 
-    result_df = meta_df.copy()
+    result_df = df_meta.copy()
     result_df["time"] = _safe_to_datetime(result_df["time"])
     has_t7 = "t7_code" in result_df.columns and match_t7_code
 

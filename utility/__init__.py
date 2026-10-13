@@ -1,10 +1,12 @@
 """Utility module for GGRD-SP spectral processing and synthetic data generation."""
 
 from utility.evaluation import calculate_prediction_metrics, format_side_by_side_metrics
+from utility.normalization import normalize_spectral_data
 from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
 )
+from utility.splitting import split_measurement_sessions
 from utility.patching import (
     calculate_window_points,
     extract_sliding_windows,
@@ -27,8 +29,10 @@ from utility.quantification import (
 __all__ = [
     "generate_pseudo_measurements",
     "get_default_measurement_config",
+    "normalize_spectral_data",
     "pair_source_target_spectra",
     "get_default_pairing_config",
+    "split_measurement_sessions",
     "calculate_shirley_background",
     "compute_die_total_flux",
     "determine_shirley_endpoints",

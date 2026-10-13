@@ -19,7 +19,7 @@ def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
 
 
 def compute_die_total_flux(
-    meta_df: pd.DataFrame,
+    df_meta: pd.DataFrame,
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray | None = None,
 ) -> dict[tuple[str, int], float]:
@@ -27,7 +27,7 @@ def compute_die_total_flux(
 
     Parameters
     ----------
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame containing 'measurement_id', 'die', and 'spectrum_index'.
     ary_intensity : np.ndarray
         2D intensity array of shape (N_total, N_points).
@@ -41,7 +41,7 @@ def compute_die_total_flux(
     """
     flux_map: dict[tuple[str, int], float] = {}
 
-    for (meas_id, die), group in meta_df.groupby(["measurement_id", "die"]):
+    for (meas_id, die), group in df_meta.groupby(["measurement_id", "die"]):
         total_flux = 0.0
         for _, row in group.iterrows():
             idx = int(row["spectrum_index"])
@@ -77,7 +77,7 @@ def get_default_quantification_config() -> dict[str, Any]:
     dict[str, Any]
         Dictionary packaging quantification parameters:
         - 'material': 'NMG'
-        - 'measurement_id': None (if None, calculates for all sessions in meta_df)
+        - 'measurement_id': None (if None, calculates for all sessions in df_meta)
         - 'rsf_dict': dict mapping region name to relative sensitivity factor
         - 'default_endpoint_strategy': 'minima' ('minima', 'edge', or 'direct')
         - 'default_endpoint_average_ev': 1.0 (average intensity over 1.0 eV window with mirror padding)
@@ -494,7 +494,7 @@ def calculate_shirley_background(
 def calculate_atomic_percentages(
     ary_energy: np.ndarray,
     ary_intensity: np.ndarray,
-    meta_df: pd.DataFrame,
+    df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Calculate atomic percentages for all elements in wide format (per-die and summary).
@@ -511,7 +511,7 @@ def calculate_atomic_percentages(
         2D array of binding energies, shape (N_total, N_points).
     ary_intensity : np.ndarray
         2D array of intensities, shape (N_total, N_points).
-    meta_df : pd.DataFrame
+    df_meta : pd.DataFrame
         Metadata DataFrame describing spectra rows.
     config : dict[str, Any] | None, optional
         Dictionary bundling options:
@@ -544,11 +544,11 @@ def calculate_atomic_percentages(
     rsf_dict: dict[str, float] = cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF)
 
     required_cols = {"spectrum_index", "measurement_id", "die", "region"}
-    missing = required_cols - set(meta_df.columns)
+    missing = required_cols - set(df_meta.columns)
     if missing:
-        raise ValueError(f"meta_df is missing required columns: {sorted(missing)}")
+        raise ValueError(f"df_meta is missing required columns: {sorted(missing)}")
 
-    filtered_df = meta_df.copy()
+    filtered_df = df_meta.copy()
     if target_meas is not None:
         filtered_df = filtered_df[filtered_df["measurement_id"] == target_meas]
     if material is not None and "material" in filtered_df.columns:
@@ -638,9 +638,9 @@ def calculate_atomic_percentage_split_statistics(
     Parameters
     ----------
     data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Original measured data (ary_intensity, ary_energy, meta_df).
+        Original measured data (ary_intensity, ary_energy, df_meta).
     data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Predicted data (ary_intensity_predicted, ary_energy_predicted, meta_df_predicted).
+        Predicted data (ary_intensity_predicted, ary_energy_predicted, df_meta_predicted).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'splits' (list[str]): Data splits to evaluate (default ['train', 'test']).
@@ -654,8 +654,8 @@ def calculate_atomic_percentage_split_statistics(
         - df_samples: Detailed DataFrame per (split, measurement, die, element).
         - df_summary: Summary DataFrame aggregated by (split, element).
     """
-    ary_intensity_orig, ary_energy_orig, meta_df_orig = data_original
-    ary_intensity_pred, ary_energy_pred, meta_df_pred = data_predicted
+    ary_intensity_orig, ary_energy_orig, df_meta_orig = data_original
+    ary_intensity_pred, ary_energy_pred, df_meta_pred = data_predicted
 
     cfg = config or {}
     splits_filter = list(cfg.get("splits", ["train", "test"]))
@@ -669,18 +669,18 @@ def calculate_atomic_percentage_split_statistics(
 
     # 1. Compute per-die atomic percentages for original and predicted datasets
     df_per_die_orig, _ = calculate_atomic_percentages(
-        ary_energy_orig, ary_intensity_orig, meta_df_orig, config=quant_cfg
+        ary_energy_orig, ary_intensity_orig, df_meta_orig, config=quant_cfg
     )
     df_per_die_pred, _ = calculate_atomic_percentages(
-        ary_energy_pred, ary_intensity_pred, meta_df_pred, config=quant_cfg
+        ary_energy_pred, ary_intensity_pred, df_meta_pred, config=quant_cfg
     )
 
     # 2. Build mapping between predicted session, source session, target session, and split
-    pred_meta_subset = meta_df_pred[
+    pred_meta_subset = df_meta_pred[
         ["measurement_id", "source_measurement_id", "split"]
     ].dropna().drop_duplicates()
 
-    src_target_map = meta_df_orig[
+    src_target_map = df_meta_orig[
         ["measurement_id", "measurement_id_target"]
     ].dropna().drop_duplicates().rename(columns={"measurement_id": "source_measurement_id"})
 
