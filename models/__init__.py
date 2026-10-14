@@ -18,6 +18,17 @@ from models.dataset import (
 )
 from models.deeplabv3 import DeepLabV3
 from models.film import FiLMGenerator, prepare_film_condition_tensor
+from models.gp_flux import (
+    DieFluxExactGPModel,
+    SigmoidStepKernel,
+    build_composite_kernel,
+    build_gp_flux_dataset,
+    evaluate_gp_die_flux_models,
+    get_default_gp_flux_config,
+    predict_gp_die_flux,
+    run_gp_flux_pipeline,
+    train_gp_die_flux_model,
+)
 from models.inference import (
     assemble_prediction_metadata,
     format_predicted_measurement_id,
@@ -72,6 +83,16 @@ __all__ = [
     "assemble_prediction_metadata",
     "predict_spectra",
     "predict_sliding_window_spectrum",
+    # Gaussian Process die flux prediction
+    "DieFluxExactGPModel",
+    "SigmoidStepKernel",
+    "build_composite_kernel",
+    "build_gp_flux_dataset",
+    "train_gp_die_flux_model",
+    "predict_gp_die_flux",
+    "evaluate_gp_die_flux_models",
+    "get_default_gp_flux_config",
+    "run_gp_flux_pipeline",
     # Orchestration pipelines
     "perform_model_training_and_bayesian_optimization",
 ]
