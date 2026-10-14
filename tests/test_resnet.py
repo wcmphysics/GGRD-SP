@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import NormalizedMSELoss
+from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, create_dataloaders
 from models.inference import format_predicted_measurement_id, predict_spectra
 from models.resnet import ResNet1D
@@ -19,12 +19,12 @@ from models.trainer import evaluate, train_model_region
 class TestResNet1D(unittest.TestCase):
     """Test cases for the ResNet1D architecture."""
 
-    def test_cnn_forward_shape_2d(self) -> None:
-        """Test forward pass with 2D tensor input (batch, n_points)."""
+    def test_cnn_forward_shape_2d_raises(self) -> None:
+        """Test that 2D tensor input raises ValueError."""
         model = ResNet1D(n_points=100, config={"hidden_channels": 16, "kernel_size": 5})
         x = torch.randn(8, 100)
-        out = model(x)
-        self.assertEqual(out.shape, (8, 100))
+        with self.assertRaises(ValueError):
+            model(x)
 
     def test_cnn_forward_shape_3d(self) -> None:
         """Test forward pass with 3D tensor input (batch, 1, n_points)."""
@@ -71,9 +71,8 @@ class TestSpectrumPairDataset(unittest.TestCase):
         train_loader, val_loader = create_dataloaders(train_ds, val_ds, config={"batch_size": 4})
         batch = next(iter(train_loader))
         self.assertIn("x", batch)
-        self.assertIn("y", batch)
-        self.assertEqual(batch["x"].shape[0], 4)
-        self.assertEqual(batch["x"].shape[1], 50)
+        self.assertEqual(batch["x"].shape, (4, 1, 50))
+        self.assertEqual(batch["y"].shape, (4, 1, 50))
 
 
 class TestTrainingAndInference(unittest.TestCase):
@@ -118,8 +117,8 @@ class TestTrainingAndInference(unittest.TestCase):
         _, val_loader = create_dataloaders(self.train_ds, self.val_ds, config={"batch_size": 4})
         model = ResNet1D(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
 
-        crit_zero_l2 = NormalizedMSELoss(l2_weight=0.0)
-        crit_large_l2 = NormalizedMSELoss(l2_weight=10.0)
+        crit_zero_l2 = SpectralLoss(l2_weight=0.0)
+        crit_large_l2 = SpectralLoss(l2_weight=10.0)
 
         loss_zero = evaluate(model, val_loader, crit_zero_l2)
         loss_large = evaluate(model, val_loader, crit_large_l2)

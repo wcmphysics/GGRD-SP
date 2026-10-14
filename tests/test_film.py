@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from models.cost import NormalizedMSELoss
+from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
 from models.film import FiLMGenerator, prepare_film_condition_tensor
 from models.resnet import ResNet1D
@@ -87,13 +87,13 @@ class TestFiLMModulation(unittest.TestCase):
         n_points = 50
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 16, "use_film": True})
 
-        x = torch.randn(4, n_points)
+        x = torch.randn(4, 1, n_points)
         meta = [{"die": i, "tool_index": 0, "tool_target_index": 1} for i in range(4)]
         scales = np.full((4, 1), 100.0, dtype=np.float32)
         cond = prepare_film_condition_tensor(metadata=meta, scale_x=scales, num_samples=4)
 
         out = model(x, cond=cond)
-        self.assertEqual(out.shape, (4, n_points))
+        self.assertEqual(out.shape, (4, 1, n_points))
 
         # Backward pass
         loss = torch.sum(out ** 2)
@@ -109,9 +109,9 @@ class TestFiLMModulation(unittest.TestCase):
         """
         n_points = 40
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 8, "use_film": False})
-        x = torch.ones(2, n_points)
+        x = torch.ones(2, 1, n_points)
         out = model(x)
-        self.assertEqual(out.shape, (2, n_points))
+        self.assertEqual(out.shape, (2, 1, n_points))
 
     def test_trainer_integration_with_film(self) -> None:
         """Verify train_one_epoch executes successfully when model has use_film=True."""
@@ -127,7 +127,7 @@ class TestFiLMModulation(unittest.TestCase):
 
         model = ResNet1D(n_points=n_points, config={"hidden_channels": 8, "use_film": True})
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-        criterion = NormalizedMSELoss()
+        criterion = SpectralLoss()
 
         loss = train_one_epoch(model, loader, optimizer, criterion)
         self.assertIsInstance(loss, float)
@@ -138,7 +138,7 @@ class TestFiLMModulation(unittest.TestCase):
         from models.unet import ResidualUNet1D
         n_points = 32
         model = ResidualUNet1D(n_points=n_points, config={"base_channels": 8, "depth": 2, "use_film": True})
-        x = torch.randn(2, n_points)
+        x = torch.randn(2, 1, n_points)
         meta = [
             {"die": 1, "tool_index": 0, "tool_target_index": 1},
             {"die": 4, "tool_index": 0, "tool_target_index": 1},
@@ -146,7 +146,7 @@ class TestFiLMModulation(unittest.TestCase):
         cond = prepare_film_condition_tensor(metadata=meta, num_samples=2)
 
         out = model(x, cond=cond)
-        self.assertEqual(out.shape, (2, n_points))
+        self.assertEqual(out.shape, (2, 1, n_points))
         loss = torch.sum(out ** 2)
         loss.backward()
         self.assertIsNotNone(model.film_gen.die_embedding.weight.grad)
@@ -301,7 +301,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "energy_scale_ev": 1000.0,
             },
         )
-        x = torch.randn(2, patch_len)
+        x = torch.randn(2, 1, patch_len)
         meta = [{"die": 0, "tool_index": 0, "tool_target_index": 1}] * 2
         we = torch.tensor([[70.0, 80.0], [75.0, 85.0]], dtype=torch.float32)
         cond = prepare_film_condition_tensor(
@@ -311,7 +311,7 @@ class TestFiLMModulation(unittest.TestCase):
             config={"energy_scale_ev": 1000.0},
         )
         out = model(x, cond=cond)
-        self.assertEqual(out.shape, (2, patch_len))
+        self.assertEqual(out.shape, (2, 1, patch_len))
         loss = torch.sum(out ** 2)
         loss.backward()
         self.assertIsNotNone(model.film_gen.mlp[0].weight.grad)

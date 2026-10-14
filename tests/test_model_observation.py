@@ -119,12 +119,12 @@ class TestModelPerformanceObservation(unittest.TestCase):
 
         self.assertFalse(df_per_sample.empty)
         self.assertFalse(df_summary.empty)
-        self.assertIn("normalized_mse", df_per_sample.columns)
+        self.assertIn("MSE_normalized_by_target", df_per_sample.columns)
         self.assertIn("rmse", df_per_sample.columns)
         self.assertIn("peak_err_pct", df_per_sample.columns)
         self.assertIn("region", df_summary.columns)
-        self.assertIn("normalized_mse_mean", df_summary.columns)
-        self.assertIn("normalized_mse_std", df_summary.columns)
+        self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
+        self.assertIn("MSE_normalized_by_target_std", df_summary.columns)
 
     def test_plot_training_history_empty_raises(self) -> None:
         """Test that passing empty history dictionary raises ValueError."""
@@ -182,8 +182,8 @@ class TestModelPerformanceObservation(unittest.TestCase):
         )
         self.assertTrue(df_empty_sample.empty)
         self.assertTrue(df_empty_summary.empty)
-        self.assertIn("normalized_mse_mean", df_empty_summary.columns)
-        self.assertIn("normalized_mse_std", df_empty_summary.columns)
+        self.assertIn("MSE_normalized_by_target_mean", df_empty_summary.columns)
+        self.assertIn("MSE_normalized_by_target_std", df_empty_summary.columns)
 
     def test_calculate_prediction_metrics_zero_intensity_eps_safety(self) -> None:
         """Test division by zero protection (eps floor) when target intensity is all zeros."""
@@ -195,8 +195,8 @@ class TestModelPerformanceObservation(unittest.TestCase):
             data_orig, data_pred, config={"eps": 1e-3}
         )
         self.assertFalse(df_per_sample.empty)
-        self.assertFalse(np.isnan(df_per_sample["normalized_mse"]).any())
-        self.assertFalse(np.isinf(df_per_sample["normalized_mse"]).any())
+        self.assertFalse(np.isnan(df_per_sample["MSE_normalized_by_target"]).any())
+        self.assertFalse(np.isinf(df_per_sample["MSE_normalized_by_target"]).any())
 
     def test_plot_sliding_window_slices_with_energy(self) -> None:
         """Test plot_sliding_window_slices with binding energy and eV window."""

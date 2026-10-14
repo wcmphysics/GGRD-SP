@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from models.cost import NormalizedMSELoss, create_cost_function, format_loss_log10
+from models.cost import SpectralLoss, create_cost_function, format_loss_log10
 from models.dataset import SpectrumPatchDataset, create_regional_datasets
 from models.inference import predict_spectra
 from models.orchestration import (

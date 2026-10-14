@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import NormalizedMSELoss
+from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
 from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
@@ -41,13 +41,13 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         patch_ds = SpectrumPatchDataset(self.train_ds, window_size=15, stride=5)
         self.assertGreater(len(patch_ds), len(self.train_ds))
         item = patch_ds[0]
-        self.assertEqual(item["x"].shape, (15,))
-        self.assertEqual(item["y"].shape, (15,))
+        self.assertEqual(item["x"].shape, (1, 15))
+        self.assertEqual(item["y"].shape, (1, 15))
 
     def test_predict_sliding_window_spectrum(self) -> None:
         """Test single spectrum prediction and full length reconstruction."""
         model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
-        spectrum = self.train_ds[0]["x"].cpu().numpy()
+        spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5}
         )
@@ -56,7 +56,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
         model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
-        crit = NormalizedMSELoss(l2_weight=0.0)
+        crit = SpectralLoss(l2_weight=0.0)
         loss = evaluate_sliding_window(
             model=model,
             full_val_dataset=self.val_ds,
@@ -136,7 +136,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         adhering to Rule 7.
         """
         model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
-        spectrum = self.train_ds[0]["x"].cpu().numpy()
+        spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5, "batch_size": 32}
         )
@@ -145,7 +145,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         loss = evaluate_sliding_window(
             model,
             self.val_ds,
-            NormalizedMSELoss(l2_weight=0.0),
+            SpectralLoss(l2_weight=0.0),
             config={"window_size": 15, "stride": 5},
         )
         self.assertIsInstance(loss, float)

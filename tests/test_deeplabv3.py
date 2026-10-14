@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import NormalizedMSELoss
+from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
 from models.deeplabv3 import ASPP1D, DeepLabV3, DeepLabV3_1D, ResNet1DBackbone
 from models.orchestration import instantiate_model
@@ -22,7 +22,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
     """Test suite for DeepLabV3 model modules and forward transformations."""
 
     def test_output_shapes_2d_and_3d(self) -> None:
-        """Verify 1D DeepLabV3 preserves exact sequence length for 2D and 3D inputs."""
+        """Verify 1D DeepLabV3 strictly enforces (batch, 1, seq_len)."""
         model = DeepLabV3(
             n_points=100,
             config={
@@ -34,10 +34,10 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             },
         )
 
-        # 2D input (batch, n_points)
+        # 2D input should raise ValueError
         x_2d = torch.randn(4, 100)
-        y_2d = model(x_2d)
-        self.assertEqual(y_2d.shape, (4, 100))
+        with self.assertRaises(ValueError):
+            model(x_2d)
 
         # 3D input (batch, 1, n_points)
         x_3d = torch.randn(4, 1, 100)
@@ -55,9 +55,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             },
         )
         model.train()
-        x_single = torch.randn(1, 100)
+        x_single = torch.randn(1, 1, 100)
         y_single = model(x_single)
-        self.assertEqual(y_single.shape, (1, 100))
+        self.assertEqual(y_single.shape, (1, 1, 100))
         self.assertFalse(torch.isnan(y_single).any())
 
         # Verify backward pass on batch_size=1 works cleanly
@@ -79,9 +79,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
                     "aspp_rates": (2, 4, 6),
                 },
             )
-            x = torch.randn(2, seq_len)
+            x = torch.randn(2, 1, seq_len)
             y = model(x)
-            self.assertEqual(y.shape, (2, seq_len), f"Mismatch for sequence length {seq_len}")
+            self.assertEqual(y.shape, (2, 1, seq_len), f"Mismatch for sequence length {seq_len}")
 
     def test_multi_grid_adaptation(self) -> None:
         """Verify backbone dynamically adapts number of residual blocks to multi_grid tuple."""
@@ -110,9 +110,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             n_points=50,
             config={"multi_grid": (1, 2, 2, 4), "backbone_channels": 16, "aspp_channels": 16},
         )
-        x = torch.randn(2, 50)
+        x = torch.randn(2, 1, 50)
         y = model_custom(x)
-        self.assertEqual(y.shape, (2, 50))
+        self.assertEqual(y.shape, (2, 1, 50))
 
     def test_aspp_branches_and_rates(self) -> None:
         """Verify ASPP module produces correct output shape and respects custom dilation rates."""
@@ -142,9 +142,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
                 "aspp_rates": (2, 4, 6),
             },
         )
-        x = torch.randn(2, 12)
+        x = torch.randn(2, 1, 12)
         y = model(x)
-        self.assertEqual(y.shape, (2, 12))
+        self.assertEqual(y.shape, (2, 1, 12))
         self.assertFalse(torch.isnan(y).any())
 
     def test_residual_mode_toggle(self) -> None:
@@ -152,12 +152,12 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         model_res = DeepLabV3(n_points=40, config={"residual": True, "backbone_channels": 8, "aspp_channels": 8})
         model_dir = DeepLabV3(n_points=40, config={"residual": False, "backbone_channels": 8, "aspp_channels": 8})
 
-        x = torch.randn(2, 40)
+        x = torch.randn(2, 1, 40)
         y_res = model_res(x)
         y_dir = model_dir(x)
 
-        self.assertEqual(y_res.shape, (2, 40))
-        self.assertEqual(y_dir.shape, (2, 40))
+        self.assertEqual(y_res.shape, (2, 1, 40))
+        self.assertEqual(y_dir.shape, (2, 1, 40))
 
     def test_l2_regularization(self) -> None:
         """Verify L2 regularization calculation only penalizes conv weight matrices."""
@@ -192,6 +192,10 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         with self.assertRaises(ValueError):
             model(torch.randn(30))
 
+        # 2D tensor
+        with self.assertRaises(ValueError):
+            model(torch.randn(2, 30))
+
         # 4D tensor
         with self.assertRaises(ValueError):
             model(torch.randn(2, 1, 1, 30))
@@ -212,9 +216,9 @@ class TestDeepLabV3Architecture(unittest.TestCase):
                 "multi_grid": (1, 2),
             },
         )
-        x = torch.randn(2, 3)
+        x = torch.randn(2, 1, 3)
         y = model(x)
-        self.assertEqual(y.shape, (2, 3))
+        self.assertEqual(y.shape, (2, 1, 3))
         self.assertFalse(torch.isnan(y).any())
 
     def test_extreme_multi_grid_configurations(self) -> None:
@@ -225,7 +229,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             config={"multi_grid": (1,), "backbone_channels": 8, "aspp_channels": 8},
         )
         self.assertEqual(len(model_single.backbone.blocks), 1)
-        self.assertEqual(model_single(torch.randn(2, 30)).shape, (2, 30))
+        self.assertEqual(model_single(torch.randn(2, 1, 30)).shape, (2, 1, 30))
 
         # 5 blocks
         model_extended = DeepLabV3(
@@ -233,12 +237,12 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             config={"multi_grid": (1, 2, 2, 4, 8), "backbone_channels": 8, "aspp_channels": 8},
         )
         self.assertEqual(len(model_extended.backbone.blocks), 5)
-        self.assertEqual(model_extended(torch.randn(2, 30)).shape, (2, 30))
+        self.assertEqual(model_extended(torch.randn(2, 1, 30)).shape, (2, 1, 30))
 
     def test_backward_gradient_flow(self) -> None:
         """Verify backward gradients propagate through all components of DeepLabV3."""
         model = DeepLabV3(n_points=50, config={"backbone_channels": 16, "aspp_channels": 16})
-        x = torch.randn(2, 50, requires_grad=True)
+        x = torch.randn(2, 1, 50, requires_grad=True)
         y_pred = model(x)
         loss = torch.mean((y_pred - torch.ones_like(y_pred)) ** 2) + 1e-4 * model.get_l2_regularization()
         loss.backward()
@@ -290,7 +294,7 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
         )
 
     def test_training_one_epoch_normalized_loss(self) -> None:
-        """Verify DeepLabV3 completes a training step with NormalizedMSELoss."""
+        """Verify DeepLabV3 completes a training step with SpectralLoss."""
         x_synth = np.random.uniform(10.0, 100.0, size=(10, 40))
         y_synth = x_synth + np.random.normal(0.0, 1.0, size=(10, 40))
         dataset = SpectrumPairDataset(x_synth, y_synth)
