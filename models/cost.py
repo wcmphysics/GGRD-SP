@@ -28,16 +28,24 @@ def format_loss_log10(loss_val: float) -> str:
     return f"{loss_val:.6f} (log10: {log_val:+.4f})"
 
 
-class NormalizedMSELoss(nn.Module):
-    """Normalized Mean Squared Error loss with shape and L2 regularization.
+class SpectralLoss(nn.Module):
+    """Spectral loss combining MSE, shape, gradient, and L2 regularization.
 
-    Normalizes true and predicted spectra by the maximum intensity of the true
-    spectrum, then computes a weighted combination of Normalized MSE, Cosine
-    Shape Loss, and L2 penalty:
-        loss = w_mse * L_mse + w_shape * L_shape + l2_weight * L2_penalty
+    Operates strictly on 3D tensors of standard shape (batch, 1, seq_len).
+    Optionally normalizes true and predicted spectra by the maximum intensity
+    of the true spectrum, then computes a weighted combination:
+        loss = w_mse * L_mse + w_shape * L_shape + w_grad * L_grad + l2 * L2
 
     Parameters
     ----------
+    config : dict[str, Any] | None, optional
+        Optional configuration dictionary packaging loss weights.
+    w_mse : float, optional
+        Weight for mean-squared error component (default 1.0).
+    w_shape : float, optional
+        Weight for scale-invariant cosine shape distance (default 0.0).
+    w_gradient : float, optional
+        Weight for intensity gradient MSE component (default 0.0).
     l2_weight : float, optional
         Weight for model parameter L2 regularization (default 0.0).
     eps : float, optional
@@ -45,41 +53,33 @@ class NormalizedMSELoss(nn.Module):
     region_weights : dict[str, float] | None, optional
         Optional regional weighting mapping region names to error multipliers
         (default None).
-    w_mse : float, optional
-        Weight for normalized MSE loss component (default 1.0).
-    w_shape : float, optional
-        Weight for scale-invariant cosine shape distance (default 0.0).
-    w_gradient : float, optional
-        Weight for intensity gradient MSE component (default 0.0).
     normalized_by_target_max : bool, optional
         Whether to divide intensities by the maximum intensity of the true
         spectrum (default True).
-    config : dict[str, Any] | None, optional
-        Optional configuration dictionary packaging loss weights.
     """
 
     def __init__(
         self,
         config: dict[str, Any] | None = None,
         *,
-        l2_weight: float = 0.0,
-        eps: float = 1e-4,
-        region_weights: dict[str, float] | None = None,
         w_mse: float = 1.0,
         w_shape: float = 0.0,
         w_gradient: float = 0.0,
+        l2_weight: float = 0.0,
+        eps: float = 1e-4,
+        region_weights: dict[str, float] | None = None,
         normalized_by_target_max: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__()
         cfg = dict(config or {})
         cfg.update(kwargs)
-        self.l2_weight = float(cfg.get("l2_weight", l2_weight))
-        self.eps = float(cfg.get("eps", eps))
-        self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
         self.w_mse = float(cfg.get("w_mse", w_mse))
         self.w_shape = float(cfg.get("w_shape", w_shape))
         self.w_gradient = float(cfg.get("w_gradient", w_gradient))
+        self.l2_weight = float(cfg.get("l2_weight", l2_weight))
+        self.eps = float(cfg.get("eps", eps))
+        self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
         self.normalized_by_target_max = bool(
             cfg.get("normalized_by_target_max", normalized_by_target_max)
         )
@@ -92,19 +92,14 @@ class NormalizedMSELoss(nn.Module):
         max_val: torch.Tensor | None = None,
         region: str | None = None,
     ) -> torch.Tensor:
-        """Compute the normalized loss.
-
-        Guarantees 2D matching between y_pred and y_true to prevent
-        accidental cross-batch broadcasting: (B, 1, L) vs (B, L) -> (B, B, L).
+        """Compute the spectral loss between predicted and ground truth spectra.
 
         Parameters
         ----------
         y_pred : torch.Tensor
-            Predicted intensity of shape (batch_size, n_points) or
-            (batch_size, 1, n_points).
+            Predicted intensity tensor of shape (batch_size, 1, seq_len).
         y_true : torch.Tensor
-            Target intensity of shape (batch_size, n_points) or
-            (batch_size, 1, n_points).
+            Target intensity tensor of shape (batch_size, 1, seq_len).
         model : nn.Module | None, optional
             The model instance, needed to compute L2 regularization if
             l2_weight > 0.
@@ -119,18 +114,27 @@ class NormalizedMSELoss(nn.Module):
         -------
         torch.Tensor
             Scalar loss tensor.
+
+        Raises
+        ------
+        ValueError
+            If y_pred or y_true does not match shape (batch_size, 1, seq_len).
         """
-        if y_pred.dim() == 3 and y_pred.size(1) == 1:
-            y_pred = y_pred.squeeze(1)
-        if y_true.dim() == 3 and y_true.size(1) == 1:
-            y_true = y_true.squeeze(1)
+        if y_pred.dim() != 3 or y_pred.size(1) != 1:
+            raise ValueError(
+                f"y_pred must have shape (batch, 1, seq_len), got {tuple(y_pred.shape)}"
+            )
+        if y_true.dim() != 3 or y_true.size(1) != 1:
+            raise ValueError(
+                f"y_true must have shape (batch, 1, seq_len), got {tuple(y_true.shape)}"
+            )
 
         if self.normalized_by_target_max:
             if max_val is None:
-                max_val, _ = torch.max(torch.abs(y_true), dim=-1, keepdim=True)
+                max_val = torch.amax(torch.abs(y_true), dim=-1, keepdim=True)
             else:
                 max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
-                if max_val.dim() == 1 and y_pred.dim() >= 2:
+                while max_val.dim() < y_pred.dim():
                     max_val = max_val.unsqueeze(-1)
             max_val = torch.clamp(max_val, min=self.eps)
             norm_pred = y_pred / max_val
@@ -141,17 +145,22 @@ class NormalizedMSELoss(nn.Module):
 
         total_loss = 0.0 * torch.sum(y_pred)
 
-        # 1. Normalized MSE loss component
+        # 1. Mean-squared error (MSE) component
         if self.w_mse > 0.0:
             mse_loss = torch.mean((norm_pred - norm_true) ** 2)
             total_loss = total_loss + self.w_mse * mse_loss
 
         # 2. Scale-invariant Cosine Shape distance component
-        # (1 - cos(y_pred, y_true))
         if self.w_shape > 0.0:
-            pred_norm = torch.linalg.vector_norm(norm_pred, dim=-1, keepdim=True).clamp(min=self.eps)
-            true_norm = torch.linalg.vector_norm(norm_true, dim=-1, keepdim=True).clamp(min=self.eps)
-            cosine_sim = torch.sum((norm_pred / pred_norm) * (norm_true / true_norm), dim=-1)
+            pred_norm = torch.linalg.vector_norm(
+                norm_pred, dim=-1, keepdim=True
+            ).clamp(min=self.eps)
+            true_norm = torch.linalg.vector_norm(
+                norm_true, dim=-1, keepdim=True
+            ).clamp(min=self.eps)
+            cosine_sim = torch.sum(
+                (norm_pred / pred_norm) * (norm_true / true_norm), dim=-1
+            )
             cosine_sim = torch.clamp(cosine_sim, -1.0, 1.0)
             shape_loss = torch.mean(1.0 - cosine_sim)
             total_loss = total_loss + self.w_shape * shape_loss
@@ -183,58 +192,7 @@ class NormalizedMSELoss(nn.Module):
         return total_loss
 
 
-class CompositeSpectralLoss(NormalizedMSELoss):
-    """Composite loss combining scale-invariant cosine shape and normalized MSE.
-
-    Parameters
-    ----------
-    w_shape : float, optional
-        Weight for scale-invariant cosine shape distance (default 0.5).
-    w_mse : float, optional
-        Weight for normalized MSE loss component (default 0.5).
-    w_gradient : float, optional
-        Weight for intensity gradient MSE component (default 0.0).
-    l2_weight : float, optional
-        Weight for model parameter L2 regularization (default 0.0).
-    eps : float, optional
-        Small positive floor to prevent division by zero (default 1e-4).
-    region_weights : dict[str, float] | None, optional
-        Optional regional weighting mapping region names to error multipliers
-        (default None).
-    normalized_by_target_max : bool, optional
-        Whether to divide intensities by the maximum intensity of the true
-        spectrum (default True).
-    config : dict[str, Any] | None, optional
-        Configuration dictionary packaging loss options.
-    """
-
-    def __init__(
-        self,
-        config: dict[str, Any] | None = None,
-        *,
-        w_shape: float = 0.5,
-        w_mse: float = 0.5,
-        w_gradient: float = 0.0,
-        l2_weight: float = 0.0,
-        eps: float = 1e-4,
-        region_weights: dict[str, float] | None = None,
-        normalized_by_target_max: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        cfg = dict(config or {})
-        cfg.update(kwargs)
-        cfg.setdefault("w_shape", w_shape)
-        cfg.setdefault("w_mse", w_mse)
-        cfg.setdefault("w_gradient", w_gradient)
-        cfg.setdefault("l2_weight", l2_weight)
-        cfg.setdefault("eps", eps)
-        cfg.setdefault("normalized_by_target_max", normalized_by_target_max)
-        if region_weights is not None:
-            cfg.setdefault("region_weights", region_weights)
-        super().__init__(config=cfg)
-
-
-def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
+def create_cost_function(config: dict[str, Any] | None = None) -> SpectralLoss:
     """Create a spectral cost function according to configuration.
 
     Parameters
@@ -247,15 +205,11 @@ def create_cost_function(config: dict[str, Any] | None = None) -> nn.Module:
         - 'l2_weight': weight for parameter L2 regularization (default 0.0).
         - 'region_weights': optional dict of per-region weights (default None).
         - 'normalized_by_target_max': normalize by true max (default True).
-        - 'cost_type': 'normalized_mse' (default) or 'composite'.
         - 'eps': minimum positive floor (default 1e-4).
 
     Returns
     -------
-    nn.Module
+    SpectralLoss
         Configured loss function module ready for training.
     """
-    cfg = config or {}
-    cost_type = str(cfg.get("cost_type", "normalized_mse")).lower()
-    loss_class = CompositeSpectralLoss if "composite" in cost_type else NormalizedMSELoss
-    return loss_class(config=cfg)
+    return SpectralLoss(config=config)

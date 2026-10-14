@@ -7,8 +7,7 @@ from models.bayesian_opt import (
     run_ax_search,
 )
 from models.cost import (
-    CompositeSpectralLoss,
-    NormalizedMSELoss,
+    SpectralLoss,
     create_cost_function,
     format_loss_log10,
 )
@@ -56,8 +55,7 @@ __all__ = [
     "FiLMGenerator",
     "instantiate_model",
     # Cost
-    "CompositeSpectralLoss",
-    "NormalizedMSELoss",
+    "SpectralLoss",
     "create_cost_function",
     "format_loss_log10",
     # Conditioning & Datasets
