@@ -84,7 +84,6 @@ def main() -> None:
         "w_shape": 0.0,
         "w_gradient": 0.0,
         "l2_weight": 1e-6,
-        "cost_type": "normalized_mse",
         "normalized_by_target_max": True,
     }
 
@@ -146,9 +145,15 @@ def main() -> None:
         "film_config": film_config,
     }
 
+    mse_metric_name = (
+        "MSE_normalized_by_target"
+        if cost_config.get("normalized_by_target_max", True)
+        else "MSE"
+    )
     metrics_report_config = {
         "splits": ["train", "test"],
-        "metrics": ["norm_mse", "peak_err%", "max%err"],
+        "metrics": [mse_metric_name, "peak_err%", "max%err"],
+        "normalized_by_target_max": cost_config.get("normalized_by_target_max", True),
     }
 
     # =========================================================================
@@ -259,7 +264,7 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stages 9 & 10: Performance Metrics & Atomic % Quantification ===")
     df_prediction_metrics, _ = utility.calculate_prediction_metrics(
-        data_original, data_predicted
+        data_original, data_predicted, config=metrics_report_config
     )
     df_atomic_percentage_samples, df_atomic_percentage_summary = (
         utility.calculate_atomic_percentage_split_statistics(
