@@ -168,6 +168,14 @@ def main() -> None:
         f"{ary_intensity.shape[1]} points"
     )
 
+    # Calculate hierarchical flux metrics across regions, dies, and measurements
+    df_meta = utility.calculate_flux(ary_intensity, ary_energy, df_meta)
+    print(
+        f"Calculated spectral fluxes: mean regional={df_meta['regional_flux'].mean():.2f}, "
+        f"mean die={df_meta['die_flux'].mean():.2f}, "
+        f"mean measurement={df_meta['measurement_flux'].mean():.2f}"
+    )
+
     # =========================================================================
     # STAGE 2: PAIRING SOURCE AND TARGET SPECTRA
     # =========================================================================
