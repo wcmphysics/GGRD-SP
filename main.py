@@ -65,6 +65,38 @@ def main() -> None:
         "seed": 42,
     }
 
+    # Stage 4B: Gaussian Process die flux prediction configuration
+    gp_flux_config = {
+        "reference_date": "2026-01-01",
+        "unpaired_split": "train",
+        "target_column": "die_flux",
+        "kernel": {
+            "time_continuous": {
+                "type": "rbf",
+                "initial_lengthscale": 5.0,
+            },
+            "time_jump": {
+                "enabled": True,
+                "initial_step_time_days": 10.0,
+                "initial_steepness": 2.0,
+                "learn_step_time": True,
+            },
+            "die": {
+                "type": "index",
+                "num_dies": 9,
+                "rank": 2,
+            },
+            "composition": "product_with_jump",
+        },
+        "training": {
+            "num_iterations": 150,
+            "learning_rate": 0.05,
+        },
+        "plot": {
+            "plot_die": 0,
+        },
+    }
+
     # Stage 5: Dataset & patch augmentation configuration
     dataset_config = {
         "regions": data_generation_config["regions"],
@@ -222,6 +254,21 @@ def main() -> None:
         f"Session splits: train={len(session_splits['train'])}, "
         f"val={len(session_splits['val'])}, test={len(session_splits['test'])}"
     )
+
+    # =========================================================================
+    # STAGE 4B: GAUSSIAN PROCESS DIE FLUX PREDICTION
+    # =========================================================================
+    print("\n=== Stage 4B: Gaussian Process Die Flux Prediction ===")
+    gp_bundle, df_gp_metrics = models.run_gp_flux_pipeline(
+        df_meta, gp_flux_config
+    )
+    print("\nGP Die Flux Error Performance Summary:")
+    print(df_gp_metrics.to_string(index=False))
+
+    if show_plots:
+        visualization.plot_gp_die_flux_timeline(
+            gp_bundle, gp_flux_config
+        )
 
     # =========================================================================
     # STAGE 5: DATASET AND DATALOADER DEFINITION (With Augmentation)
