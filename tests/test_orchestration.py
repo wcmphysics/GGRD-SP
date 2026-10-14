@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from models.cost import SpectralLoss, create_cost_function, format_loss_log10
+from models.cost import SpectralLoss, format_loss_log10
 from models.dataset import SpectrumPatchDataset, create_regional_datasets
 from models.inference import predict_spectra
 from models.orchestration import (
@@ -104,7 +104,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         regional_datasets = create_regional_datasets(
             self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
         )
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
 
         train_cfg = {
             "model_type": "resnet",
@@ -140,7 +140,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         )
         self.assertIsInstance(regional_datasets["Al2p"]["dataset_train"], SpectrumPatchDataset)
 
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
         train_cfg = {
             "model_type": "resnet",
             "train_config": {"epochs": 2, "batch_size": 8, "verbose": True},
@@ -173,7 +173,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         reg_ds_full = create_regional_datasets(
             self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
         )
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
 
         train_cfg = {
             "model_type": "residual_unet",
@@ -208,7 +208,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         regional_datasets = create_regional_datasets(
             self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
         )
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
         train_cfg = {
             "model_type": "unet",
             "train_config": {"epochs": 2, "batch_size": 4, "base_channels": 4, "depth": 2},
@@ -232,7 +232,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         regional_datasets = create_regional_datasets(
             self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
         )
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
         train_cfg = {
             "model_type": "resnet",
             "use_bayesian_opt": True,

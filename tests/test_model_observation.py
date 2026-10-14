@@ -12,7 +12,7 @@ matplotlib.use("Agg")  # Non-interactive backend for testing
 import numpy as np
 import pandas as pd
 
-from models.cost import create_cost_function
+from models.cost import SpectralLoss
 from models.dataset import create_regional_datasets
 from models.inference import predict_spectra
 from models.orchestration import perform_model_training_and_bayesian_optimization
@@ -67,7 +67,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
             cls.ary_energy,
             {"regions": ["Al2p", "Ti2p"], "source_tool": "J4", "target_tool": "H1"},
         )
-        criterion = create_cost_function()
+        criterion = SpectralLoss()
         train_res = perform_model_training_and_bayesian_optimization(
             reg_ds,
             criterion,

@@ -8,7 +8,6 @@ import torch.nn as nn
 
 from models.cost import (
     SpectralLoss,
-    create_cost_function,
     format_loss_log10,
 )
 
@@ -140,12 +139,14 @@ class TestCostFunctions(unittest.TestCase):
         loss_unnorm = crit_unnorm(y_pred, y_true)
         self.assertAlmostEqual(loss_unnorm.item(), 25.0 / 3.0, places=5)
 
-    def test_create_cost_function_respects_normalized_by_target_max(self) -> None:
-        """Verify create_cost_function passes normalized_by_target_max."""
+    def test_spectral_loss_config_respects_normalized_by_target_max(
+        self,
+    ) -> None:
+        """Verify SpectralLoss config dict passes normalized_by_target_max."""
         y_true = torch.tensor([[[10.0, 20.0, 10.0]]])
         y_pred = torch.tensor([[[5.0, 20.0, 10.0]]])
 
-        crit_unnorm = create_cost_function(
+        crit_unnorm = SpectralLoss(
             config={"normalized_by_target_max": False}
         )
         self.assertFalse(crit_unnorm.normalized_by_target_max)
@@ -186,9 +187,9 @@ class TestCostFunctions(unittest.TestCase):
         loss_zero = crit_zero(y_pred, y_true).item()
         self.assertEqual(loss_def, loss_zero)
 
-    def test_create_cost_function_respects_w_gradient(self) -> None:
-        """Verify create_cost_function properly configures w_gradient."""
-        crit = create_cost_function(config={"w_gradient": 0.25})
+    def test_spectral_loss_config_respects_w_gradient(self) -> None:
+        """Verify SpectralLoss config dict properly configures w_gradient."""
+        crit = SpectralLoss(config={"w_gradient": 0.25})
         self.assertEqual(crit.w_gradient, 0.25)
 
 
