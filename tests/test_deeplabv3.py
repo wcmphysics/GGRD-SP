@@ -11,7 +11,7 @@ import torch
 from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
-from models.deeplabv3 import ASPP1D, DeepLabV3, DeepLabV3_1D, ResNet1DBackbone
+from models.deeplabv3 import ASPP1D, DeepLabV3, ResNet1DBackbone
 from models.orchestration import instantiate_model
 from models.trainer import train_model_region
 from utility.pairing import pair_source_target_spectra

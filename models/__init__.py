@@ -16,7 +16,7 @@ from models.dataset import (
     create_dataloaders,
     create_regional_datasets,
 )
-from models.deeplabv3 import DeepLabV3, DeepLabV3_1D
+from models.deeplabv3 import DeepLabV3
 from models.film import FiLMGenerator, prepare_film_condition_tensor
 from models.inference import (
     assemble_prediction_metadata,
@@ -48,7 +48,6 @@ __all__ = [
     "ResidualUNet1D",
     "ConventionalUNet1D",
     "DeepLabV3",
-    "DeepLabV3_1D",
     "FiLMGenerator",
     "instantiate_model",
     # Cost

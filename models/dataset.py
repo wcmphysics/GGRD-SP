@@ -126,18 +126,6 @@ class SpectrumPairDataset(Dataset):
             item["meta"] = self.metadata[idx]
         return item
 
-    def get_scale(self, idx: int) -> float:
-        """Return source normalization scalar for a given sample."""
-        return float(self.scale_x[idx].item() if self.scale_x.numel() > 1 else self.scale_x.item())
-
-    def get_target_scale(self, idx: int) -> float:
-        """Return target normalization scalar for a given sample."""
-        return float(self.scale_y[idx].item() if self.scale_y.numel() > 1 else self.scale_y.item())
-
-    def unnormalize_y(self, y_norm: torch.Tensor | np.ndarray, idx: int) -> torch.Tensor | np.ndarray:
-        """Scale normalized target prediction to physical counts."""
-        return y_norm * self.get_scale(idx)
-
 
 class SpectrumPatchDataset(Dataset):
     """PyTorch Dataset yielding paired sliding window spectral patches.

@@ -269,7 +269,3 @@ class DeepLabV3(nn.Module):
             (torch.sum(m.weight ** 2) for m in self.modules() if isinstance(m, nn.Conv1d) and m.weight.requires_grad),
             torch.tensor(0.0, device=device),
         )
-
-
-# Alias for naming consistency
-DeepLabV3_1D = DeepLabV3
