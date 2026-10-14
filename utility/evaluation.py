@@ -44,6 +44,8 @@ def calculate_prediction_metrics(
     cfg = config or {}
     regions_filter = cfg.get("regions")
     eps: float = float(cfg.get("eps", 1e-4))
+    norm_by_tgt_max: bool = bool(cfg.get("normalized_by_target_max", True))
+    mse_col = "MSE_normalized_by_target" if norm_by_tgt_max else "MSE"
 
     records: list[dict[str, Any]] = []
 
@@ -84,7 +86,11 @@ def calculate_prediction_metrics(
         max_true = max(float(np.max(np.abs(y_true))), safe_eps)
         max_pred = float(np.max(np.abs(y_pred)))
 
-        norm_mse = float(np.mean(((y_pred - y_true) / max_true) ** 2))
+        if norm_by_tgt_max:
+            mse_val = float(np.mean(((y_pred - y_true) / max_true) ** 2))
+        else:
+            mse_val = float(np.mean((y_pred - y_true) ** 2))
+
         raw_rmse = float(np.sqrt(np.mean((y_pred - y_true) ** 2)))
         peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
         max_err_pct = float(np.max(np.abs(y_pred - y_true)) / max_true * 100.0)
@@ -97,7 +103,7 @@ def calculate_prediction_metrics(
             "region": region,
             "die": die,
             "split": split_val,
-            "normalized_mse": norm_mse,
+            mse_col: mse_val,
             "rmse": raw_rmse,
             "peak_err_pct": peak_err_pct,
             "max_err_pct": max_err_pct,
@@ -113,8 +119,8 @@ def calculate_prediction_metrics(
         df_summary = pd.DataFrame(
             columns=[
                 "region",
-                "normalized_mse_mean",
-                "normalized_mse_std",
+                f"{mse_col}_mean",
+                f"{mse_col}_std",
                 "rmse_mean",
                 "rmse_std",
                 "peak_err_pct_mean",
@@ -125,7 +131,7 @@ def calculate_prediction_metrics(
         )
     else:
         group_cols = list(cfg.get("group_by", ["region"]))
-        metrics_to_agg = ["normalized_mse", "rmse", "peak_err_pct", "max_err_pct"]
+        metrics_to_agg = [mse_col, "rmse", "peak_err_pct", "max_err_pct"]
         df_summary = (
             df_per_sample.groupby(group_cols)[metrics_to_agg]
             .agg(["mean", "std"])
@@ -140,8 +146,22 @@ def calculate_prediction_metrics(
 
 
 METRIC_SPECS: dict[str, tuple[str, str, Any]] = {
-    "norm_mse": ("normalized_mse", "norm_mse", lambda m, s: f"{m:.4f} ± {s:.4f}"),
-    "normalized_mse": ("normalized_mse", "norm_mse", lambda m, s: f"{m:.4f} ± {s:.4f}"),
+    "mse": ("MSE", "MSE", lambda m, s: f"{m:.6f} ± {s:.6f}"),
+    "mse_normalized_by_target": (
+        "MSE_normalized_by_target",
+        "norm_mse",
+        lambda m, s: f"{m:.4f} ± {s:.4f}",
+    ),
+    "norm_mse": (
+        "MSE_normalized_by_target",
+        "norm_mse",
+        lambda m, s: f"{m:.4f} ± {s:.4f}",
+    ),
+    "normalized_mse": (
+        "MSE_normalized_by_target",
+        "norm_mse",
+        lambda m, s: f"{m:.4f} ± {s:.4f}",
+    ),
     "rmse": ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}"),
     "rms": ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}"),
     "peak_err%": ("peak_err_pct", "peak_err%", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
@@ -186,7 +206,15 @@ def format_side_by_side_metrics(
     cfg = config or {}
     format_str = bool(cfg.get("format_str", True))
     preferred_splits = list(cfg.get("splits", ["train", "test"]))
-    chosen_metrics = list(cfg.get("metrics", ["norm_mse", "peak_err%", "max%err"]))
+    is_normalized = cfg.get("normalized_by_target_max")
+    if is_normalized is None:
+        is_normalized = (
+            "MSE_normalized_by_target" in df_per_sample.columns
+            or "normalized_mse" in df_per_sample.columns
+        )
+    default_mse_key = "norm_mse" if is_normalized else "mse"
+    default_metrics = [default_mse_key, "peak_err%", "max%err"]
+    chosen_metrics = list(cfg.get("metrics", default_metrics))
 
     # Resolve metric specifications
     resolved_metrics: list[tuple[str, str, Any]] = []
@@ -215,29 +243,45 @@ def format_side_by_side_metrics(
             s_df = reg_df[reg_df["split"] == split]
             if s_df.empty:
                 for col_name, label, _ in resolved_metrics:
+                    actual_label = label
+                    if not is_normalized and actual_label == "norm_mse":
+                        actual_label = "MSE"
                     if format_str:
-                        row_dict[f"{label}_{split}"] = "N/A"
+                        row_dict[f"{actual_label}_{split}"] = "N/A"
                     else:
-                        row_dict[f"{label}_{split}_mean"] = np.nan
-                        row_dict[f"{label}_{split}_std"] = np.nan
+                        row_dict[f"{actual_label}_{split}_mean"] = np.nan
+                        row_dict[f"{actual_label}_{split}_std"] = np.nan
                 continue
 
             for col_name, label, fmt_fn in resolved_metrics:
-                if col_name not in s_df.columns:
+                actual_col = col_name
+                actual_label = label
+                if actual_col not in s_df.columns and col_name in (
+                    "MSE", "MSE_normalized_by_target", "normalized_mse"
+                ):
+                    for alt in ("MSE_normalized_by_target", "MSE", "normalized_mse"):
+                        if alt in s_df.columns:
+                            actual_col = alt
+                            if alt == "MSE" and actual_label == "norm_mse":
+                                actual_label = "MSE"
+                            elif alt != "MSE" and actual_label == "MSE":
+                                actual_label = "norm_mse"
+                            break
+                if actual_col not in s_df.columns:
                     val_mean = np.nan
                     val_std = np.nan
                 else:
-                    val_mean = float(s_df[col_name].mean())
-                    val_std = float(s_df[col_name].std()) if len(s_df) > 1 else 0.0
+                    val_mean = float(s_df[actual_col].mean())
+                    val_std = float(s_df[actual_col].std()) if len(s_df) > 1 else 0.0
 
                 if format_str:
                     if np.isnan(val_mean):
-                        row_dict[f"{label}_{split}"] = "N/A"
+                        row_dict[f"{actual_label}_{split}"] = "N/A"
                     else:
-                        row_dict[f"{label}_{split}"] = fmt_fn(val_mean, val_std)
+                        row_dict[f"{actual_label}_{split}"] = fmt_fn(val_mean, val_std)
                 else:
-                    row_dict[f"{label}_{split}_mean"] = val_mean
-                    row_dict[f"{label}_{split}_std"] = val_std
+                    row_dict[f"{actual_label}_{split}_mean"] = val_mean
+                    row_dict[f"{actual_label}_{split}_std"] = val_std
 
         rows.append(row_dict)
 

@@ -65,12 +65,12 @@ class TestEvaluationMetrics(unittest.TestCase):
 
         self.assertEqual(len(df_per_sample), 1)
         self.assertEqual(df_per_sample["split"].iloc[0], "test")
-        self.assertAlmostEqual(df_per_sample["normalized_mse"].iloc[0], 0.0)
+        self.assertAlmostEqual(df_per_sample["MSE_normalized_by_target"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["rmse"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["peak_err_pct"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["max_err_pct"].iloc[0], 0.0)
         self.assertEqual(len(df_summary), 1)
-        self.assertIn("normalized_mse_mean", df_summary.columns)
+        self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
         self.assertIn("max_err_pct_mean", df_summary.columns)
 
     def test_imperfect_prediction_metrics(self) -> None:
@@ -86,10 +86,27 @@ class TestEvaluationMetrics(unittest.TestCase):
             (intensity_pred, energy_pred, self.meta_pred),
         )
 
-        self.assertAlmostEqual(df_per_sample["normalized_mse"].iloc[0], 0.25)
+        self.assertAlmostEqual(df_per_sample["MSE_normalized_by_target"].iloc[0], 0.25)
         self.assertAlmostEqual(df_per_sample["rmse"].iloc[0], 10.0)
         self.assertAlmostEqual(df_per_sample["peak_err_pct"].iloc[0], 50.0)
         self.assertAlmostEqual(df_per_sample["max_err_pct"].iloc[0], 50.0)
+
+    def test_unnormalized_mse_metric(self) -> None:
+        """Verify unnormalized MSE metric computation when
+        normalized_by_target_max=False.
+        """
+        intensity_pred = np.array([np.ones(self.n_points) * 10.0])
+        energy_pred = np.array([np.linspace(0, 10, self.n_points)])
+
+        df_per_sample, df_summary = calculate_prediction_metrics(
+            (self.intensity_orig, self.energy_orig, self.meta_orig),
+            (intensity_pred, energy_pred, self.meta_pred),
+            config={"normalized_by_target_max": False},
+        )
+        # Target is 20.0, pred is 10.0 -> (10.0 - 20.0)^2 = 100.0
+        self.assertIn("MSE", df_per_sample.columns)
+        self.assertAlmostEqual(df_per_sample["MSE"].iloc[0], 100.0)
+        self.assertIn("MSE_mean", df_summary.columns)
 
     def test_distinct_peak_and_max_err(self) -> None:
         """Verify that peak_err% and max%err capture distinct spectral discrepancies."""
@@ -123,7 +140,7 @@ class TestEvaluationMetrics(unittest.TestCase):
 
         self.assertTrue(df_per_sample.empty)
         self.assertTrue(df_summary.empty)
-        self.assertIn("normalized_mse_mean", df_summary.columns)
+        self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
         self.assertIn("max_err_pct_mean", df_summary.columns)
 
     def test_format_side_by_side_metrics_structure(self) -> None:
@@ -209,6 +226,38 @@ class TestEvaluationMetrics(unittest.TestCase):
             "rmse_train",
             "peak_err%_train",
             "max%err_train",
+        ]
+        self.assertEqual(list(df_res.columns), expected_cols)
+
+    def test_format_side_by_side_metrics_unnormalized(self) -> None:
+        """Verify format_side_by_side_metrics uses MSE prefix
+        when unnormalized.
+        """
+        df_samples = pd.DataFrame([
+            {
+                "region": "Al2p",
+                "split": "train",
+                "MSE": 0.05,
+                "peak_err_pct": 2.0,
+                "max_err_pct": 4.0,
+            },
+            {
+                "region": "Al2p",
+                "split": "test",
+                "MSE": 0.06,
+                "peak_err_pct": 2.5,
+                "max_err_pct": 4.5,
+            },
+        ])
+        df_res = format_side_by_side_metrics(df_samples)
+        expected_cols = [
+            "region",
+            "MSE_train",
+            "peak_err%_train",
+            "max%err_train",
+            "MSE_test",
+            "peak_err%_test",
+            "max%err_test",
         ]
         self.assertEqual(list(df_res.columns), expected_cols)
 
