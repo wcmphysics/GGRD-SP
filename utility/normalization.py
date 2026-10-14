@@ -7,10 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
-    """Compute trapezoidal integration robustly across NumPy versions."""
-    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
-    return float(trapz_fn(y, x))
+from utility.flux import integrate_spectral_flux
 
 
 def normalize_spectral_data(
@@ -57,7 +54,9 @@ def normalize_spectral_data(
                 idx = int(row["spectrum_index"])
                 if 0 <= idx < n_total:
                     indices.append(idx)
-                    area = abs(_trapezoid(ary_intensity[idx], ary_energy[idx]))
+                    area = integrate_spectral_flux(
+                        ary_intensity[idx], ary_energy[idx]
+                    )
                     total_flux += area
 
             scale = max(total_flux, eps)

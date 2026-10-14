@@ -1,6 +1,12 @@
-"""Utility module for GGRD-SP spectral processing and synthetic data generation."""
+"""Utility module for GGRD-SP spectral processing and synthetic data.
+"""
 
 from utility.evaluation import calculate_prediction_metrics, format_side_by_side_metrics
+from utility.flux import (
+    calculate_flux,
+    integrate_spectral_flux,
+    trapezoid_integral,
+)
 from utility.normalization import normalize_spectral_data
 from utility.pairing import (
     get_default_pairing_config,
@@ -29,6 +35,9 @@ from utility.quantification import (
 __all__ = [
     "generate_pseudo_measurements",
     "get_default_measurement_config",
+    "calculate_flux",
+    "integrate_spectral_flux",
+    "trapezoid_integral",
     "normalize_spectral_data",
     "pair_source_target_spectra",
     "get_default_pairing_config",

@@ -12,10 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
-    """Compute trapezoidal integration robustly across NumPy versions."""
-    trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
-    return float(trapz_fn(y, x))
+from utility.flux import integrate_spectral_flux, trapezoid_integral
 
 
 def compute_die_total_flux(
@@ -50,7 +47,7 @@ def compute_die_total_flux(
             y_arr = ary_intensity[idx]
             if ary_energy is not None and idx < len(ary_energy):
                 x_arr = ary_energy[idx]
-                area = abs(_trapezoid(y_arr, x_arr))
+                area = float(integrate_spectral_flux(y_arr, x_arr))
             else:
                 area = float(np.sum(y_arr))
             total_flux += area
@@ -457,7 +454,7 @@ def calculate_shirley_background(
         # Iterative Shirley background calculation
         for _ in range(max_iter):
             peak = np.maximum(0.0, i_sub - b_sub)
-            total_peak_area = _trapezoid(peak, e_sub)
+            total_peak_area = float(trapezoid_integral(peak, e_sub))
 
             if total_peak_area <= 0.0:
                 break
@@ -476,7 +473,7 @@ def calculate_shirley_background(
 
         # Physical safeguard: background cannot exceed measured spectrum intensity
         b_sub = np.minimum(b_sub, i_sub)
-        net_area = _trapezoid(np.maximum(0.0, i_sub - b_sub), e_sub)
+        net_area = float(trapezoid_integral(np.maximum(0.0, i_sub - b_sub), e_sub))
 
     # Construct full background array: B(E) = I(E) outside [E1, E2]
     b_work = i_work.copy()
