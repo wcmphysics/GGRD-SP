@@ -11,7 +11,7 @@ import torch, torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
-from models.cost import CompositeSpectralLoss, NormalizedMSELoss, format_loss_log10
+from models.cost import SpectralLoss, format_loss_log10
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset, create_dataloaders, default_spectrum_collate
 from models.deeplabv3 import DeepLabV3
 from models.film import prepare_film_condition_tensor
@@ -38,7 +38,7 @@ def _batch_cond(
 
 
 def _run_epoch(
-    model: nn.Module, loader: DataLoader, criterion: NormalizedMSELoss,
+    model: nn.Module, loader: DataLoader, criterion: SpectralLoss,
     device: torch.device, optimizer: torch.optim.Optimizer | None = None,
 ) -> float:
     is_train = optimizer is not None
@@ -66,7 +66,7 @@ def _run_epoch(
 
 def train_one_epoch(
     model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer | None = None,
-    criterion: NormalizedMSELoss | None = None, config: dict[str, Any] | None = None, **kwargs: Any,
+    criterion: SpectralLoss | None = None, config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> float:
     """Train the model for a single epoch.
 
@@ -78,7 +78,7 @@ def train_one_epoch(
         DataLoader for the training dataset.
     optimizer : torch.optim.Optimizer | None, optional
         Optimizer instance (or pass via config['optimizer']).
-    criterion : NormalizedMSELoss | None, optional
+    criterion : SpectralLoss | None, optional
         Loss function instance (or pass via config['criterion']).
     config : dict[str, Any] | None, optional
         Configuration dictionary containing 'optimizer', 'criterion',
@@ -99,7 +99,7 @@ def train_one_epoch(
 
 
 def evaluate(
-    model: nn.Module, loader: DataLoader, criterion: NormalizedMSELoss, config: dict[str, Any] | None = None,
+    model: nn.Module, loader: DataLoader, criterion: SpectralLoss, config: dict[str, Any] | None = None,
 ) -> float:
     """Evaluate model reconstruction loss on validation dataset without
     L2 penalty.
@@ -110,7 +110,7 @@ def evaluate(
         The neural network model.
     loader : DataLoader
         DataLoader for the validation dataset.
-    criterion : NormalizedMSELoss
+    criterion : SpectralLoss
         Loss function instance.
     config : dict[str, Any] | None, optional
         Configuration dictionary containing 'device'.
@@ -125,7 +125,7 @@ def evaluate(
 
 
 def evaluate_sliding_window(
-    model: nn.Module, full_val_dataset: SpectrumPairDataset, criterion: NormalizedMSELoss | None = None,
+    model: nn.Module, full_val_dataset: SpectrumPairDataset, criterion: SpectralLoss | None = None,
     config: dict[str, Any] | None = None, **kwargs: Any,
 ) -> float:
     """Evaluate end-to-end normalized MSE directly on reconstructed
@@ -137,8 +137,8 @@ def evaluate_sliding_window(
         Trained patch model.
     full_val_dataset : SpectrumPairDataset
         Validation dataset containing full paired spectra.
-    criterion : NormalizedMSELoss | None, optional
-        Loss function instance (default NormalizedMSELoss()).
+    criterion : SpectralLoss | None, optional
+        Loss function instance (default SpectralLoss()).
     config : dict[str, Any] | None, optional
         Configuration dictionary containing 'window_size', 'stride',
         'device'.
@@ -151,7 +151,7 @@ def evaluate_sliding_window(
     """
     if len(full_val_dataset) == 0:
         raise ValueError("full_val_dataset is empty.")
-    crit, cfg = criterion or NormalizedMSELoss(), {**(config or {}), **kwargs}
+    crit, cfg = criterion or SpectralLoss(), {**(config or {}), **kwargs}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
     dev = cfg.get("device") or next((p.device for p in model.parameters()), "cpu")
@@ -165,12 +165,12 @@ def evaluate_sliding_window(
         it = full_val_dataset[idx]
         rec = predict_sliding_window_spectrum(
             model,
-            it["x"].cpu().numpy(),
+            it["x"].cpu().numpy().squeeze(),
             config=p_cfg,
             cond=_batch_cond(model, it, device, 1),
             energy=it.get("energy"),
         )
-        yp = torch.from_numpy(rec).float().unsqueeze(0).to(device)
+        yp = torch.from_numpy(rec).float().view(1, 1, -1).to(device)
         total += crit(yp, it["y"].unsqueeze(0).to(device), model=None).item()
 
     return total / len(full_val_dataset)
@@ -230,7 +230,7 @@ def train_model_region(
 
     device = torch.device(cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    full_len = len(train_dataset[0]["x"])
+    full_len = int(train_dataset[0]["x"].shape[-1])
     if use_sw:
         is_p = isinstance(train_dataset, SpectrumPatchDataset)
         w_size = train_dataset.window_size if is_p else min(full_len, max(3, int(cfg.get("window_size", 15))))
@@ -259,9 +259,7 @@ def train_model_region(
 
     criterion = cfg.get("criterion")
     if criterion is None:
-        cost_t = str(cfg.get("cost_type", cfg.get("loss_type", "normalized_mse"))).lower()
-        loss_cls = CompositeSpectralLoss if "composite" in cost_t else NormalizedMSELoss
-        criterion = loss_cls(config={**cfg, "l2_weight": l2_weight})
+        criterion = SpectralLoss(config={**cfg, "l2_weight": l2_weight})
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = (
         ReduceLROnPlateau(optimizer, mode="min", factor=lr_factor, patience=lr_pat, min_lr=min_lr)

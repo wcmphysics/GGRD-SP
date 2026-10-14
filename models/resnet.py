@@ -112,25 +112,30 @@ class ResNet1D(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            Input spectral tensor of shape (batch_size, n_points) or (batch_size, 1, n_points).
+            Input spectral tensor of shape (batch_size, 1, n_points).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
             Optional metadata conditioning features for FiLM modulation.
 
         Returns
         -------
         torch.Tensor
-            Transformed spectrum matching original input dimensionality.
+            Transformed spectrum of shape (batch_size, 1, n_points).
+
+        Raises
+        ------
+        ValueError
+            If x is not a 3D tensor of shape (batch_size, 1, n_points).
         """
-        if x.dim() not in (2, 3):
-            raise ValueError(f"Expected 2D or 3D tensor, got shape {x.shape}")
-        # Standardize 2D input (B, L) to 3D channel format (B, 1, L)
-        x_in = x.unsqueeze(1) if x.dim() == 2 else x
+        if x.dim() != 3 or x.size(1) != 1:
+            raise ValueError(
+                f"Expected 3D tensor of shape (batch, 1, seq_len), got shape {tuple(x.shape)}"
+            )
 
         # Compute FiLM modulation parameters (gamma, beta) if conditioning is enabled
         film_modulations = self.film_gen(cond) if (self.use_film and cond is not None) else None
 
         # Hidden representation extraction across layers 1 and 2 with FiLM affine modulation
-        hidden_features = x_in
+        hidden_features = x
         for layer_index, (conv_layer, batch_norm_layer) in enumerate(
             ((self.conv1, self.bn1), (self.conv2, self.bn2))
         ):
@@ -142,8 +147,7 @@ class ResNet1D(nn.Module):
 
         # Project to residual difference Delta(x) and add physical shortcut: y = x + Delta(x)
         delta = self.conv3(hidden_features)
-        out = x_in + delta
-        return out.squeeze(1) if x.dim() == 2 else out
+        return x + delta
 
     def get_l2_regularization(self) -> torch.Tensor:
         """Compute the sum of squared weights (L2 regularization penalty) for conv layers.

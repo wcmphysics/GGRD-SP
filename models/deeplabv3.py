@@ -232,26 +232,27 @@ class DeepLabV3(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            Input tensor: (batch_size, n_points) or (batch, 1, n).
+            Input tensor of shape (batch_size, 1, n_points).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
             Optional metadata conditioning (unused by default backbone).
 
         Returns
         -------
         torch.Tensor
-            Transformed spectrum matching input sequence dimensionality.
-        """
-        orig_dim = x.dim()
-        if orig_dim == 2:
-            x_in = x.unsqueeze(1)
-        elif orig_dim == 3 and x.shape[1] == 1:
-            x_in = x
-        else:
-            raise ValueError(f"Expected 2D or 3D tensor with 1 channel, got shape {x.shape}")
+            Transformed spectrum of shape (batch_size, 1, n_points).
 
-        delta = self.head(self.aspp(self.backbone(x_in)))
-        out = (x_in + delta) if self.residual else delta
-        return out.squeeze(1) if orig_dim == 2 else out
+        Raises
+        ------
+        ValueError
+            If x is not a 3D tensor of shape (batch_size, 1, n_points).
+        """
+        if x.dim() != 3 or x.size(1) != 1:
+            raise ValueError(
+                f"Expected 3D tensor of shape (batch, 1, seq_len), got shape {tuple(x.shape)}"
+            )
+
+        delta = self.head(self.aspp(self.backbone(x)))
+        return (x + delta) if self.residual else delta
 
     def get_l2_regularization(self) -> torch.Tensor:
         """Compute sum of squared conv weights for L2 loss penalty.

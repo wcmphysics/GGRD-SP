@@ -70,7 +70,8 @@ class UNet1D(nn.Module):
     - Robust linear interpolation in the decoder supporting arbitrary/odd sequence lengths.
     - Optional global residual connection y = x + UNet(x) for stable inter-tool delta learning.
     - Optional FiLM feature-wise linear modulation conditioning at the bottleneck.
-    - Explicit L2 penalty computation on convolutional weights for NormalizedMSELoss compatibility.
+    - Explicit L2 penalty computation on convolutional weights for
+      SpectralLoss compatibility.
 
     Parameters
     ----------
@@ -183,25 +184,27 @@ class UNet1D(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            Input tensor of shape (batch_size, n_points) or (batch_size, 1, n_points).
+            Input tensor of shape (batch_size, 1, n_points).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
             Optional metadata conditioning features for FiLM modulation.
 
         Returns
         -------
         torch.Tensor
-            Transformed spectrum matching input shape.
+            Transformed spectrum of shape (batch_size, 1, n_points).
+
+        Raises
+        ------
+        ValueError
+            If x is not a 3D tensor of shape (batch_size, 1, n_points).
         """
-        orig_dim = x.dim()
-        if orig_dim == 2:
-            x_in = x.unsqueeze(1)
-        elif orig_dim == 3:
-            x_in = x
-        else:
-            raise ValueError(f"Expected 2D or 3D tensor, got shape {x.shape}")
+        if x.dim() != 3 or x.size(1) != 1:
+            raise ValueError(
+                f"Expected 3D tensor of shape (batch, 1, seq_len), got shape {tuple(x.shape)}"
+            )
 
         skips: list[torch.Tensor] = []
-        feat = x_in
+        feat = x
 
         # Contracting path
         for i in range(self.depth):
@@ -226,12 +229,7 @@ class UNet1D(nn.Module):
             feat = self.decoders[i](cat)
 
         delta = self.final_conv(feat)
-
-        out = (x_in + delta) if self.residual else delta
-
-        if orig_dim == 2:
-            return out.squeeze(1)
-        return out
+        return (x + delta) if self.residual else delta
 
     def get_l2_regularization(self) -> torch.Tensor:
         """Compute the sum of squared weights of convolutional layers."""

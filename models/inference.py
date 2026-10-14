@@ -57,7 +57,9 @@ def predict_sliding_window_spectrum(
     with torch.no_grad():
         patches = []
         for i in range(0, len(windows), bs):
-            b_wins = torch.as_tensor(windows[i : i + bs], dtype=torch.float32, device=device)
+            b_wins = torch.as_tensor(
+                windows[i : i + bs], dtype=torch.float32, device=device
+            ).unsqueeze(1)
             b_cond = _repeat_cond(cond, len(b_wins)) if cond is not None else None
             if b_cond is not None and encode_energy:
                 if energy_np is not None:
@@ -74,7 +76,7 @@ def predict_sliding_window_spectrum(
                 we_t = torch.tensor(bounds, dtype=torch.float32, device=device) / scale_floor
                 b_cond["window_energy"] = we_t
             out = model(b_wins, cond=b_cond) if b_cond is not None else model(b_wins)
-            patches.append(out.cpu().numpy())
+            patches.append(out.squeeze(1).cpu().numpy())
 
     recon = reconstruct_from_patches(np.vstack(patches), start_indices, len(spectrum_1d), {"window_size": w_size})
     return np.clip(recon * scale_x, 0.0, None) if clamp_non_negative else recon * scale_x
@@ -203,12 +205,26 @@ def predict_spectra(
         else:
             with torch.no_grad():
                 batches = [
-                    (torch.as_tensor(region_x_in[i : i + batch_size], dtype=torch.float32, device=device),
-                     _film_cond(model_entry, group.iloc[i : i + batch_size], scales[i : i + batch_size], device))
+                    (
+                        torch.as_tensor(
+                            region_x_in[i : i + batch_size], dtype=torch.float32, device=device
+                        ).unsqueeze(1),
+                        _film_cond(
+                            model_entry,
+                            group.iloc[i : i + batch_size],
+                            scales[i : i + batch_size],
+                            device,
+                        ),
+                    )
                     for i in range(0, len(region_x_in), batch_size)
                 ]
                 preds = [
-                    (model_entry(bx, cond=c) if c is not None else model_entry(bx)).cpu().numpy()
+                    (
+                        model_entry(bx, cond=c) if c is not None else model_entry(bx)
+                    )
+                    .squeeze(1)
+                    .cpu()
+                    .numpy()
                     for bx, c in batches
                 ]
             predicted_intensities[group_new_indices] = np.vstack(preds) * scales

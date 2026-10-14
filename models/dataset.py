@@ -16,17 +16,23 @@ from utility.quantification import compute_die_total_flux
 
 
 def _to_scale_tensor(val: Any, n: int, eps: float) -> torch.Tensor:
-    """Ensure normalization scale factor is formatted as a 2D float
-    tensor.
+    """Ensure normalization scale factor is formatted as a 3D float tensor
+    (n, 1, 1).
     """
-    if val is None: return torch.ones((n, 1), dtype=torch.float32)
+    if val is None:
+        return torch.ones((n, 1, 1), dtype=torch.float32)
     t = val.clone().detach() if isinstance(val, torch.Tensor) else torch.as_tensor(val, dtype=torch.float32)
-    return torch.clamp(t.repeat(n, 1) if t.dim() == 0 else (t.unsqueeze(-1) if t.dim() == 1 else t), min=eps)
+    if t.dim() == 0:
+        t = t.repeat(n, 1, 1)
+    elif t.dim() == 1:
+        t = t.view(n, 1, 1)
+    elif t.dim() == 2:
+        t = t.unsqueeze(-1)
+    return torch.clamp(t, min=eps)
 
 
 class SpectrumPairDataset(Dataset):
-    """PyTorch Dataset yielding paired source and target spectral
-    vectors.
+    """PyTorch Dataset yielding paired source and target spectral vectors.
 
     Parameters
     ----------
@@ -64,43 +70,63 @@ class SpectrumPairDataset(Dataset):
         scale_y: np.ndarray | torch.Tensor | None = None,
         **kwargs: Any,
     ) -> None:
-        if len(x_data) != len(y_data): raise ValueError(f"Lengths differ: {len(x_data)} vs {len(y_data)}")
+        if len(x_data) != len(y_data):
+            raise ValueError(f"Lengths differ: {len(x_data)} vs {len(y_data)}")
 
-        self.x, self.y = torch.as_tensor(x_data, dtype=torch.float32), torch.as_tensor(y_data, dtype=torch.float32)
+        x_t = torch.as_tensor(x_data, dtype=torch.float32)
+        self.x = x_t.unsqueeze(1) if x_t.dim() == 2 else x_t
+        y_t = torch.as_tensor(y_data, dtype=torch.float32)
+        self.y = y_t.unsqueeze(1) if y_t.dim() == 2 else y_t
         cfg = {**(config or {}), **kwargs}
 
-        if energy is None: energy = cfg.get("energy")
-        if metadata is None: metadata = cfg.get("metadata")
-        if scale_x is None: scale_x = cfg.get("scale_x")
-        if scale_y is None: scale_y = cfg.get("scale_y")
+        if energy is None:
+            energy = cfg.get("energy")
+        if metadata is None:
+            metadata = cfg.get("metadata")
+        if scale_x is None:
+            scale_x = cfg.get("scale_x")
+        if scale_y is None:
+            scale_y = cfg.get("scale_y")
 
         self.normalization_mode = str(cfg.get("normalization_mode", "source_referenced")).lower()
         eps: float = float(cfg.get("eps", 1e-4))
 
         if self.normalization_mode == "die_total_flux":
             if scale_x is None:
-                raise ValueError(f"normalization_mode='{self.normalization_mode}' requires 'scale_x' to be provided.")
+                raise ValueError(
+                    f"normalization_mode='{self.normalization_mode}' requires 'scale_x' to be provided."
+                )
             self.scale_x = _to_scale_tensor(scale_x, len(self.x), eps)
             self.scale_y = _to_scale_tensor(scale_y if scale_y is not None else scale_x, len(self.y), eps)
             self.x, self.y = self.x / self.scale_x, self.y / self.scale_y
         elif self.normalization_mode == "source_referenced" and len(self.x) > 0:
-            max_abs = self.x.abs().amax(dim=-1, keepdim=True) if self.x.dim() > 1 else self.x.abs().amax()
+            max_abs = self.x.abs().amax(dim=-1, keepdim=True)
             self.scale_x = self.scale_y = torch.clamp(max_abs, min=eps)
             self.x, self.y = self.x / self.scale_x, self.y / self.scale_y
         else:
-            self.scale_x = self.scale_y = torch.ones((len(self.x), 1)) if self.x.dim() > 1 else torch.tensor(1.0)
+            self.scale_x = self.scale_y = torch.ones((len(self.x), 1, 1), dtype=torch.float32)
 
-        self.energy = torch.as_tensor(energy, dtype=torch.float32) if energy is not None else None
+        if energy is not None:
+            e_t = torch.as_tensor(energy, dtype=torch.float32)
+            self.energy = e_t.unsqueeze(1) if e_t.dim() == 2 else e_t
+        else:
+            self.energy = None
         self.metadata = metadata or []
 
-    def __len__(self) -> int: return len(self.x)
+    def __len__(self) -> int:
+        return len(self.x)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        sx = self.scale_x[idx] if self.scale_x.numel() > 1 else self.scale_x
-        sy = self.scale_y[idx] if self.scale_y.numel() > 1 else sx
-        item: dict[str, Any] = {"x": self.x[idx], "y": self.y[idx], "scale_x": sx, "scale_y": sy}
-        if self.energy is not None: item["energy"] = self.energy[idx] if self.energy.dim() > 1 else self.energy
-        if self.metadata and idx < len(self.metadata): item["meta"] = self.metadata[idx]
+        item: dict[str, Any] = {
+            "x": self.x[idx],
+            "y": self.y[idx],
+            "scale_x": self.scale_x[idx],
+            "scale_y": self.scale_y[idx],
+        }
+        if self.energy is not None:
+            item["energy"] = self.energy[idx]
+        if self.metadata and idx < len(self.metadata):
+            item["meta"] = self.metadata[idx]
         return item
 
     def get_scale(self, idx: int) -> float:
@@ -149,18 +175,23 @@ class SpectrumPatchDataset(Dataset):
 
             e_tensor = item.get("energy")
             if e_tensor is not None:
-                e_arr = e_tensor.cpu().numpy() if isinstance(e_tensor, torch.Tensor) else np.asarray(e_tensor)
+                e_arr = (
+                    e_tensor.cpu().numpy().ravel()
+                    if isinstance(e_tensor, torch.Tensor)
+                    else np.asarray(e_tensor).ravel()
+                )
                 for s in start_indices:
                     end_idx = min(s + window_size - 1, len(e_arr) - 1)
                     energy_bounds_list.append([float(e_arr[s]), float(e_arr[end_idx])])
             else:
                 energy_bounds_list.extend([[0.0, 0.0]] * len(x_win))
 
-        if not x_patches_list: raise ValueError("No patches could be extracted from the dataset.")
+        if not x_patches_list:
+            raise ValueError("No patches could be extracted from the dataset.")
 
-        self.x = torch.from_numpy(np.vstack(x_patches_list).astype(np.float32))
-        self.y = torch.from_numpy(np.vstack(y_patches_list).astype(np.float32))
-        self.max_vals = torch.tensor(max_vals_list, dtype=torch.float32).unsqueeze(1)
+        self.x = torch.from_numpy(np.vstack(x_patches_list).astype(np.float32)).unsqueeze(1)
+        self.y = torch.from_numpy(np.vstack(y_patches_list).astype(np.float32)).unsqueeze(1)
+        self.max_vals = torch.tensor(max_vals_list, dtype=torch.float32).view(-1, 1, 1)
         self.meta_list, self.scale_x_list, self.scale_y_list = meta_list, scale_x_list, scale_y_list
         self.window_energy = torch.tensor(energy_bounds_list, dtype=torch.float32)
 
@@ -506,12 +537,12 @@ def create_regional_datasets(
 
         full_spectrum_length = ary_intensity.shape[1]
         if len(dataset_train_full) > 0:
-            full_spectrum_length = len(dataset_train_full[0]["x"])
+            full_spectrum_length = int(dataset_train_full[0]["x"].shape[-1])
 
         if use_sw and len(dataset_train_full) > 0:
             sample_energy_tensor = dataset_train_full[0].get("energy")
             if sample_energy_tensor is not None:
-                energy_grid = sample_energy_tensor.cpu().numpy()
+                energy_grid = sample_energy_tensor.cpu().numpy().ravel()
             else:
                 energy_grid = np.linspace(0.0, 10.0, full_spectrum_length)
 
