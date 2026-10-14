@@ -1154,8 +1154,8 @@ def plot_gp_die_flux_timeline(
     """Plot two-panel GP die flux prediction timeline for a selected die.
 
     Displays source tool and target tool total flux timelines for the chosen die.
-    Points are colored by data split (train/val/test) and annotated with
-    percentage prediction error relative to ground truth.
+    Points are colored by split (train: blue, val: orange, test: bright green)
+    and annotated with percentage prediction error relative to ground truth.
 
     Parameters
     ----------
@@ -1200,7 +1200,8 @@ def plot_gp_die_flux_timeline(
     split_colors = {
         "train": "tab:blue",
         "val": "tab:orange",
-        "test": "tab:green",
+        "test": "limegreen",
+        **(cfg.get("split_colors") or {}),
     }
 
     for tool_name, ax in tool_axes:

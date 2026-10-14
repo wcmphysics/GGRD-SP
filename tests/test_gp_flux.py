@@ -227,6 +227,11 @@ class TestGPFluxPipeline(unittest.TestCase):
         self.assertIn("Die 0", ax_s.get_title())
         self.assertIn("Die 0", ax_t.get_title())
 
+        # Verify custom split_colors support
+        cfg_custom = {**cfg, "split_colors": {"test": "limegreen"}}
+        fig_cust, _ = plot_gp_die_flux_timeline(bundle, cfg_custom)
+        self.assertIsNotNone(fig_cust)
+
     def test_tool_ordering_robustness(self) -> None:
         """Verify pipeline correctly identifies tools when rows are inverted."""
         inverted_meta = self.df_meta.sort_values(by="tool", ascending=False)
