@@ -8,7 +8,6 @@ from models.bayesian_opt import (
 )
 from models.cost import (
     SpectralLoss,
-    create_cost_function,
     format_loss_log10,
 )
 from models.dataset import (
@@ -56,7 +55,6 @@ __all__ = [
     "instantiate_model",
     # Cost
     "SpectralLoss",
-    "create_cost_function",
     "format_loss_log10",
     # Conditioning & Datasets
     "prepare_film_condition_tensor",

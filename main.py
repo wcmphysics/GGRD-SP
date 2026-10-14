@@ -233,7 +233,7 @@ def main() -> None:
     # STAGE 6: COST FUNCTION DEFINITION AND PREPARATION
     # =========================================================================
     print("\n=== Stage 6: Cost Function Preparation ===")
-    criterion = models.create_cost_function(cost_config)
+    criterion = models.SpectralLoss(config=cost_config)
     print(f"Initialized criterion: {criterion.__class__.__name__}")
 
     # =========================================================================

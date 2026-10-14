@@ -190,26 +190,3 @@ class SpectralLoss(nn.Module):
             return total_loss + self.l2_weight * l2_reg
 
         return total_loss
-
-
-def create_cost_function(config: dict[str, Any] | None = None) -> SpectralLoss:
-    """Create a spectral cost function according to configuration.
-
-    Parameters
-    ----------
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'w_mse': weight for mean-squared error component (default 1.0).
-        - 'w_shape': weight for cosine similarity shape component (default 0.0).
-        - 'w_gradient': weight for gradient MSE component (default 0.0).
-        - 'l2_weight': weight for parameter L2 regularization (default 0.0).
-        - 'region_weights': optional dict of per-region weights (default None).
-        - 'normalized_by_target_max': normalize by true max (default True).
-        - 'eps': minimum positive floor (default 1e-4).
-
-    Returns
-    -------
-    SpectralLoss
-        Configured loss function module ready for training.
-    """
-    return SpectralLoss(config=config)
