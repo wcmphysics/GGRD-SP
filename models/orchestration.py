@@ -116,6 +116,7 @@ def _resolve_region_config(
         "batch_sizes",
         "kernel_sizes",
         "window_size_choices",
+        "learning_rate_bounds",
         "lr_bounds",
         "l2_bounds",
         "num_trials",

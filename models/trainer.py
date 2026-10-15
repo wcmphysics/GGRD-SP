@@ -202,33 +202,95 @@ def train_model_region(
     has_val: bool = val_dataset is not None and len(val_dataset) > 0
 
     cfg = dict(config or {})
-    m_type = str(cfg.get("model_type", cfg.get("model", "resnet"))).lower()
-    use_sw = bool(cfg.get("use_sliding_window", cfg.get("use_sw", False)))
-    epochs = int(cfg.get("epochs", cfg.get("epoch", cfg.get("num_epochs", 50))))
-    batch_size = int(cfg.get("batch_size", cfg.get("batch", 16)))
-    lr, weight_decay = float(cfg.get("learning_rate", cfg.get("lr", 1e-3))), float(cfg.get("weight_decay", 0.0))
-    l2_weight, verbose = float(cfg.get("l2_weight", cfg.get("l2", 1e-4))), bool(cfg.get("verbose", False))
+    disallowed_aliases = {
+        "lr": "learning_rate",
+        "batch": "batch_size",
+        "epoch": "epochs",
+        "num_epochs": "epochs",
+        "l2": "l2_weight",
+        "use_sw": "use_sliding_window",
+        "lr_scheduler": "use_learning_rate_scheduler",
+        "lr_factor": "learning_rate_reduce_factor",
+        "lr_patience": "learning_rate_scheduler_patience",
+        "lr_min": "min_learning_rate",
+        "patience": "early_stopping_patience",
+    }
+    for alias, canonical in disallowed_aliases.items():
+        if alias in cfg and canonical not in cfg:
+            raise KeyError(
+                f"Missing required canonical key '{canonical}'. "
+                f"Found deprecated alias '{alias}'."
+            )
 
-    use_lr_sched = bool(cfg.get("use_lr_scheduler", cfg.get("lr_scheduler", True)))
-    lr_factor = float(cfg.get("lr_reduce_factor", cfg.get("lr_factor", 0.9)))
-    lr_pat = int(cfg.get("lr_scheduler_patience", cfg.get("lr_patience", 10)))
-    min_lr = float(cfg.get("min_lr", cfg.get("lr_min", lr / 1000.0)))
+    model_type = str(cfg.get("model_type", "resnet")).lower()
+    use_sw = bool(cfg.get("use_sliding_window", False))
+    epochs = int(cfg.get("epochs", 50))
+    batch_size = int(cfg.get("batch_size", 16))
+    learning_rate = float(cfg.get("learning_rate", 1e-3))
+    weight_decay = float(cfg.get("weight_decay", 0.0))
+    l2_weight = float(cfg.get("l2_weight", 1e-4))
+    verbose = bool(cfg.get("verbose", False))
 
-    if not (0.0 < lr_factor < 1.0):
-        raise ValueError(f"lr_reduce_factor must be strictly between 0 and 1, got {lr_factor}")
-    if lr_pat < 1:
-        raise ValueError(f"lr_scheduler_patience must be an integer >= 1, got {lr_pat}")
-    if min_lr < 0.0:
-        raise ValueError(f"min_lr cannot be negative, got {min_lr}")
+    use_lr_sched = bool(
+        cfg.get(
+            "use_learning_rate_scheduler",
+            cfg.get("use_lr_scheduler", True),
+        )
+    )
+    learning_rate_reduce_factor = float(
+        cfg.get(
+            "learning_rate_reduce_factor",
+            cfg.get("lr_reduce_factor", 0.9),
+        )
+    )
+    learning_rate_scheduler_patience = int(
+        cfg.get(
+            "learning_rate_scheduler_patience",
+            cfg.get("lr_scheduler_patience", 10),
+        )
+    )
+    min_learning_rate = float(
+        cfg.get(
+            "min_learning_rate",
+            cfg.get("min_lr", learning_rate / 1000.0),
+        )
+    )
 
-    patience = int(cfg.get("early_stopping_patience", cfg.get("patience", (lr_pat * 2) if use_lr_sched else 10)))
-    if use_lr_sched and ("early_stopping_patience" in cfg or "patience" in cfg) and patience <= lr_pat < epochs:
-        warnings.warn(
-            f"early_stopping_patience ({patience}) <= lr_scheduler_patience ({lr_pat}) while epochs > patience.",
-            UserWarning, stacklevel=2,
+    if not (0.0 < learning_rate_reduce_factor < 1.0):
+        raise ValueError(
+            f"learning_rate_reduce_factor must be strictly between 0 and 1, got {learning_rate_reduce_factor}"
+        )
+    if learning_rate_scheduler_patience < 1:
+        raise ValueError(
+            f"learning_rate_scheduler_patience must be an integer >= 1, got {learning_rate_scheduler_patience}"
+        )
+    if min_learning_rate < 0.0:
+        raise ValueError(
+            f"min_learning_rate cannot be negative, got {min_learning_rate}"
         )
 
-    device = torch.device(cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
+    patience = int(
+        cfg.get(
+            "early_stopping_patience",
+            (learning_rate_scheduler_patience * 2) if use_lr_sched else 10,
+        )
+    )
+    if (
+        use_lr_sched
+        and "early_stopping_patience" in cfg
+        and patience <= learning_rate_scheduler_patience < epochs
+    ):
+        warnings.warn(
+            f"early_stopping_patience ({patience}) <= "
+            f"learning_rate_scheduler_patience ({learning_rate_scheduler_patience}) "
+            f"while epochs > patience.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    device = torch.device(
+        cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     full_len = int(train_dataset[0]["x"].shape[-1])
     if use_sw:
@@ -249,26 +311,45 @@ def train_model_region(
 
     model = cfg.get("model")
     if model is None:
-        m_map = dict(resnet=ResNet1D, residual_unet=ResidualUNet1D, unet=ConventionalUNet1D, deeplabv3=DeepLabV3)
-        is_res, is_dl = "residual" in m_type, "deeplab" in m_type
-        clean_m = "residual_unet" if is_res else ("deeplabv3" if is_dl else m_type.replace("_1d", ""))
+        m_map = {
+            "resnet": ResNet1D,
+            "residual_unet": ResidualUNet1D,
+            "unet": ConventionalUNet1D,
+            "deeplabv3": DeepLabV3,
+        }
+        is_res = "residual" in model_type
+        is_dl = "deeplab" in model_type
+        clean_m = "residual_unet" if is_res else ("deeplabv3" if is_dl else model_type.replace("_1d", ""))
         if clean_m not in m_map:
-            raise ValueError(f"Unknown model_type '{m_type}'.")
+            raise ValueError(f"Unknown model_type '{model_type}'.")
         model = m_map[clean_m](n_points=seq_len, config=cfg)
     model = model.to(device)
 
     criterion = cfg.get("criterion")
     if criterion is None:
         criterion = SpectralLoss(config={**cfg, "l2_weight": l2_weight})
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     scheduler = (
-        ReduceLROnPlateau(optimizer, mode="min", factor=lr_factor, patience=lr_pat, min_lr=min_lr)
-        if use_lr_sched else None
+        ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=learning_rate_reduce_factor,
+            patience=learning_rate_scheduler_patience,
+            min_lr=min_learning_rate,
+        )
+        if use_lr_sched
+        else None
     )
 
-    history: dict[str, list[float]] = {"train_loss": [], "val_loss": [], "lr": []}
+    history: dict[str, list[float]] = {
+        "train_loss": [],
+        "val_loss": [],
+        "learning_rate": [],
+    }
+    history["lr"] = history["learning_rate"]
     best_loss, best_epoch, best_state, pat_count = float("inf"), 0, None, 0
-    run_cfg, eval_cfg = {"device": device}, {"device": device, "window_size": w_size, "stride": s_step}
+    run_cfg = {"device": device}
+    eval_cfg = {"device": device, "window_size": w_size, "stride": s_step}
 
     for epoch in range(1, epochs + 1):
         tr_loss = train_one_epoch(model, train_loader, optimizer, criterion, config=run_cfg)
@@ -280,7 +361,7 @@ def train_model_region(
 
         history["train_loss"].append(tr_loss)
         history["val_loss"].append(val_loss)
-        history["lr"].append(optimizer.param_groups[0]["lr"])
+        history["learning_rate"].append(optimizer.param_groups[0]["lr"])
 
         if math.isnan(mon_loss) or math.isinf(mon_loss):
             warnings.warn(f"Training diverged at epoch {epoch} with NaN/Inf loss ({mon_loss}). Stopping early.")
@@ -319,12 +400,31 @@ def train_model_region(
         model.load_state_dict(best_state)
 
     cfg.update({
-        "epochs": epochs, "batch_size": batch_size, "learning_rate": lr, "l2_weight": l2_weight,
-        "early_stopping_patience": patience, "model_type": m_type, "use_sliding_window": use_sw,
-        "use_lr_scheduler": use_lr_sched, "lr_reduce_factor": lr_factor, "lr_scheduler_patience": lr_pat,
-        "min_lr": min_lr, "window_size": w_size, "stride": s_step, "seq_len": seq_len,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "l2_weight": l2_weight,
+        "early_stopping_patience": patience,
+        "model_type": model_type,
+        "use_sliding_window": use_sw,
+        "use_learning_rate_scheduler": use_lr_sched,
+        "learning_rate_reduce_factor": learning_rate_reduce_factor,
+        "learning_rate_scheduler_patience": learning_rate_scheduler_patience,
+        "min_learning_rate": min_learning_rate,
+        "use_lr_scheduler": use_lr_sched,
+        "lr_reduce_factor": learning_rate_reduce_factor,
+        "lr_scheduler_patience": learning_rate_scheduler_patience,
+        "min_lr": min_learning_rate,
+        "window_size": w_size,
+        "stride": s_step,
+        "seq_len": seq_len,
     })
     return {
-        "model": model, "best_val_loss": best_loss, "best_epoch": best_epoch,
-        "history": history, "config": cfg, "window_size": w_size, "stride": s_step,
+        "model": model,
+        "best_val_loss": best_loss,
+        "best_epoch": best_epoch,
+        "history": history,
+        "config": cfg,
+        "window_size": w_size,
+        "stride": s_step,
     }

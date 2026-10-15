@@ -137,7 +137,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
 
     def test_disabled_scheduler_preserves_constant_lr(self) -> None:
-        """Verify use_lr_scheduler=False keeps learning rate constant."""
+        """Verify use_learning_rate_scheduler=False keeps learning rate constant."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-3
         config = {
@@ -145,13 +145,13 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "epochs": 5,
             "batch_size": 4,
             "learning_rate": init_lr,
-            "use_lr_scheduler": False,
-            "lr_scheduler_patience": 1,
+            "use_learning_rate_scheduler": False,
+            "learning_rate_scheduler_patience": 1,
             "early_stopping_patience": 10,
             "verbose": False,
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
-        lr_history = res["history"]["lr"]
+        lr_history = res["history"]["learning_rate"]
         for lr_val in lr_history:
             self.assertEqual(lr_val, init_lr)
 
@@ -164,8 +164,8 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "epochs": 4,
             "batch_size": 10,
             "learning_rate": init_lr,
-            "use_lr_scheduler": True,
-            "lr_scheduler_patience": 1,
+            "use_learning_rate_scheduler": True,
+            "learning_rate_scheduler_patience": 1,
             "early_stopping_patience": 10,
             "verbose": False,
         }
@@ -174,59 +174,82 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertEqual(len(res["history"]["train_loss"]), 4)
         for vl in res["history"]["val_loss"]:
             self.assertTrue(np.isnan(vl))
-        self.assertLess(res["history"]["lr"][-1], init_lr)
+        self.assertLess(res["history"]["learning_rate"][-1], init_lr)
 
-    def test_scheduler_alias_configuration(self) -> None:
-        """Verify alias parameter names are recognized properly."""
+    def test_deprecated_aliases_raise_keyerror(self) -> None:
+        """Verify passing deprecated aliases raises KeyError with canonical requirement."""
+        model = DummyConstantModel(n_points=self.n_points)
+        for deprecated_key in ["lr", "lr_scheduler", "lr_factor", "lr_patience", "lr_min"]:
+            config = {
+                "model": model,
+                "epochs": 2,
+                "batch_size": 4,
+                deprecated_key: 1e-2,
+            }
+            with self.assertRaises(KeyError) as ctx:
+                train_model_region(self.train_ds, self.val_ds, config=config)
+            self.assertIn("Missing required canonical key", str(ctx.exception))
+
+    def test_scheduler_canonical_configuration(self) -> None:
+        """Verify comprehensive canonical scheduler parameter names are recognized properly."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-2
         config = {
             "model": model,
             "epochs": 4,
             "batch_size": 10,
-            "lr": init_lr,
-            "lr_scheduler": True,
-            "lr_factor": 0.8,
-            "lr_patience": 1,
-            "lr_min": 1e-4,
+            "learning_rate": init_lr,
+            "use_learning_rate_scheduler": True,
+            "learning_rate_reduce_factor": 0.8,
+            "learning_rate_scheduler_patience": 1,
+            "min_learning_rate": 1e-4,
             "early_stopping_patience": 10,
             "verbose": False,
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
         resolved_cfg = res["config"]
-        self.assertTrue(resolved_cfg["use_lr_scheduler"])
-        self.assertAlmostEqual(resolved_cfg["lr_reduce_factor"], 0.8, places=5)
-        self.assertEqual(resolved_cfg["lr_scheduler_patience"], 1)
-        self.assertAlmostEqual(resolved_cfg["min_lr"], 1e-4, places=5)
+        self.assertTrue(resolved_cfg["use_learning_rate_scheduler"])
+        self.assertAlmostEqual(resolved_cfg["learning_rate_reduce_factor"], 0.8, places=5)
+        self.assertEqual(resolved_cfg["learning_rate_scheduler_patience"], 1)
+        self.assertAlmostEqual(resolved_cfg["min_learning_rate"], 1e-4, places=5)
         # Should reduce by 0.8 factor
-        self.assertAlmostEqual(res["history"]["lr"][-1], init_lr * 0.8, places=5)
+        self.assertAlmostEqual(res["history"]["learning_rate"][-1], init_lr * 0.8, places=5)
 
     def test_invalid_scheduler_parameters_raise_error(self) -> None:
         """Verify invalid scheduler parameters raise ValueError."""
         model = DummyConstantModel(n_points=self.n_points)
-        base_cfg = {"model": model, "epochs": 2}
+        base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
 
         # factor <= 0 or >= 1
         with self.assertRaises(ValueError):
-            train_model_region(self.train_ds, self.val_ds, config={**base_cfg, "lr_reduce_factor": 0.0})
+            train_model_region(
+                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_reduce_factor": 0.0}
+            )
         with self.assertRaises(ValueError):
-            train_model_region(self.train_ds, self.val_ds, config={**base_cfg, "lr_reduce_factor": 1.5})
+            train_model_region(
+                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_reduce_factor": 1.5}
+            )
 
         # patience < 1
         with self.assertRaises(ValueError):
-            train_model_region(self.train_ds, self.val_ds, config={**base_cfg, "lr_scheduler_patience": 0})
+            train_model_region(
+                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_scheduler_patience": 0}
+            )
 
         # min_lr < 0
         with self.assertRaises(ValueError):
-            train_model_region(self.train_ds, self.val_ds, config={**base_cfg, "min_lr": -1e-4})
+            train_model_region(
+                self.train_ds, self.val_ds, config={**base_cfg, "min_learning_rate": -1e-4}
+            )
 
     def test_warning_emitted_when_early_stopping_patience_le_lr_scheduler_patience(self) -> None:
-        """Verify UserWarning is emitted when explicit early_stopping_patience <= lr_scheduler_patience and epochs > lr_scheduler_patience."""
+        """Verify UserWarning is emitted when early_stopping_patience <= learning_rate_scheduler_patience."""
         model = DummyConstantModel(n_points=self.n_points)
         config = {
             "model": model,
             "epochs": 15,
-            "lr_scheduler_patience": 5,
+            "learning_rate": 1e-3,
+            "learning_rate_scheduler_patience": 5,
             "early_stopping_patience": 5,
         }
         with self.assertWarns(UserWarning):

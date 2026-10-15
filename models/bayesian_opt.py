@@ -170,13 +170,18 @@ def optimize_model_hyperparameters(
 
     cfg = dict(config or {})
     model_type = str(cfg.get("model_type", "resnet")).lower()
-    lr_bounds: tuple[float, float] = tuple(cfg.get("lr_bounds", (1e-4, 1e-2)))
+    learning_rate_bounds: tuple[float, float] = tuple(
+        cfg.get("learning_rate_bounds", cfg.get("lr_bounds", (1e-4, 1e-2)))
+    )
     l2_bounds: tuple[float, float] = tuple(cfg.get("l2_bounds", (1e-6, 1e-2)))
 
     for k in cfg.get("kernel_sizes", []):
         if k <= 0 or k % 2 == 0:
             raise ValueError(f"All kernel_sizes must be positive odd integers, got {k}")
-    for name, bounds in (("lr_bounds", lr_bounds), ("l2_bounds", l2_bounds)):
+    for name, bounds in (
+        ("learning_rate_bounds", learning_rate_bounds),
+        ("l2_bounds", l2_bounds),
+    ):
         if bounds[0] <= 0 or bounds[1] <= bounds[0]:
             raise ValueError(f"Invalid {name}: {bounds}, both must be > 0 with min < max")
     for b in cfg.get("batch_sizes", []):
@@ -196,7 +201,7 @@ def optimize_model_hyperparameters(
           [("kernel_size", [3, 5, 7]), ("hidden_channels", [16, 32, 64])])
     key_map = {"depth": "depths", "kernel_size": "kernel_sizes"}
     parameters.extend(_choice(p, cfg.get(key_map.get(p, p), d)) for p, d in arch_params)
-    parameters.extend([_range("learning_rate", lr_bounds), _range("l2_weight", l2_bounds)])
+    parameters.extend([_range("learning_rate", learning_rate_bounds), _range("l2_weight", l2_bounds)])
 
     opt_cfg = dict(cfg)
     opt_cfg.setdefault("experiment_name", f"{model_type}_spectral_transfer_optimization")
