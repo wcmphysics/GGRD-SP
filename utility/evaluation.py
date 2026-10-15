@@ -59,7 +59,7 @@ def calculate_prediction_metrics(
         die = int(pred_row["die"])
         pred_idx = int(pred_row["spectrum_index"])
 
-        # Find matching source row in df_meta_orig to obtain paired target measurement ID
+        # Find matching source row in df_meta_orig
         src_match = df_meta_orig[
             (df_meta_orig["measurement_id"] == src_meas_id)
             & (df_meta_orig["region"] == region)
@@ -68,16 +68,21 @@ def calculate_prediction_metrics(
         if src_match.empty or pd.isna(src_match["measurement_id_target"].iloc[0]):
             continue
 
-        tgt_meas_id = str(src_match["measurement_id_target"].iloc[0])
-        tgt_match = df_meta_orig[
-            (df_meta_orig["measurement_id"] == tgt_meas_id)
-            & (df_meta_orig["region"] == region)
-            & (df_meta_orig["die"] == die)
-        ]
-        if tgt_match.empty:
-            continue
+        src_row = src_match.iloc[0]
+        tgt_meas_id = str(src_row["measurement_id_target"])
 
-        tgt_idx = int(tgt_match["spectrum_index"].iloc[0])
+        # Use spectrum_index_target directly from df_meta if available
+        if "spectrum_index_target" in src_match.columns and pd.notna(src_row["spectrum_index_target"]):
+            tgt_idx = int(src_row["spectrum_index_target"])
+        else:
+            tgt_match = df_meta_orig[
+                (df_meta_orig["measurement_id"] == tgt_meas_id)
+                & (df_meta_orig["region"] == region)
+                & (df_meta_orig["die"] == die)
+            ]
+            if tgt_match.empty:
+                continue
+            tgt_idx = int(tgt_match["spectrum_index"].iloc[0])
 
         y_true = ary_intensity_orig[tgt_idx]
         y_pred = ary_intensity_pred[pred_idx]
