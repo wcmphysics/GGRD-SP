@@ -10,10 +10,9 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from models.film import FiLMGenerator
-from models.layers import SafeReflectionPad1d, _SafeReflectionPad1d
+from models.layers import SafeReflectionPad1d
 
 
 class ResNet1D(nn.Module):
@@ -64,7 +63,7 @@ class ResNet1D(nn.Module):
         def _make_conv(in_channels: int, out_channels: int) -> nn.Module:
             if padding_size > 0 and padding_mode == "reflect":
                 return nn.Sequential(
-                    _SafeReflectionPad1d(padding_size),
+                    SafeReflectionPad1d(padding_size),
                     nn.Conv1d(in_channels, out_channels, kernel_size),
                 )
             return nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding_size)

@@ -7,13 +7,13 @@ import numpy as np
 import pandas as pd
 
 from utility.pseudo_measurement import generate_pseudo_measurements
+from utility.flux import compute_die_total_flux
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
     _find_minima_endpoints,
     calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,
-    compute_die_total_flux,
     determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,

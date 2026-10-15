@@ -12,7 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from utility.flux import compute_die_total_flux, integrate_spectral_flux, trapezoid_integral
+from utility.flux import trapezoid_integral
 
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka X-ray excitation

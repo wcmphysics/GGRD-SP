@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-from utility.flux import compute_die_total_flux, integrate_spectral_flux
+from utility.flux import compute_die_total_flux
 
 
 def normalize_spectral_data(

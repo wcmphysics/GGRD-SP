@@ -18,14 +18,8 @@ from typing import Any, Sequence
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from models.layers import (
-    SafeBatchNorm1d,
-    SafeReflectionPad1d,
-    _SafeBatchNorm1d,
-    _SafeReflectionPad1d,
-)
+from models.layers import SafeBatchNorm1d, SafeReflectionPad1d
 
 
 def _build_conv1d_layer(
@@ -40,7 +34,7 @@ def _build_conv1d_layer(
     pad = (kernel_size - 1) * dilation // 2
     pad_val = 0 if padding_mode == "reflect" else pad
     conv = nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation, padding=pad_val)
-    return nn.Sequential(_SafeReflectionPad1d(pad), conv) if (pad > 0 and padding_mode == "reflect") else conv
+    return nn.Sequential(SafeReflectionPad1d(pad), conv) if (pad > 0 and padding_mode == "reflect") else conv
 
 
 def _conv_block(
@@ -53,7 +47,7 @@ def _conv_block(
         nn.Conv1d(in_channels, out_channels, 1, bias=bias) if kernel_size == 1
         else _build_conv1d_layer(in_channels, out_channels, kernel_size, dilation, padding_mode, n_points)
     )
-    bn = _SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity()
+    bn = SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity()
     drop = [nn.Dropout(dropout)] if dropout > 0.0 else []
     return nn.Sequential(conv, bn, nn.ReLU(inplace=True), *drop)
 
@@ -68,7 +62,7 @@ class ResidualBlock1D(nn.Module):
     ) -> None:
         super().__init__()
         conv_fn = lambda: _build_conv1d_layer(channels, channels, kernel_size, dilation, padding_mode, n_points)
-        bn_fn = lambda: _SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
+        bn_fn = lambda: SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
         self.conv1, self.bn1 = conv_fn(), bn_fn()
         self.conv2, self.bn2 = conv_fn(), bn_fn()
         self.relu1, self.relu2 = nn.ReLU(inplace=True), nn.ReLU(inplace=True)

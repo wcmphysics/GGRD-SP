@@ -4,6 +4,7 @@
 from utility.evaluation import calculate_prediction_metrics, format_side_by_side_metrics
 from utility.flux import (
     calculate_flux,
+    compute_die_total_flux,
     integrate_spectral_flux,
     trapezoid_integral,
 )
@@ -27,7 +28,6 @@ from utility.quantification import (
     calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,
-    compute_die_total_flux,
     determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
