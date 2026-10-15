@@ -12,48 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from utility.flux import integrate_spectral_flux, trapezoid_integral
-
-
-def compute_die_total_flux(
-    df_meta: pd.DataFrame,
-    ary_intensity: np.ndarray,
-    ary_energy: np.ndarray | None = None,
-) -> dict[tuple[str, int], float]:
-    """Calculate the total integrated spectral flux for each (measurement_id, die) across all its measured regions.
-
-    Parameters
-    ----------
-    df_meta : pd.DataFrame
-        Metadata DataFrame containing 'measurement_id', 'die', and 'spectrum_index'.
-    ary_intensity : np.ndarray
-        2D intensity array of shape (N_total, N_points).
-    ary_energy : np.ndarray | None, optional
-        2D binding energy array of shape (N_total, N_points). If provided, integrates over eV.
-
-    Returns
-    -------
-    dict[tuple[str, int], float]
-        Dictionary mapping (measurement_id, die) to total integrated flux.
-    """
-    flux_map: dict[tuple[str, int], float] = {}
-
-    for (meas_id, die), group in df_meta.groupby(["measurement_id", "die"]):
-        total_flux = 0.0
-        for _, row in group.iterrows():
-            idx = int(row["spectrum_index"])
-            if idx < 0 or idx >= len(ary_intensity):
-                continue
-            y_arr = ary_intensity[idx]
-            if ary_energy is not None and idx < len(ary_energy):
-                x_arr = ary_energy[idx]
-                area = float(integrate_spectral_flux(y_arr, x_arr))
-            else:
-                area = float(np.sum(y_arr))
-            total_flux += area
-        flux_map[(str(meas_id), int(die))] = max(total_flux, 1e-4)
-
-    return flux_map
+from utility.flux import compute_die_total_flux, integrate_spectral_flux, trapezoid_integral
 
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka X-ray excitation

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-from utility.flux import integrate_spectral_flux
+from utility.flux import compute_die_total_flux, integrate_spectral_flux
 
 
 def normalize_spectral_data(
@@ -47,20 +47,14 @@ def normalize_spectral_data(
     n_total = len(ary_norm)
 
     if norm_mode == "total_flux":
-        for (_, _), group in df_meta.groupby(["measurement_id", "die"]):
-            total_flux = 0.0
-            indices: list[int] = []
-            for _, row in group.iterrows():
-                idx = int(row["spectrum_index"])
-                if 0 <= idx < n_total:
-                    indices.append(idx)
-                    area = integrate_spectral_flux(
-                        ary_intensity[idx], ary_energy[idx]
-                    )
-                    total_flux += area
-
-            scale = max(total_flux, eps)
-            for idx in indices:
+        flux_map = compute_die_total_flux(df_meta, ary_intensity, ary_energy)
+        for _, row in df_meta.iterrows():
+            idx = int(row["spectrum_index"])
+            if 0 <= idx < n_total:
+                scale = max(
+                    flux_map.get((str(row["measurement_id"]), int(row["die"])), eps),
+                    eps,
+                )
                 ary_norm[idx] = ary_norm[idx] / scale
 
     elif norm_mode == "regional_max":

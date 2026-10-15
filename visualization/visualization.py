@@ -11,8 +11,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from utility.flux import compute_die_total_flux, integrate_spectral_flux
 from utility.patching import calculate_window_points, extract_sliding_windows
-from utility.quantification import calculate_shirley_background, compute_die_total_flux
+from utility.quantification import calculate_shirley_background
 
 __all__ = [
     "plot_regional_spectra",
@@ -485,11 +486,17 @@ def plot_normalized_max_intensity_vs_time(ary_intensity: np.ndarray, df_meta: pd
                                                          axis=1), df.iterrows())]
         d_lbl = "Max Intensity / Die Total Integrated Area (1/eV)"
     else:
-        trapz_fn = getattr(np, "trapezoid", getattr(np, "trapz", None))
         def y_calc(df: pd.DataFrame) -> np.ndarray:
             idx = df["spectrum_index"].astype(int).values
-            areas = [max(float(abs(trapz_fn(ary_intensity[i], x=ary_energy[i]))) if ary_energy is not None
-                         else float(np.sum(ary_intensity[i])), 1e-4) for i in idx]
+            areas = [
+                max(
+                    float(integrate_spectral_flux(ary_intensity[i], ary_energy[i])),
+                    1e-4,
+                )
+                if ary_energy is not None
+                else max(float(np.sum(ary_intensity[i])), 1e-4)
+                for i in idx
+            ]
             return np.max(ary_intensity[idx], axis=1) / np.array(areas)
         d_lbl = "Max Intensity / Spectrum Integrated Area (1/eV)"
     return _render_intensity_time_series(df_meta, y_calc, cfg, region, die,
@@ -1084,9 +1091,11 @@ def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_ener
     die_to_group = {k: g for g, d_list in die_groups.items() for d in d_list
                     for k in (d, int(d) if str(d).isdigit() else d, str(d))}
 
-    trapz_fn, idx = getattr(np, "trapezoid", getattr(np, "trapz", None)), work_df["spectrum_index"].astype(int).values
+    idx = work_df["spectrum_index"].astype(int).values
     work_df["time"] = pd.to_datetime(work_df["time"])
-    work_df["total_flux"] = np.abs(trapz_fn(ary_intensity[idx], x=ary_energy[idx], axis=1))
+    work_df["total_flux"] = integrate_spectral_flux(
+        ary_intensity[idx], ary_energy[idx], axis=-1
+    )
     work_df["_int_sum"] = np.sum(ary_intensity[idx], axis=1)
 
     agg = work_df.groupby(["measurement_id", "die", "tool", "time"], as_index=False).agg(

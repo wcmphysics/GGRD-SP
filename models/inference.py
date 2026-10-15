@@ -14,7 +14,7 @@ import torch.nn as nn
 
 from models.film import prepare_film_condition_tensor
 from utility.patching import extract_sliding_windows, reconstruct_from_patches
-from utility.quantification import compute_die_total_flux
+from utility.flux import compute_die_total_flux
 
 
 def _repeat_cond(c_dict: dict[str, torch.Tensor] | None, n: int) -> dict[str, torch.Tensor] | None:
