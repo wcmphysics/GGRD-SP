@@ -216,7 +216,7 @@ def train_model_region(
         "patience": "early_stopping_patience",
     }
     for alias, canonical in disallowed_aliases.items():
-        if alias in cfg and canonical not in cfg:
+        if alias in cfg:
             raise KeyError(
                 f"Missing required canonical key '{canonical}'. "
                 f"Found deprecated alias '{alias}'."

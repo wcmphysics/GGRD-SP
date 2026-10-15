@@ -419,13 +419,13 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         self.assertEqual(idx_2, int(np.argmin(np.abs(self.energy - 77.0))))
 
     def test_strategy_direct_missing_points_raises(self) -> None:
-        """Strategy 'direct' without endpoint coordinates parameter must raise informative ValueError."""
+        """Strategy 'direct' without endpoints must raise ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(self.energy, self.intensity, config={"strategy": "direct"})
         self.assertIn("no endpoint coordinates", str(ctx.exception))
 
     def test_strategy_direct_invalid_points_format_raises(self) -> None:
-        """Strategy 'direct' with malformed energy_endpoints parameter must raise informative ValueError."""
+        """Strategy 'direct' with malformed endpoints must raise ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(
                 self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (72.0,)}
@@ -458,11 +458,21 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
 
     def test_strategy_direct_reversed_order_supported(self) -> None:
         """Strategy 'direct' handles descending or ascending coordinate order consistently."""
+        cfg_a = {
+            "strategy": "direct",
+            "energy_endpoints": (72.0, 78.0),
+            "average_width_ev": 0.0,
+        }
+        cfg_b = {
+            "strategy": "direct",
+            "energy_endpoints": (78.0, 72.0),
+            "average_width_ev": 0.0,
+        }
         idx_1a, idx_2a, i_1a, i_2a = determine_shirley_endpoints(
-            self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (72.0, 78.0), "average_width_ev": 0.0}
+            self.energy, self.intensity, config=cfg_a
         )
         idx_1b, idx_2b, i_1b, i_2b = determine_shirley_endpoints(
-            self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (78.0, 72.0), "average_width_ev": 0.0}
+            self.energy, self.intensity, config=cfg_b
         )
         self.assertEqual(idx_1a, idx_1b)
         self.assertEqual(idx_2a, idx_2b)

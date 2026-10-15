@@ -137,7 +137,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
 
     def test_disabled_scheduler_preserves_constant_lr(self) -> None:
-        """Verify use_learning_rate_scheduler=False keeps learning rate constant."""
+        """Verify scheduler disabled keeps learning rate constant."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-3
         config = {
@@ -177,7 +177,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertLess(res["history"]["learning_rate"][-1], init_lr)
 
     def test_deprecated_aliases_raise_keyerror(self) -> None:
-        """Verify passing deprecated aliases raises KeyError with canonical requirement."""
+        """Verify passing deprecated aliases raises KeyError."""
         model = DummyConstantModel(n_points=self.n_points)
         for deprecated_key in ["lr", "lr_scheduler", "lr_factor", "lr_patience", "lr_min"]:
             config = {
@@ -191,7 +191,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
             self.assertIn("Missing required canonical key", str(ctx.exception))
 
     def test_scheduler_canonical_configuration(self) -> None:
-        """Verify comprehensive canonical scheduler parameter names are recognized properly."""
+        """Verify canonical scheduler parameters are recognized properly."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-2
         config = {
@@ -243,7 +243,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
             )
 
     def test_warning_emitted_when_early_stopping_patience_le_lr_scheduler_patience(self) -> None:
-        """Verify UserWarning is emitted when early_stopping_patience <= learning_rate_scheduler_patience."""
+        """Verify warning when stopping patience <= scheduler patience."""
         model = DummyConstantModel(n_points=self.n_points)
         config = {
             "model": model,

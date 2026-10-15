@@ -170,7 +170,7 @@ def compute_die_total_flux(
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray | None = None,
 ) -> dict[tuple[str, int], float]:
-    """Calculate the total integrated spectral flux for each (measurement_id, die).
+    """Calculate total integrated spectral flux for (measurement_id, die).
 
     If 'die_flux' is already present in df_meta, it is retrieved directly.
     Otherwise, fluxes are computed by numerical integration across regional

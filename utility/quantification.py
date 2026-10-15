@@ -268,7 +268,7 @@ def determine_shirley_endpoints(
     elif norm_strategy in ("edge", "bounds"):
         idx_1, idx_2 = 0, n_pts - 1
     elif norm_strategy in ("direct", "custom"):
-        # Resolve direct energy endpoints from per-region config or top-level config
+        # Resolve direct energy endpoints from per-region or top-level config
         direct_pts = (
             region_cfg.get("energy_endpoints")
             or region_cfg.get("points")
