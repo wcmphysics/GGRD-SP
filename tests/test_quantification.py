@@ -399,7 +399,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
 
     def test_strategy_direct_with_mirror_padding_averaging(self) -> None:
         """Strategy 'direct' with averaging applies mirror reflection padding correctly."""
-        cfg = {"strategy": "direct", "points": (70.0, 80.0), "average_width_ev": 1.0}
+        cfg = {"strategy": "direct", "energy_endpoints": (70.0, 80.0), "average_width_ev": 1.0}
         idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
         self.assertEqual(idx_1, 0)
         self.assertEqual(idx_2, len(self.intensity) - 1)
@@ -411,7 +411,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         cfg = {
             "region": "Ti2p",
             "region_endpoint_config": {
-                "Ti2p": {"strategy": "direct", "points": (73.0, 77.0), "average_ev": 0.5},
+                "Ti2p": {"strategy": "direct", "energy_endpoints": (73.0, 77.0), "average_width_ev": 0.5},
             },
         }
         idx_1, idx_2, _, _ = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
@@ -419,16 +419,16 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         self.assertEqual(idx_2, int(np.argmin(np.abs(self.energy - 77.0))))
 
     def test_strategy_direct_missing_points_raises(self) -> None:
-        """Strategy 'direct' without points parameter must raise informative ValueError."""
+        """Strategy 'direct' without endpoint coordinates parameter must raise informative ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(self.energy, self.intensity, config={"strategy": "direct"})
         self.assertIn("no endpoint coordinates", str(ctx.exception))
 
     def test_strategy_direct_invalid_points_format_raises(self) -> None:
-        """Strategy 'direct' with malformed points parameter must raise informative ValueError."""
+        """Strategy 'direct' with malformed energy_endpoints parameter must raise informative ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(
-                self.energy, self.intensity, config={"strategy": "direct", "points": (72.0,)}
+                self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (72.0,)}
             )
         self.assertIn("expected tuple or list of 2 numbers", str(ctx.exception))
 
@@ -436,7 +436,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         """Strategy 'direct' with identical energy points resolving to same index must raise ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(
-                self.energy, self.intensity, config={"strategy": "direct", "points": (75.0, 75.0)}
+                self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (75.0, 75.0)}
             )
         self.assertIn("degenerate index range", str(ctx.exception))
 
@@ -444,7 +444,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         """Strategy 'direct' with points outside spectral range must raise ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(
-                self.energy, self.intensity, config={"strategy": "direct", "points": (10.0, 20.0)}
+                self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (10.0, 20.0)}
             )
         self.assertIn("outside spectral energy range", str(ctx.exception))
 
@@ -452,17 +452,17 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         """Strategy 'direct' with NaN or Inf coordinates must raise ValueError."""
         with self.assertRaises(ValueError) as ctx:
             determine_shirley_endpoints(
-                self.energy, self.intensity, config={"strategy": "direct", "points": (float("nan"), 75.0)}
+                self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (float("nan"), 75.0)}
             )
-        self.assertIn("non-finite points coordinates", str(ctx.exception))
+        self.assertIn("non-finite energy_endpoints coordinates", str(ctx.exception))
 
     def test_strategy_direct_reversed_order_supported(self) -> None:
         """Strategy 'direct' handles descending or ascending coordinate order consistently."""
         idx_1a, idx_2a, i_1a, i_2a = determine_shirley_endpoints(
-            self.energy, self.intensity, config={"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 0.0}
+            self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (72.0, 78.0), "average_width_ev": 0.0}
         )
         idx_1b, idx_2b, i_1b, i_2b = determine_shirley_endpoints(
-            self.energy, self.intensity, config={"strategy": "direct", "points": (78.0, 72.0), "average_width_ev": 0.0}
+            self.energy, self.intensity, config={"strategy": "direct", "energy_endpoints": (78.0, 72.0), "average_width_ev": 0.0}
         )
         self.assertEqual(idx_1a, idx_1b)
         self.assertEqual(idx_2a, idx_2b)
@@ -474,7 +474,7 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
         bg_dir, area_dir = calculate_shirley_background(
             self.energy,
             self.intensity,
-            config={"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 1.0},
+            config={"strategy": "direct", "energy_endpoints": (72.0, 78.0), "average_width_ev": 1.0},
         )
         self.assertTrue(np.all(bg_dir <= self.intensity + 1e-6))
         self.assertGreater(area_dir, 0.0)

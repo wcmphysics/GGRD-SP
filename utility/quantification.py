@@ -225,93 +225,81 @@ def determine_shirley_endpoints(
     per_region_map = cfg.get("region_endpoint_config") or {}
     region_cfg = per_region_map.get(region, {}) if isinstance(per_region_map, dict) else {}
 
-    # 1. Strategy resolution: Per-region > Specific user strategy > Top-level mappings > Default
-    strategy = None
-    if "strategy" in region_cfg:
-        strategy = region_cfg["strategy"]
-    elif "endpoint_strategy" in region_cfg:
-        strategy = region_cfg["endpoint_strategy"]
+    # 1. Strategy resolution: Per-region > Specific user strategy > Default
+    strategy = region_cfg.get(
+        "strategy",
+        cfg.get(
+            "strategy",
+            cfg.get("default_endpoint_strategy", "minima"),
+        ),
+    )
 
-    if strategy is None:
-        strat_dict = cfg.get("endpoint_strategies") or cfg.get("strategies")
-        if isinstance(strat_dict, dict) and region in strat_dict:
-            strategy = strat_dict[region]
-
-    if strategy is None:
-        strategy = cfg.get("strategy", cfg.get("endpoint_strategy"))
-
-    if strategy is None:
-        strategy = cfg.get("default_endpoint_strategy", "minima")
-
-    # 2. Averaging width resolution: Per-region (including None/0.0) > Top-level mappings > Defaults
+    # 2. Averaging width resolution: Per-region > Top-level > Default
     if "average_width_ev" in region_cfg:
         avg_ev = region_cfg["average_width_ev"]
     elif "average_ev" in region_cfg:
         avg_ev = region_cfg["average_ev"]
+    elif "average_width_ev" in cfg:
+        avg_ev = cfg["average_width_ev"]
     else:
-        avg_dict = cfg.get("endpoint_averages") or cfg.get("average_evs")
-        if isinstance(avg_dict, dict) and region in avg_dict:
-            avg_ev = avg_dict[region]
-        else:
-            avg_ev = cfg.get(
-                "average_width_ev",
-                cfg.get("average_ev", cfg.get("endpoint_average_ev", cfg.get("default_endpoint_average_ev", 1.0))),
-            )
+        avg_ev = cfg.get(
+            "default_endpoint_average_ev",
+            cfg.get("average_ev", 1.0),
+        )
 
-    # 3. Smoothing flag resolution: Per-region > General smoothing
-    if "smooth_search" in region_cfg:
-        smooth_search = bool(region_cfg["smooth_search"])
-    elif "smooth_search" in cfg:
-        smooth_search = bool(cfg["smooth_search"])
-    elif "smooth_endpoints_search" in cfg:
-        smooth_search = bool(cfg["smooth_endpoints_search"])
-    else:
-        smooth_search = False
+    # 3. Smoothing flag resolution: Per-region > General smoothing > Default
+    smooth_search = bool(
+        region_cfg.get(
+            "smooth_search",
+            cfg.get(
+                "smooth_search",
+                cfg.get("smooth_endpoints_search", False),
+            ),
+        )
+    )
 
     norm_strategy = str(strategy).lower().strip()
 
     # 4. Strategy execution
-    if norm_strategy in ("minima", "directional_minima", "special"):
-        idx_1, idx_2 = _find_minima_endpoints(energy, intensity, smooth_search=smooth_search, region=region)
-    elif norm_strategy in ("edge", "bounds", "edge_points", "full"):
-        idx_1, idx_2 = 0, n_pts - 1
-    elif norm_strategy in ("direct", "manual", "custom", "points"):
-        # Resolve direct points from per-region config or top-level config
-        direct_pts = (
-            region_cfg.get("points")
-            or region_cfg.get("direct_points")
-            or region_cfg.get("energy_limits")
-            or region_cfg.get("limits")
+    if norm_strategy in ("minima", "directional_minima"):
+        idx_1, idx_2 = _find_minima_endpoints(
+            energy, intensity, smooth_search=smooth_search, region=region
         )
-        if direct_pts is None:
-            pts_dict = cfg.get("points") or cfg.get("direct_points") or cfg.get("energy_limits")
-            if isinstance(pts_dict, dict):
-                direct_pts = pts_dict.get(region)
-            elif isinstance(pts_dict, (tuple, list)):
-                direct_pts = pts_dict
+    elif norm_strategy in ("edge", "bounds"):
+        idx_1, idx_2 = 0, n_pts - 1
+    elif norm_strategy in ("direct", "custom"):
+        # Resolve direct energy endpoints from per-region config or top-level config
+        direct_pts = (
+            region_cfg.get("energy_endpoints")
+            or region_cfg.get("points")
+            or cfg.get("energy_endpoints")
+            or cfg.get("points")
+        )
+        if isinstance(direct_pts, dict):
+            direct_pts = direct_pts.get(region)
 
         if direct_pts is None:
             raise ValueError(
-                f"Strategy '{strategy}' specified for region '{region}', but no endpoint coordinates "
-                f"('points': (e_start, e_end)) were provided in config."
+                f"Strategy '{strategy}' specified for region '{region}', but no endpoint "
+                f"coordinates ('energy_endpoints': (e_start, e_end)) were provided in config."
             )
         if not isinstance(direct_pts, (tuple, list)) or len(direct_pts) != 2:
             raise ValueError(
-                f"Invalid points format for region '{region}': expected tuple or list of 2 numbers (e_start, e_end), "
-                f"got {direct_pts}"
+                f"Invalid energy_endpoints format for region '{region}': expected tuple or list "
+                f"of 2 numbers (e_start, e_end), got {direct_pts}"
             )
 
         p1, p2 = float(direct_pts[0]), float(direct_pts[1])
         if not (np.isfinite(p1) and np.isfinite(p2)):
             raise ValueError(
-                f"Invalid non-finite points coordinates for region '{region}': got ({p1}, {p2})"
+                f"Invalid non-finite energy_endpoints coordinates for region '{region}': got ({p1}, {p2})"
             )
 
         e_min, e_max = float(min(energy[0], energy[-1])), float(max(energy[0], energy[-1]))
         p_low, p_high = min(p1, p2), max(p1, p2)
         if p_high <= e_min or p_low >= e_max:
             raise ValueError(
-                f"Direct points ({p1}, {p2}) lie entirely outside spectral energy range "
+                f"Direct energy_endpoints ({p1}, {p2}) lie entirely outside spectral energy range "
                 f"[{e_min:.2f}, {e_max:.2f}] for region '{region}'."
             )
 
@@ -320,9 +308,9 @@ def determine_shirley_endpoints(
         idx_1, idx_2 = min(idx_a, idx_b), max(idx_a, idx_b)
         if idx_1 >= idx_2:
             raise ValueError(
-                f"Direct points ({p1}, {p2}) resolve to degenerate index range [idx_1={idx_1}, idx_2={idx_2}] "
-                f"on energy span [{energy[0]:.2f}, {energy[-1]:.2f}] for region '{region}'. "
-                f"Endpoints must map to distinct spectral indices."
+                f"Direct energy_endpoints ({p1}, {p2}) resolve to degenerate index range "
+                f"[idx_1={idx_1}, idx_2={idx_2}] on energy span [{energy[0]:.2f}, {energy[-1]:.2f}] "
+                f"for region '{region}'. Endpoints must map to distinct spectral indices."
             )
     else:
         raise ValueError(
