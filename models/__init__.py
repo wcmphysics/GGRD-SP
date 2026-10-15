@@ -18,6 +18,7 @@ from models.dataset import (
 )
 from models.deeplabv3 import DeepLabV3
 from models.film import FiLMGenerator, prepare_film_condition_tensor
+from models.layers import SafeBatchNorm1d, SafeReflectionPad1d
 from models.gp_flux import (
     DieFluxExactGPModel,
     SigmoidStepKernel,
@@ -59,6 +60,8 @@ __all__ = [
     "ResidualUNet1D",
     "ConventionalUNet1D",
     "DeepLabV3",
+    "SafeReflectionPad1d",
+    "SafeBatchNorm1d",
     "FiLMGenerator",
     "instantiate_model",
     # Cost

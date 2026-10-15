@@ -20,41 +20,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class _SafeReflectionPad1d(nn.Module):
-    """Dynamically applies reflection padding when length L > pad.
-
-    Falls back gracefully to zero padding when L <= pad to prevent
-    PyTorch assertion crashes.
-    """
-
-    def __init__(self, pad: int) -> None:
-        super().__init__()
-        self.pad = int(pad)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[-1] > self.pad:
-            return F.pad(x, (self.pad, self.pad), mode="reflect")
-        return F.pad(x, (self.pad, self.pad), mode="constant", value=0.0)
-
-
-class _SafeBatchNorm1d(nn.BatchNorm1d):
-    """BatchNorm1d that safely handles single-element tensors.
-
-    When batch_size * length <= 1 during training (such as following
-    global average pooling when batch_size == 1 or on the trailing batch
-    of a dataset), PyTorch's standard BatchNorm raises ValueError
-    because sample variance is undefined. This class falls back to
-    running statistics (eval mode) without throwing an exception.
-    """
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.training and (x.size(0) * x.size(-1) <= 1) and self.running_mean is not None:
-            return F.batch_norm(
-                x, self.running_mean, self.running_var, self.weight, self.bias,
-                training=False, momentum=self.momentum, eps=self.eps,
-            )
-        return super().forward(x)
+from models.layers import (
+    SafeBatchNorm1d,
+    SafeReflectionPad1d,
+    _SafeBatchNorm1d,
+    _SafeReflectionPad1d,
+)
 
 
 def _build_conv1d_layer(

@@ -13,22 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.film import FiLMGenerator
-
-
-class _SafeReflectionPad1d(nn.Module):
-    """Dynamically applies reflection padding when sequence length L > pad.
-
-    Falls back gracefully to constant zero padding when L <= pad.
-    """
-
-    def __init__(self, pad: int) -> None:
-        super().__init__()
-        self.pad = int(pad)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[-1] > self.pad:
-            return F.pad(x, (self.pad, self.pad), mode="reflect")
-        return F.pad(x, (self.pad, self.pad), mode="constant", value=0.0)
+from models.layers import SafeReflectionPad1d, _SafeReflectionPad1d
 
 
 class ResNet1D(nn.Module):
