@@ -205,6 +205,23 @@ def train_model_region(
     disallowed_aliases = {
         "lr": "learning_rate",
         "batch": "batch_size",
+        "batch_sizes": "batch_size",
+        "window_size_choices": "window_size",
+        "kernel_sizes": "kernel_size",
+        "depths": "depth",
+        "resnet_channels": "resnet_channel",
+        "residual_unet_channels": "residual_unet_channel",
+        "unet_channels": "unet_channel",
+        "deeplabv3_backbone_channels": "deeplabv3_backbone_channel",
+        "deeplabv3_aspp_channels": "deeplabv3_aspp_channel",
+        "hidden_channels": "resnet_channel",
+        "hidden_channel": "resnet_channel",
+        "base_channels": "residual_unet_channel / unet_channel",
+        "base_channel": "residual_unet_channel / unet_channel",
+        "backbone_channels": "deeplabv3_backbone_channel",
+        "backbone_channel": "deeplabv3_backbone_channel",
+        "aspp_channels": "deeplabv3_aspp_channel",
+        "aspp_channel": "deeplabv3_aspp_channel",
         "epoch": "epochs",
         "num_epochs": "epochs",
         "l2": "l2_weight",
@@ -219,13 +236,38 @@ def train_model_region(
         if alias in cfg:
             raise KeyError(
                 f"Missing required canonical key '{canonical}'. "
-                f"Found deprecated alias '{alias}'."
+                f"Found deprecated or plural alias '{alias}'."
             )
 
     model_type = str(cfg.get("model_type", "resnet")).lower()
     use_sw = bool(cfg.get("use_sliding_window", False))
-    epochs = int(cfg.get("epochs", 50))
-    batch_size = int(cfg.get("batch_size", 16))
+
+    raw_epochs = cfg.get("epochs", 50)
+    if isinstance(raw_epochs, bool) or not isinstance(raw_epochs, int) or raw_epochs <= 0:
+        raise ValueError(f"epochs must be a positive integer, got {raw_epochs!r}")
+    epochs = raw_epochs
+
+    raw_batch_size = cfg.get("batch_size", 16)
+    if isinstance(raw_batch_size, bool) or not isinstance(raw_batch_size, int) or raw_batch_size <= 0:
+        raise ValueError(f"batch_size must be a positive integer, got {raw_batch_size!r}")
+    batch_size = raw_batch_size
+
+    for int_key in (
+        "window_size_choice",
+        "window_size",
+        "stride",
+        "depth",
+        "resnet_channel",
+        "residual_unet_channel",
+        "unet_channel",
+        "deeplabv3_backbone_channel",
+        "deeplabv3_aspp_channel",
+    ):
+        if int_key in cfg:
+            raw_val = cfg[int_key]
+            if isinstance(raw_val, bool) or not isinstance(raw_val, int) or raw_val < 1:
+                raise ValueError(f"{int_key} must be a positive integer, got {raw_val!r}")
+
     learning_rate = float(cfg.get("learning_rate", 1e-3))
     weight_decay = float(cfg.get("weight_decay", 0.0))
     l2_weight = float(cfg.get("l2_weight", 1e-4))
@@ -293,9 +335,13 @@ def train_model_region(
     )
 
     full_len = int(train_dataset[0]["x"].shape[-1])
+    explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
     if use_sw:
         is_p = isinstance(train_dataset, SpectrumPatchDataset)
-        w_size = train_dataset.window_size if is_p else min(full_len, max(3, int(cfg.get("window_size", 15))))
+        ws_cfg_val = explicit_ws if explicit_ws is not None else 15
+        if ws_cfg_val < 3:
+            raise ValueError(f"window_size must be >= 3 when sliding window is active, got {ws_cfg_val}")
+        w_size = train_dataset.window_size if is_p else min(full_len, ws_cfg_val)
         s_step = train_dataset.stride if is_p else max(1, min(w_size, int(cfg.get("stride", max(1, w_size // 2)))))
         train_ds = train_dataset if is_p else SpectrumPatchDataset(train_dataset, window_size=w_size, stride=s_step)
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=default_spectrum_collate)
@@ -308,6 +354,16 @@ def train_model_region(
         )
         if not has_val:
             val_loader = None
+
+    effective_max_k = min(seq_len, explicit_ws) if explicit_ws is not None else seq_len
+    if "kernel_size" in cfg:
+        raw_k = cfg["kernel_size"]
+        if isinstance(raw_k, bool) or not isinstance(raw_k, int) or raw_k <= 0 or raw_k % 2 == 0:
+            raise ValueError(f"kernel_size must be a positive odd integer, got {raw_k!r}")
+        if raw_k > effective_max_k:
+            raise ValueError(
+                f"kernel_size ({raw_k}) cannot be larger than window_size / n_points ({effective_max_k})."
+            )
 
     model = cfg.get("model")
     if model is None:

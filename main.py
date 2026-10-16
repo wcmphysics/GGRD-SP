@@ -129,25 +129,30 @@ def main() -> None:
         "hidden_dim": 32,
     }
 
-    # Stage 7: Neural network training and Bayesian optimization configuration
+    # Stage 7A: Bayesian optimization configuration (plural search keys)
+    bayesian_opt_config = {
+        "use_bayesian_opt": False,
+        "num_trials": 5,
+        "epochs_per_trial": 15,
+        "verbose": True,
+        "learning_rate_bounds": (1e-4, 1e-2),
+        "l2_bounds": (1e-6, 1e-2),
+        "batch_sizes": [16, 32, 64],
+        "window_size_choices": [15],
+        "kernel_sizes": [3, 5, 7],
+        "resnet_channels": [16, 32, 64],
+        "residual_unet_channels": [16, 32],
+        "unet_channels": [16, 32],
+        "deeplabv3_backbone_channels": [16, 32, 64],
+        "deeplabv3_aspp_channels": [16, 32, 64],
+        "depths": [2, 3],
+    }
+
+    # Stage 7B: Neural network training configuration (singular keys)
     training_config = {
         "model_type": model_type,
-        "use_sliding_window": use_sliding_window,
         "use_film": film_config["use_film"],
         "film_config": film_config,
-        "use_bayesian_opt": False,
-        "bayesian_opt_config": {
-            "num_trials": 5,
-            "epochs_per_trial": 15,
-            "verbose": True,
-            "learning_rate_bounds": (1e-4, 1e-2),
-            "l2_bounds": (1e-6, 1e-2),
-            "batch_sizes": [16, 32, 64],
-            "kernel_sizes": [3, 5, 7],
-            "hidden_channels": [16, 32, 64],
-            "base_channels": [16, 32],
-            "depths": [2, 3],
-        },
         "train_config": {
             "epochs": 100,
             "batch_size": 16,
@@ -160,8 +165,11 @@ def main() -> None:
             "learning_rate_scheduler_patience": 10,
             "early_stopping_patience": 20,
             "verbose": True,
-            "hidden_channels": 32,
-            "base_channels": 16,
+            "resnet_channel": 32,
+            "residual_unet_channel": 16,
+            "unet_channel": 16,
+            "deeplabv3_backbone_channel": 32,
+            "deeplabv3_aspp_channel": 32,
         },
         "region_configs": {
             "Al2p": {"batch_size": 16, "learning_rate": 1e-4},
@@ -296,7 +304,10 @@ def main() -> None:
     # =========================================================================
     print(f"\n=== Stage 7: Neural Model Training ({model_type}) ===")
     training_results = models.perform_model_training_and_bayesian_optimization(
-        regional_datasets, criterion, config=training_config
+        regional_datasets,
+        criterion,
+        config=training_config,
+        bayesian_opt_config=bayesian_opt_config,
     )
     print("Model training completed across all regions.")
 
