@@ -46,7 +46,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_predict_sliding_window_spectrum(self) -> None:
         """Test single spectrum prediction and full length reconstruction."""
-        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5}
@@ -55,7 +55,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
-        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
         crit = SpectralLoss(l2_weight=0.0)
         loss = evaluate_sliding_window(
             model=model,
@@ -76,7 +76,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
                 "use_sliding_window": True,
                 "window_size": 15,
                 "stride": 5,
-                "hidden_channels": 8,
+                "resnet_channel": 8,
                 "kernel_size": 3,
                 "epochs": 3,
                 "batch_size": 16,
@@ -100,7 +100,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
                 "epochs_per_trial": 2,
                 "window_size_choices": [11, 15],
                 "kernel_sizes": [3],
-                "hidden_channels": [8],
+                "resnet_channels": [8],
                 "seed": 42,
             },
         )
@@ -109,9 +109,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         self.assertEqual(len(ax_res["trials_data"]), 2)
 
     def test_optimize_sliding_window_invalid_parameters(self) -> None:
-        """Verify that Ax optimization raises ValueError on invalid
-        parameters.
-        """
+        """Verify that Ax optimization raises errors on invalid parameters."""
         with self.assertRaises(ValueError):
             optimize_model_hyperparameters(
                 self.train_ds,
@@ -130,12 +128,109 @@ class TestSlidingWindowPipeline(unittest.TestCase):
                 self.val_ds,
                 config={"model_type": "resnet", "l2_bounds": (-1e-4, 1e-2)},
             )
+        # Non-iterable window_size_choices / batch_sizes
+        with self.assertRaises(TypeError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "use_sliding_window": True, "window_size_choices": 15},
+            )
+        with self.assertRaises(TypeError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "batch_sizes": 16},
+            )
+        # None input raises ValueError
+        with self.assertRaises(ValueError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size_choices": None},
+            )
+        with self.assertRaises(ValueError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "resnet_channels": None},
+            )
+        # kernel_size larger than window_size raises ValueError (both SW on and off)
+        with self.assertRaises(ValueError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={
+                    "model_type": "resnet",
+                    "use_sliding_window": True,
+                    "window_size_choices": [5],
+                    "kernel_sizes": [7],
+                },
+            )
+        with self.assertRaises(ValueError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={
+                    "model_type": "resnet",
+                    "use_sliding_window": False,
+                    "window_size_choices": [5],
+                    "kernel_sizes": [7],
+                },
+            )
+        # Dict passed to choice/range raises TypeError
+        with self.assertRaises(TypeError):
+            optimize_model_hyperparameters(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size_choices": {15: "a"}},
+            )
+        # Singular keys inside Bayesian optimization config raise KeyError
+        for bad_singular_key in ("window_size", "window_size_choice", "batch_size", "resnet_channel"):
+            with self.assertRaises(KeyError):
+                optimize_model_hyperparameters(
+                    self.train_ds,
+                    self.val_ds,
+                    config={"model_type": "resnet", bad_singular_key: 15},
+                )
+
+    def test_train_model_region_invalid_parameters(self) -> None:
+        """Verify strict integer and kernel_size <= window_size checks when BO is off."""
+        with self.assertRaises(ValueError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "batch_size": [16]},
+            )
+        with self.assertRaises(ValueError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size": [15]},
+            )
+        with self.assertRaises(ValueError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size_choice": "15"},
+            )
+        with self.assertRaises(ValueError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size": 5, "kernel_size": 7},
+            )
+        with self.assertRaises(KeyError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={"model_type": "resnet", "window_size_choices": [15]},
+            )
 
     def test_parameter_packaging_config_dict(self) -> None:
         """Verify predict and evaluate functions with config dictionaries
         adhering to Rule 7.
         """
-        model = ResNet1D(n_points=15, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5, "batch_size": 32}

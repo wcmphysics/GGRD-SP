@@ -27,7 +27,7 @@ class TestUNet1DArchitecture(unittest.TestCase):
     def test_output_shapes(self) -> None:
         """Verify 1D U-Net strictly enforces (batch, 1, seq_len)."""
         model = UNet1D(
-            n_points=100, config={"base_channels": 8, "depth": 3, "kernel_size": 3}
+            n_points=100, config={"residual_unet_channel": 8, "depth": 3, "kernel_size": 3}
         )
 
         # 2D input should raise ValueError
@@ -48,7 +48,7 @@ class TestUNet1DArchitecture(unittest.TestCase):
         for seq_len in odd_lengths:
             model = UNet1D(
                 n_points=seq_len,
-                config={"base_channels": 8, "depth": 3, "kernel_size": 3},
+                config={"residual_unet_channel": 8, "depth": 3, "kernel_size": 3},
             )
             x = torch.randn(2, 1, seq_len)
             y = model(x)
@@ -59,10 +59,10 @@ class TestUNet1DArchitecture(unittest.TestCase):
     def test_direct_vs_residual_mode(self) -> None:
         """Verify both residual shortcut and direct prediction modes operate correctly."""
         model_res = UNet1D(
-            n_points=40, config={"residual": True, "base_channels": 8, "depth": 2}
+            n_points=40, config={"residual": True, "residual_unet_channel": 8, "depth": 2}
         )
         model_dir = UNet1D(
-            n_points=40, config={"residual": False, "base_channels": 8, "depth": 2}
+            n_points=40, config={"residual": False, "unet_channel": 8, "depth": 2}
         )
 
         x = torch.randn(2, 1, 40)
@@ -76,7 +76,7 @@ class TestUNet1DArchitecture(unittest.TestCase):
         """Verify L2 penalty calculates positive scalar on conv weights."""
         model = UNet1D(
             n_points=50,
-            config={"base_channels": 8, "depth": 2, "use_batch_norm": True},
+            config={"residual_unet_channel": 8, "depth": 2, "use_batch_norm": True},
         )
         l2_val = model.get_l2_regularization()
         self.assertIsInstance(l2_val, torch.Tensor)
@@ -109,6 +109,8 @@ class TestUNet1DArchitecture(unittest.TestCase):
             UNet1D(n_points=50, config={"depth": 0})  # depth < 1
         with self.assertRaises(ValueError):
             UNet1D(n_points=7, config={"depth": 3})  # 7 < 2**3
+        with self.assertRaises(ValueError):
+            UNet1D(n_points=8, config={"depth": 2, "kernel_size": 9})  # kernel_size > n_points
 
 
 class TestUNetTrainingAndPipeline(unittest.TestCase):
@@ -148,7 +150,7 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
                 "model_type": "residual_unet",
                 "epochs": 3,
                 "batch_size": 4,
-                "base_channels": 8,
+                "residual_unet_channel": 8,
                 "depth": 2,
                 "kernel_size": 3,
                 "learning_rate": 1e-3,

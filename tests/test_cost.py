@@ -115,7 +115,7 @@ class TestCostFunctions(unittest.TestCase):
                 "epochs": 1,
                 "batch_size": 2,
                 "model_type": "resnet",
-                "hidden_channels": 4,
+                "resnet_channel": 4,
             },
         )
         self.assertIn("best_val_loss", res)

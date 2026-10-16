@@ -21,32 +21,34 @@ class TestResNet1D(unittest.TestCase):
 
     def test_cnn_forward_shape_2d_raises(self) -> None:
         """Test that 2D tensor input raises ValueError."""
-        model = ResNet1D(n_points=100, config={"hidden_channels": 16, "kernel_size": 5})
+        model = ResNet1D(n_points=100, config={"resnet_channel": 16, "kernel_size": 5})
         x = torch.randn(8, 100)
         with self.assertRaises(ValueError):
             model(x)
 
     def test_cnn_forward_shape_3d(self) -> None:
         """Test forward pass with 3D tensor input (batch, 1, n_points)."""
-        model = ResNet1D(n_points=80, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=80, config={"resnet_channel": 8, "kernel_size": 3})
         x = torch.randn(4, 1, 80)
         out = model(x)
         self.assertEqual(out.shape, (4, 1, 80))
 
     def test_invalid_kernel_size_raises(self) -> None:
-        """Test that even or non-positive kernel size raises ValueError."""
+        """Test that even, non-positive, or larger-than-n_points kernel size raises ValueError."""
         with self.assertRaises(ValueError):
             ResNet1D(n_points=50, config={"kernel_size": 4})
         with self.assertRaises(ValueError):
             ResNet1D(n_points=50, config={"kernel_size": 0})
         with self.assertRaises(ValueError):
             ResNet1D(n_points=50, config={"kernel_size": -3})
+        with self.assertRaises(ValueError):
+            ResNet1D(n_points=5, config={"kernel_size": 7})
 
     def test_l2_regularization_targets_weights_only(self) -> None:
         """Test that L2 weight penalty only targets conv weights, not biases or
         BatchNorm.
         """
-        model = ResNet1D(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=50, config={"resnet_channel": 8, "kernel_size": 3})
         l2_reg = model.get_l2_regularization()
         self.assertIsInstance(l2_reg, torch.Tensor)
         self.assertGreater(l2_reg.item(), 0.0)
@@ -115,7 +117,7 @@ class TestTrainingAndInference(unittest.TestCase):
         of l2_weight.
         """
         _, val_loader = create_dataloaders(self.train_ds, self.val_ds, config={"batch_size": 4})
-        model = ResNet1D(n_points=50, config={"hidden_channels": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=50, config={"resnet_channel": 8, "kernel_size": 3})
 
         crit_zero_l2 = SpectralLoss(l2_weight=0.0)
         crit_large_l2 = SpectralLoss(l2_weight=10.0)
@@ -134,7 +136,7 @@ class TestTrainingAndInference(unittest.TestCase):
                 "model_type": "resnet",
                 "epochs": 5,
                 "batch_size": 8,
-                "hidden_channels": 8,
+                "resnet_channel": 8,
                 "kernel_size": 3,
                 "learning_rate": 1e-3,
                 "l2_weight": 1e-5,
@@ -170,7 +172,7 @@ class TestTrainingAndInference(unittest.TestCase):
                 "model_type": "resnet",
                 "epochs": 2,
                 "batch_size": 8,
-                "hidden_channels": 8,
+                "resnet_channel": 8,
                 "kernel_size": 3,
             },
         )["model"]
@@ -198,8 +200,8 @@ class TestTrainingAndInference(unittest.TestCase):
                 "num_trials": 2,
                 "epochs_per_trial": 2,
                 "kernel_sizes": [3, 5],
-                "hidden_channels": [8, 16],
-                "batch_size": 8,
+                "resnet_channels": [8, 16],
+                "batch_sizes": [8],
                 "seed": 42,
             },
         )
@@ -208,6 +210,7 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertIn("best_val_loss", ax_res)
         self.assertEqual(len(ax_res["trials_data"]), 2)
         self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
+        self.assertIn(ax_res["best_parameters"]["resnet_channel"], [8, 16])
 
 
 if __name__ == "__main__":

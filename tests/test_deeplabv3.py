@@ -26,8 +26,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         model = DeepLabV3(
             n_points=100,
             config={
-                "backbone_channels": 16,
-                "aspp_channels": 16,
+                "deeplabv3_backbone_channel": 16,
+                "deeplabv3_aspp_channel": 16,
                 "kernel_size": 3,
                 "multi_grid": (1, 2, 4),
                 "aspp_rates": (2, 4, 6),
@@ -49,8 +49,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         model = DeepLabV3(
             n_points=100,
             config={
-                "backbone_channels": 16,
-                "aspp_channels": 16,
+                "deeplabv3_backbone_channel": 16,
+                "deeplabv3_aspp_channel": 16,
                 "use_batch_norm": True,
             },
         )
@@ -72,8 +72,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             model = DeepLabV3(
                 n_points=seq_len,
                 config={
-                    "backbone_channels": 8,
-                    "aspp_channels": 8,
+                    "deeplabv3_backbone_channel": 8,
+                    "deeplabv3_aspp_channel": 8,
                     "kernel_size": 3,
                     "multi_grid": (1, 2, 4),
                     "aspp_rates": (2, 4, 6),
@@ -108,7 +108,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         # Test forward pass with custom multi_grid in full DeepLabV3
         model_custom = DeepLabV3(
             n_points=50,
-            config={"multi_grid": (1, 2, 2, 4), "backbone_channels": 16, "aspp_channels": 16},
+            config={"multi_grid": (1, 2, 2, 4), "deeplabv3_backbone_channel": 16, "deeplabv3_aspp_channel": 16},
         )
         x = torch.randn(2, 1, 50)
         y = model_custom(x)
@@ -135,8 +135,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         model = DeepLabV3(
             n_points=12,
             config={
-                "backbone_channels": 8,
-                "aspp_channels": 8,
+                "deeplabv3_backbone_channel": 8,
+                "deeplabv3_aspp_channel": 8,
                 "kernel_size": 3,
                 "multi_grid": (1, 2),
                 "aspp_rates": (2, 4, 6),
@@ -149,8 +149,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
 
     def test_residual_mode_toggle(self) -> None:
         """Verify residual mode and direct prediction mode both produce valid outputs."""
-        model_res = DeepLabV3(n_points=40, config={"residual": True, "backbone_channels": 8, "aspp_channels": 8})
-        model_dir = DeepLabV3(n_points=40, config={"residual": False, "backbone_channels": 8, "aspp_channels": 8})
+        model_res = DeepLabV3(n_points=40, config={"residual": True, "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
+        model_dir = DeepLabV3(n_points=40, config={"residual": False, "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
 
         x = torch.randn(2, 1, 40)
         y_res = model_res(x)
@@ -161,7 +161,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
 
     def test_l2_regularization(self) -> None:
         """Verify L2 regularization calculation only penalizes conv weight matrices."""
-        model = DeepLabV3(n_points=30, config={"backbone_channels": 8, "aspp_channels": 8})
+        model = DeepLabV3(n_points=30, config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
         l2_reg = model.get_l2_regularization()
 
         self.assertTrue(torch.is_tensor(l2_reg))
@@ -186,7 +186,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
 
     def test_invalid_tensor_dimensions_raise(self) -> None:
         """Verify model raises ValueError on invalid dimensions or channel counts."""
-        model = DeepLabV3(n_points=30, config={"backbone_channels": 8, "aspp_channels": 8})
+        model = DeepLabV3(n_points=30, config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
 
         # 1D tensor
         with self.assertRaises(ValueError):
@@ -210,8 +210,8 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         model = DeepLabV3(
             n_points=3,
             config={
-                "backbone_channels": 8,
-                "aspp_channels": 8,
+                "deeplabv3_backbone_channel": 8,
+                "deeplabv3_aspp_channel": 8,
                 "aspp_rates": (2, 4, 6),
                 "multi_grid": (1, 2),
             },
@@ -226,7 +226,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         # Single block
         model_single = DeepLabV3(
             n_points=30,
-            config={"multi_grid": (1,), "backbone_channels": 8, "aspp_channels": 8},
+            config={"multi_grid": (1,), "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
         )
         self.assertEqual(len(model_single.backbone.blocks), 1)
         self.assertEqual(model_single(torch.randn(2, 1, 30)).shape, (2, 1, 30))
@@ -234,14 +234,14 @@ class TestDeepLabV3Architecture(unittest.TestCase):
         # 5 blocks
         model_extended = DeepLabV3(
             n_points=30,
-            config={"multi_grid": (1, 2, 2, 4, 8), "backbone_channels": 8, "aspp_channels": 8},
+            config={"multi_grid": (1, 2, 2, 4, 8), "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
         )
         self.assertEqual(len(model_extended.backbone.blocks), 5)
         self.assertEqual(model_extended(torch.randn(2, 1, 30)).shape, (2, 1, 30))
 
     def test_backward_gradient_flow(self) -> None:
         """Verify backward gradients propagate through all components of DeepLabV3."""
-        model = DeepLabV3(n_points=50, config={"backbone_channels": 16, "aspp_channels": 16})
+        model = DeepLabV3(n_points=50, config={"deeplabv3_backbone_channel": 16, "deeplabv3_aspp_channel": 16})
         x = torch.randn(2, 1, 50, requires_grad=True)
         y_pred = model(x)
         loss = torch.mean((y_pred - torch.ones_like(y_pred)) ** 2) + 1e-4 * model.get_l2_regularization()
@@ -254,7 +254,7 @@ class TestDeepLabV3Architecture(unittest.TestCase):
 
     def test_instantiate_model_factory(self) -> None:
         """Verify instantiate_model factory correctly resolves 'deeplabv3'."""
-        model = instantiate_model("deeplabv3", seq_len=80, config={"backbone_channels": 16})
+        model = instantiate_model("deeplabv3", seq_len=80, config={"deeplabv3_backbone_channel": 16})
         self.assertIsInstance(model, DeepLabV3)
         self.assertEqual(model.n_points, 80)
 
@@ -307,8 +307,8 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
                 "epochs": 2,
                 "batch_size": 4,
                 "learning_rate": 1e-3,
-                "backbone_channels": 8,
-                "aspp_channels": 8,
+                "deeplabv3_backbone_channel": 8,
+                "deeplabv3_aspp_channel": 8,
                 "kernel_size": 3,
                 "verbose": False,
             },
@@ -331,8 +331,8 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
                 "num_trials": 2,
                 "epochs_per_trial": 2,
                 "kernel_sizes": [3, 5],
-                "backbone_channels": [8, 16],
-                "aspp_channels": [8, 16],
+                "deeplabv3_backbone_channels": [8, 16],
+                "deeplabv3_aspp_channels": [8, 16],
                 "batch_sizes": [4],
                 "seed": 42,
             },
@@ -342,8 +342,8 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
         self.assertIn("best_val_loss", ax_res)
         self.assertEqual(len(ax_res["trials_data"]), 2)
         self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
-        self.assertIn(ax_res["best_parameters"]["backbone_channels"], [8, 16])
-        self.assertIn(ax_res["best_parameters"]["aspp_channels"], [8, 16])
+        self.assertIn(ax_res["best_parameters"]["deeplabv3_backbone_channel"], [8, 16])
+        self.assertIn(ax_res["best_parameters"]["deeplabv3_aspp_channel"], [8, 16])
 
 
 if __name__ == "__main__":

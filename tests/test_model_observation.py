@@ -73,7 +73,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
             criterion,
             config={
                 "model_type": "resnet",
-                "train_config": {"epochs": 3, "batch_size": 8, "hidden_channels": 8, "kernel_size": 3},
+                "train_config": {"epochs": 3, "batch_size": 8, "resnet_channel": 8, "kernel_size": 3},
             },
         )
         data_orig = (cls.ary_intensity, cls.ary_energy, cls.meta_df)

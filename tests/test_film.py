@@ -85,7 +85,7 @@ class TestFiLMModulation(unittest.TestCase):
         update FiLM parameters.
         """
         n_points = 50
-        model = ResNet1D(n_points=n_points, config={"hidden_channels": 16, "use_film": True})
+        model = ResNet1D(n_points=n_points, config={"resnet_channel": 16, "use_film": True})
 
         x = torch.randn(4, 1, n_points)
         meta = [{"die": i, "tool_index": 0, "tool_target_index": 1} for i in range(4)]
@@ -108,7 +108,7 @@ class TestFiLMModulation(unittest.TestCase):
         unconditioned model.
         """
         n_points = 40
-        model = ResNet1D(n_points=n_points, config={"hidden_channels": 8, "use_film": False})
+        model = ResNet1D(n_points=n_points, config={"resnet_channel": 8, "use_film": False})
         x = torch.ones(2, 1, n_points)
         out = model(x)
         self.assertEqual(out.shape, (2, 1, n_points))
@@ -125,7 +125,7 @@ class TestFiLMModulation(unittest.TestCase):
         ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta)
         loader = DataLoader(ds, batch_size=4, shuffle=False)
 
-        model = ResNet1D(n_points=n_points, config={"hidden_channels": 8, "use_film": True})
+        model = ResNet1D(n_points=n_points, config={"resnet_channel": 8, "use_film": True})
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         criterion = SpectralLoss()
 
@@ -137,7 +137,7 @@ class TestFiLMModulation(unittest.TestCase):
         """Verify ResidualUNet1D with use_film=True forward and backward pass."""
         from models.unet import ResidualUNet1D
         n_points = 32
-        model = ResidualUNet1D(n_points=n_points, config={"base_channels": 8, "depth": 2, "use_film": True})
+        model = ResidualUNet1D(n_points=n_points, config={"residual_unet_channel": 8, "depth": 2, "use_film": True})
         x = torch.randn(2, 1, n_points)
         meta = [
             {"die": 1, "tool_index": 0, "tool_target_index": 1},
@@ -294,7 +294,7 @@ class TestFiLMModulation(unittest.TestCase):
         model = ResNet1D(
             n_points=patch_len,
             config={
-                "hidden_channels": 16,
+                "resnet_channel": 16,
                 "use_film": True,
                 "use_sliding_window": True,
                 "encode_window_energy": True,

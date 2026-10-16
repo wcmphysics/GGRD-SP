@@ -64,17 +64,17 @@ class TestOrchestrationPipeline(unittest.TestCase):
 
     def test_instantiate_model(self) -> None:
         """Verify model instantiation across supported types and error handling."""
-        m_res = instantiate_model("resnet", seq_len=30, config={"hidden_channels": 8})
+        m_res = instantiate_model("resnet", seq_len=30, config={"resnet_channel": 8})
         self.assertIsInstance(m_res, ResNet1D)
 
         m_res_u = instantiate_model(
-            "residual_unet", seq_len=32, config={"base_channels": 4, "depth": 2}
+            "residual_unet", seq_len=32, config={"residual_unet_channel": 4, "depth": 2}
         )
         self.assertIsInstance(m_res_u, ResidualUNet1D)
         self.assertTrue(m_res_u.residual)
 
         m_conv_u = instantiate_model(
-            "unet", seq_len=32, config={"base_channels": 4, "depth": 2}
+            "unet", seq_len=32, config={"unet_channel": 4, "depth": 2}
         )
         self.assertIsInstance(m_conv_u, ConventionalUNet1D)
         self.assertFalse(m_conv_u.residual)
@@ -177,7 +177,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
 
         train_cfg = {
             "model_type": "residual_unet",
-            "train_config": {"epochs": 2, "batch_size": 4, "base_channels": 4, "depth": 2},
+            "train_config": {"epochs": 2, "batch_size": 4, "residual_unet_channel": 4, "depth": 2},
         }
         res_full = perform_model_training_and_bayesian_optimization(
             reg_ds_full, criterion, config=train_cfg
@@ -211,7 +211,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         criterion = SpectralLoss()
         train_cfg = {
             "model_type": "unet",
-            "train_config": {"epochs": 2, "batch_size": 4, "base_channels": 4, "depth": 2},
+            "train_config": {"epochs": 2, "batch_size": 4, "unet_channel": 4, "depth": 2},
         }
         res = perform_model_training_and_bayesian_optimization(
             regional_datasets, criterion, config=train_cfg
@@ -220,7 +220,7 @@ class TestOrchestrationPipeline(unittest.TestCase):
         self.assertFalse(res["models"]["Al2p"].residual)
 
     def test_train_with_bayesian_optimization(self) -> None:
-        """Verify Stage 7 Ax Bayesian hyperparameter optimization."""
+        """Verify Stage 7 Ax Bayesian hyperparameter optimization with separated bayesian_opt_config."""
         ds_cfg = {
             "source_tool": "J4",
             "target_tool": "H1",
@@ -233,20 +233,20 @@ class TestOrchestrationPipeline(unittest.TestCase):
             self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
         )
         criterion = SpectralLoss()
+        bo_cfg = {
+            "use_bayesian_opt": True,
+            "num_trials": 2,
+            "epochs_per_trial": 2,
+            "window_size_choices": [15, 21],
+            "kernel_sizes": [3],
+            "resnet_channels": [8],
+        }
         train_cfg = {
             "model_type": "resnet",
-            "use_bayesian_opt": True,
-            "bayesian_opt_config": {
-                "num_trials": 2,
-                "epochs_per_trial": 2,
-                "window_size_choices": [15, 21],
-                "kernel_sizes": [3],
-                "hidden_channels": [8],
-            },
             "train_config": {"epochs": 2, "batch_size": 4},
         }
         res = perform_model_training_and_bayesian_optimization(
-            regional_datasets, criterion, config=train_cfg
+            regional_datasets, criterion, config=train_cfg, bayesian_opt_config=bo_cfg
         )
         self.assertIn("Al2p", res["bayesian_opt_results"])
         self.assertIn("best_parameters", res["bayesian_opt_results"]["Al2p"])
@@ -261,7 +261,6 @@ class TestOrchestrationPipeline(unittest.TestCase):
             "window_size_ev": 4.0,
             "sliding_stride_ev": 2.0,
             "train_config": {"batch_size": 32, "learning_rate": 1e-4, "depth": 3},
-            "bayesian_opt_config": {"num_trials": 3, "batch_sizes": [16, 32]},
             "region_configs": {
                 "Al2p": {
                     "window_size_ev": 2.5,
@@ -275,8 +274,9 @@ class TestOrchestrationPipeline(unittest.TestCase):
                 },
             },
         }
+        bo_cfg = {"num_trials": 3, "batch_sizes": [16, 32]}
 
-        sw_al, tr_al, bo_al = _resolve_region_config(global_cfg, "Al2p")
+        sw_al, tr_al, bo_al = _resolve_region_config(global_cfg, "Al2p", bayesian_opt_config=bo_cfg)
         self.assertEqual(sw_al["window_size_ev"], 2.5)
         self.assertEqual(sw_al["sliding_stride_ev"], 0.8)
         self.assertEqual(tr_al["batch_size"], 16)
@@ -284,18 +284,59 @@ class TestOrchestrationPipeline(unittest.TestCase):
         self.assertEqual(tr_al["depth"], 3)
         self.assertEqual(bo_al["batch_sizes"], [16, 32])
 
-        sw_ti, tr_ti, bo_ti = _resolve_region_config(global_cfg, "Ti2p")
+        sw_ti, tr_ti, bo_ti = _resolve_region_config(global_cfg, "Ti2p", bayesian_opt_config=bo_cfg)
         self.assertEqual(sw_ti["window_size_ev"], 4.0)
         self.assertEqual(tr_ti["batch_size"], 32)
         self.assertEqual(tr_ti["depth"], 2)
         self.assertEqual(bo_ti["batch_sizes"], [8, 16, 32])
 
-        sw_c, tr_c, bo_c = _resolve_region_config(global_cfg, "C1s")
+        sw_c, tr_c, bo_c = _resolve_region_config(global_cfg, "C1s", bayesian_opt_config=bo_cfg)
         self.assertEqual(sw_c["window_size_ev"], 4.0)
         self.assertEqual(tr_c["batch_size"], 32)
         self.assertEqual(tr_c["learning_rate"], 1e-4)
         self.assertEqual(bo_c["num_trials"], 3)
 
+    def test_orchestration_validation_errors(self) -> None:
+        """Verify orchestration raises errors for invalid window_size, batch_size, and kernel_size."""
+        ds_cfg = {
+            "source_tool": "J4",
+            "target_tool": "H1",
+            "regions": ["Al2p"],
+            "use_sliding_window": True,
+            "window_size": 15,
+            "stride": 7,
+        }
+        regional_datasets = create_regional_datasets(
+            self.df_meta, self.ary_intensity, self.ary_energy, ds_cfg
+        )
+        criterion = SpectralLoss()
+
+        # Non-integer window_size in train_config when BO is off -> ValueError
+        with self.assertRaises(ValueError):
+            perform_model_training_and_bayesian_optimization(
+                regional_datasets,
+                criterion,
+                config={"model_type": "resnet", "train_config": {"window_size": [15]}},
+            )
+
+        # kernel_size > window_size when BO is off -> ValueError
+        with self.assertRaises(ValueError):
+            perform_model_training_and_bayesian_optimization(
+                regional_datasets,
+                criterion,
+                config={"model_type": "resnet", "train_config": {"window_size": 5, "kernel_size": 7}},
+            )
+
+        # Singular window_size in bayesian_opt_config when BO is on -> KeyError
+        with self.assertRaises(KeyError):
+            perform_model_training_and_bayesian_optimization(
+                regional_datasets,
+                criterion,
+                config={"model_type": "resnet", "train_config": {"epochs": 1}},
+                bayesian_opt_config={"use_bayesian_opt": True, "window_size": 15},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+
