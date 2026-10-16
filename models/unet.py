@@ -79,7 +79,8 @@ class UNet1D(nn.Module):
         Nominal number of sequence points (spectral length or patch window length).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'base_channels' (int): Channels at level 0 (default 16).
+        - 'residual_unet_channel' (int): Channels at level 0 for Residual U-Net (default 16).
+        - 'unet_channel' (int): Channels at level 0 for Conventional U-Net (default 16).
         - 'depth' (int): Number of downsampling stages (default 3).
         - 'kernel_size' (int): Conv kernel size, positive odd int (default 5).
         - 'dropout' (float): Dropout probability (default 0.0).
@@ -92,16 +93,65 @@ class UNet1D(nn.Module):
     def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
         super().__init__()
         cfg = config or {}
+        for invalid_key in (
+            "residual_unet_channels",
+            "unet_channels",
+            "base_channels",
+            "base_channel",
+            "depths",
+            "kernel_sizes",
+            "batch_sizes",
+            "window_size_choices",
+        ):
+            if invalid_key in cfg:
+                raise KeyError(
+                    f"Invalid key '{invalid_key}' in UNet1D config; "
+                    "use singular 'residual_unet_channel'/'unet_channel', 'depth', and 'kernel_size' "
+                    "outside Bayesian optimization."
+                )
+
+        for int_key in ("batch_size", "window_size", "window_size_choice"):
+            if int_key in cfg:
+                raw_v = cfg[int_key]
+                if isinstance(raw_v, bool) or not isinstance(raw_v, int) or raw_v <= 0:
+                    raise ValueError(f"{int_key} must be a positive integer, got {raw_v!r}")
+
         self.n_points = int(n_points)
-        self.base_channels = int(cfg.get("base_channels", 16))
-        self.depth = int(cfg.get("depth", 3))
-        self.kernel_size = int(cfg.get("kernel_size", 5))
+        self.residual = bool(cfg.get("residual", True))
+        primary_ch_key = "residual_unet_channel" if self.residual else "unet_channel"
+        fallback_ch_key = "unet_channel" if self.residual else "residual_unet_channel"
+        if primary_ch_key in cfg:
+            raw_ch = cfg[primary_ch_key]
+        elif fallback_ch_key in cfg:
+            raw_ch = cfg[fallback_ch_key]
+        else:
+            raw_ch = 16
+        if isinstance(raw_ch, bool) or not isinstance(raw_ch, int) or raw_ch <= 0:
+            raise ValueError(
+                f"{primary_ch_key} must be a positive integer, got {raw_ch!r}"
+            )
+        self.base_channels = raw_ch
+
+        raw_depth = cfg.get("depth", 3)
+        if isinstance(raw_depth, bool) or not isinstance(raw_depth, int):
+            raise ValueError(f"depth must be a positive integer, got {raw_depth!r}")
+        self.depth = raw_depth
+
+        raw_kernel = cfg.get("kernel_size", 5)
+        if isinstance(raw_kernel, bool) or not isinstance(raw_kernel, int):
+            raise ValueError(
+                f"kernel_size must be a positive odd integer, got {raw_kernel!r}"
+            )
+        self.kernel_size = raw_kernel
+
         self.dropout = float(cfg.get("dropout", 0.0))
         self.use_batch_norm = bool(cfg.get("use_batch_norm", True))
-        self.residual = bool(cfg.get("residual", True))
         self.activation = str(cfg.get("activation", "relu"))
         self.use_film = bool(cfg.get("use_film", False))
         self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
+
+        explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
+        max_allowed_k = min(self.n_points, explicit_ws) if explicit_ws is not None else self.n_points
 
         if self.depth < 1:
             raise ValueError(f"depth must be >= 1, got {self.depth}")
@@ -113,6 +163,10 @@ class UNet1D(nn.Module):
             )
         if self.kernel_size <= 0 or self.kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be a positive odd integer, got {self.kernel_size}")
+        if self.kernel_size > max_allowed_k:
+            raise ValueError(
+                f"kernel_size ({self.kernel_size}) cannot be larger than window_size / n_points ({max_allowed_k})."
+            )
 
         block_cfg = {
             "kernel_size": self.kernel_size,

@@ -157,8 +157,8 @@ class DeepLabV3(nn.Module):
         Number of spectral data points (sequence or patch length).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'backbone_channels' (int): Hidden channels in ResNet (def 32).
-        - 'aspp_channels' (int): Feature channels per ASPP (def 32).
+        - 'deeplabv3_backbone_channel' (int): Hidden channels in ResNet (def 32).
+        - 'deeplabv3_aspp_channel' (int): Feature channels per ASPP (def 32).
         - 'multi_grid' (tuple[int, ...]): Multi-grid rates
           (default (1, 2, 4)).
         - 'aspp_rates' (tuple[int, int, int]): ASPP rates
@@ -173,15 +173,66 @@ class DeepLabV3(nn.Module):
     def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
         super().__init__()
         cfg = config or {}
+        for invalid_key in (
+            "deeplabv3_backbone_channels",
+            "deeplabv3_aspp_channels",
+            "backbone_channels",
+            "aspp_channels",
+            "backbone_channel",
+            "aspp_channel",
+            "kernel_sizes",
+            "batch_sizes",
+            "window_size_choices",
+        ):
+            if invalid_key in cfg:
+                raise KeyError(
+                    f"Invalid key '{invalid_key}' in DeepLabV3 config; "
+                    "use singular 'deeplabv3_backbone_channel', 'deeplabv3_aspp_channel', "
+                    "and 'kernel_size' outside Bayesian optimization."
+                )
+
+        for int_key in ("batch_size", "window_size", "window_size_choice"):
+            if int_key in cfg:
+                raw_v = cfg[int_key]
+                if isinstance(raw_v, bool) or not isinstance(raw_v, int) or raw_v <= 0:
+                    raise ValueError(f"{int_key} must be a positive integer, got {raw_v!r}")
+
         self.n_points = int(n_points)
-        backbone_channels, aspp_channels = int(cfg.get("backbone_channels", 32)), int(cfg.get("aspp_channels", 32))
+        raw_bb = cfg.get("deeplabv3_backbone_channel", 32)
+        if isinstance(raw_bb, bool) or not isinstance(raw_bb, int) or raw_bb <= 0:
+            raise ValueError(
+                f"deeplabv3_backbone_channel must be a positive integer, got {raw_bb!r}"
+            )
+        backbone_channels = raw_bb
+
+        raw_aspp = cfg.get("deeplabv3_aspp_channel", 32)
+        if isinstance(raw_aspp, bool) or not isinstance(raw_aspp, int) or raw_aspp <= 0:
+            raise ValueError(
+                f"deeplabv3_aspp_channel must be a positive integer, got {raw_aspp!r}"
+            )
+        aspp_channels = raw_aspp
+
+        raw_kernel = cfg.get("kernel_size", 3)
+        if isinstance(raw_kernel, bool) or not isinstance(raw_kernel, int):
+            raise ValueError(
+                f"kernel_size must be a positive odd integer, got {raw_kernel!r}"
+            )
+        kernel_size = raw_kernel
+
         multi_grid, aspp_rates = tuple(cfg.get("multi_grid", (1, 2, 4))), tuple(cfg.get("aspp_rates", (2, 4, 6)))
-        kernel_size, dropout = int(cfg.get("kernel_size", 3)), float(cfg.get("dropout", 0.1))
+        dropout = float(cfg.get("dropout", 0.1))
         use_batch_norm, padding_mode = bool(cfg.get("use_batch_norm", True)), str(cfg.get("padding_mode", "reflect"))
         self.residual = bool(cfg.get("residual", True))
 
+        explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
+        max_allowed_k = min(self.n_points, explicit_ws) if explicit_ws is not None else self.n_points
+
         if kernel_size <= 0 or kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
+        if kernel_size > max_allowed_k:
+            raise ValueError(
+                f"kernel_size ({kernel_size}) cannot be larger than window_size / n_points ({max_allowed_k})."
+            )
 
         kw = dict(kernel_size=kernel_size, use_batch_norm=use_batch_norm, dropout=dropout, padding_mode=padding_mode)
         self.backbone = ResNet1DBackbone(1, backbone_channels, multi_grid, n_points=self.n_points, **kw)
