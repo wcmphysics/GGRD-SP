@@ -388,7 +388,7 @@ def train_model_region(
     min_learning_rate = float(
         cfg.get(
             "min_learning_rate",
-            cfg.get("min_lr", learning_rate / 1000.0),
+            cfg.get("min_lr", learning_rate / 10000.0),
         )
     )
 
@@ -405,6 +405,12 @@ def train_model_region(
     if min_learning_rate < 0.0:
         raise ValueError(
             f"min_learning_rate cannot be negative, got {min_learning_rate}"
+        )
+    if learning_rate < min_learning_rate:
+        raise ValueError(
+            f"Base learning_rate ({learning_rate:.2e}) is lower than the floor "
+            f"min_learning_rate ({min_learning_rate:.2e}). "
+            "Please increase 'learning_rate' or decrease 'min_learning_rate'."
         )
 
     patience = int(
@@ -488,6 +494,14 @@ def train_model_region(
         config={**cfg, "l2_weight": l2_weight}
     )
     if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
+        shortcut_lr = learning_rate * relative_learning_rate
+        if shortcut_lr < min_learning_rate:
+            raise ValueError(
+                f"Initial learning rate of shortcut gain ({shortcut_lr:.2e}) is lower "
+                f"than the floor min_learning_rate ({min_learning_rate:.2e}). "
+                "Please increase 'learning_rate' or 'relative_learning_rate', "
+                "or decrease 'min_learning_rate'."
+            )
         shortcut_params = list(model.shortcut_film_gen.parameters())
         shortcut_param_ids = {id(p) for p in shortcut_params}
         base_params = [
@@ -497,7 +511,7 @@ def train_model_region(
             {"params": base_params, "lr": learning_rate},
             {
                 "params": shortcut_params,
-                "lr": learning_rate * relative_learning_rate,
+                "lr": shortcut_lr,
             },
         ]
         optimizer = torch.optim.Adam(
