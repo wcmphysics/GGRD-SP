@@ -19,33 +19,46 @@ from typing import Any, Sequence
 import torch
 import torch.nn as nn
 
-from models.layers import SafeBatchNorm1d, SafeReflectionPad1d
+from models.layers import (
+    SafeBatchNorm1d,
+    build_conv1d_layer,
+    compute_conv1d_l2_reg,
+    validate_3d_spectrum_tensor,
+    validate_common_model_config,
+    validate_odd_kernel_size,
+    validate_positive_int,
+)
 
-
-def _build_conv1d_layer(
-    in_channels: int, out_channels: int, kernel_size: int,
-    dilation: int = 1, padding_mode: str = "reflect", n_points: int = 100,
-) -> nn.Module:
-    """Build a 1D conv layer with safe symmetric padding."""
-    if kernel_size <= 0 or kernel_size % 2 == 0:
-        raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
-    if dilation < 1:
-        raise ValueError(f"dilation must be a positive integer, got {dilation}")
-    pad = (kernel_size - 1) * dilation // 2
-    pad_val = 0 if padding_mode == "reflect" else pad
-    conv = nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation, padding=pad_val)
-    return nn.Sequential(SafeReflectionPad1d(pad), conv) if (pad > 0 and padding_mode == "reflect") else conv
+_DISALLOWED_DEEPLAB_KEYS = (
+    "deeplabv3_backbone_channels",
+    "deeplabv3_aspp_channels",
+    "backbone_channels",
+    "aspp_channels",
+    "backbone_channel",
+    "aspp_channel",
+    "kernel_sizes",
+    "batch_sizes",
+    "window_size_choices",
+)
 
 
 def _conv_block(
-    in_channels: int, out_channels: int, kernel_size: int = 1,
-    dilation: int = 1, padding_mode: str = "reflect", n_points: int = 100,
-    use_batch_norm: bool = True, dropout: float = 0.0, bias: bool = True,
+    in_channels: int,
+    out_channels: int,
+    kernel_size: int = 1,
+    dilation: int = 1,
+    padding_mode: str = "reflect",
+    use_batch_norm: bool = True,
+    dropout: float = 0.0,
+    bias: bool = True,
 ) -> nn.Sequential:
     """Build a Conv-BN-ReLU sequential block with optional dropout."""
     conv = (
-        nn.Conv1d(in_channels, out_channels, 1, bias=bias) if kernel_size == 1
-        else _build_conv1d_layer(in_channels, out_channels, kernel_size, dilation, padding_mode, n_points)
+        nn.Conv1d(in_channels, out_channels, 1, bias=bias)
+        if kernel_size == 1
+        else build_conv1d_layer(
+            (in_channels, out_channels), kernel_size, dilation, padding_mode
+        )
     )
     bn = SafeBatchNorm1d(out_channels) if use_batch_norm else nn.Identity()
     drop = [nn.Dropout(dropout)] if dropout > 0.0 else []
@@ -56,16 +69,25 @@ class ResidualBlock1D(nn.Module):
     """1D Residual block with dilated convolutions and shortcut."""
 
     def __init__(
-        self, channels: int, kernel_size: int = 3, dilation: int = 1,
-        use_batch_norm: bool = True, dropout: float = 0.0,
-        padding_mode: str = "reflect", n_points: int = 100,
+        self,
+        channels: int,
+        kernel_size: int = 3,
+        dilation: int = 1,
+        use_batch_norm: bool = True,
+        dropout: float = 0.0,
+        padding_mode: str = "reflect",
     ) -> None:
         super().__init__()
-        conv_fn = lambda: _build_conv1d_layer(channels, channels, kernel_size, dilation, padding_mode, n_points)
-        bn_fn = lambda: SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
-        self.conv1, self.bn1 = conv_fn(), bn_fn()
-        self.conv2, self.bn2 = conv_fn(), bn_fn()
-        self.relu1, self.relu2 = nn.ReLU(inplace=True), nn.ReLU(inplace=True)
+        self.conv1 = build_conv1d_layer(
+            (channels, channels), kernel_size, dilation, padding_mode
+        )
+        self.bn1 = SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
+        self.conv2 = build_conv1d_layer(
+            (channels, channels), kernel_size, dilation, padding_mode
+        )
+        self.bn2 = SafeBatchNorm1d(channels) if use_batch_norm else nn.Identity()
+        self.relu1 = nn.ReLU(inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -81,22 +103,39 @@ class ResNet1DBackbone(nn.Module):
     """
 
     def __init__(
-        self, in_channels: int = 1, out_channels: int = 32,
-        multi_grid: Sequence[int] = (1, 2, 4), kernel_size: int = 3,
-        use_batch_norm: bool = True, dropout: float = 0.0,
-        padding_mode: str = "reflect", n_points: int = 100,
+        self,
+        in_channels: int = 1,
+        out_channels: int = 32,
+        multi_grid: Sequence[int] = (1, 2, 4),
+        kernel_size: int = 3,
+        use_batch_norm: bool = True,
+        dropout: float = 0.0,
+        padding_mode: str = "reflect",
     ) -> None:
         super().__init__()
         if not multi_grid:
             raise ValueError("multi_grid sequence must not be empty.")
-        self.stem = _conv_block(in_channels, out_channels, kernel_size, 1, padding_mode, n_points, use_batch_norm)
-        self.blocks = nn.ModuleList([
-            ResidualBlock1D(out_channels, kernel_size, int(r), use_batch_norm, dropout, padding_mode, n_points)
-            for r in multi_grid
-        ])
+        self.stem = _conv_block(
+            in_channels, out_channels, kernel_size, 1, padding_mode, use_batch_norm
+        )
+        self.blocks = nn.ModuleList(
+            [
+                ResidualBlock1D(
+                    out_channels,
+                    kernel_size,
+                    int(r),
+                    use_batch_norm,
+                    dropout,
+                    padding_mode,
+                )
+                for r in multi_grid
+            ]
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return functools.reduce(lambda feat, block: block(feat), self.blocks, self.stem(x))
+        return functools.reduce(
+            lambda feat, block: block(feat), self.blocks, self.stem(x)
+        )
 
 
 class ASPP1D(nn.Module):
@@ -112,25 +151,51 @@ class ASPP1D(nn.Module):
     """
 
     def __init__(
-        self, in_channels: int = 32, out_channels: int = 32,
-        aspp_rates: Sequence[int] = (2, 4, 6), kernel_size: int = 3,
-        use_batch_norm: bool = True, dropout: float = 0.1,
-        padding_mode: str = "reflect", n_points: int = 100,
+        self,
+        in_channels: int = 32,
+        out_channels: int = 32,
+        aspp_rates: Sequence[int] = (2, 4, 6),
+        kernel_size: int = 3,
+        use_batch_norm: bool = True,
+        dropout: float = 0.1,
+        padding_mode: str = "reflect",
     ) -> None:
         super().__init__()
         if len(aspp_rates) != 3:
-            raise ValueError(f"aspp_rates must contain exactly 3 dilation rates, got {aspp_rates}")
+            raise ValueError(
+                f"aspp_rates must contain exactly 3 dilation rates, got {aspp_rates}"
+            )
 
-        self.branch_1x1 = _conv_block(in_channels, out_channels, use_batch_norm=use_batch_norm, bias=False)
-        self.atrous_branches = nn.ModuleList([
-            _conv_block(in_channels, out_channels, kernel_size, int(r), padding_mode, n_points, use_batch_norm)
-            for r in aspp_rates
-        ])
+        self.branch_1x1 = _conv_block(
+            in_channels, out_channels, use_batch_norm=use_batch_norm, bias=False
+        )
+        self.atrous_branches = nn.ModuleList(
+            [
+                _conv_block(
+                    in_channels,
+                    out_channels,
+                    kernel_size,
+                    int(r),
+                    padding_mode,
+                    use_batch_norm,
+                )
+                for r in aspp_rates
+            ]
+        )
         self.global_pooling = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1), *_conv_block(in_channels, out_channels, use_batch_norm=use_batch_norm, bias=False)
+            nn.AdaptiveAvgPool1d(1),
+            *_conv_block(
+                in_channels, out_channels, use_batch_norm=use_batch_norm, bias=False
+            ),
         )
         total_in = out_channels * (2 + len(aspp_rates))
-        self.project = _conv_block(total_in, out_channels, use_batch_norm=use_batch_norm, dropout=dropout, bias=False)
+        self.project = _conv_block(
+            total_in,
+            out_channels,
+            use_batch_norm=use_batch_norm,
+            dropout=dropout,
+            bias=False,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feat_1x1 = self.branch_1x1(x)
@@ -157,7 +222,7 @@ class DeepLabV3(nn.Module):
         Number of spectral data points (sequence or patch length).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'deeplabv3_backbone_channel' (int): Hidden channels in ResNet (def 32).
+        - 'deeplabv3_backbone_channel' (int): ResNet channels (def 32).
         - 'deeplabv3_aspp_channel' (int): Feature channels per ASPP (def 32).
         - 'multi_grid' (tuple[int, ...]): Multi-grid rates
           (default (1, 2, 4)).
@@ -173,74 +238,54 @@ class DeepLabV3(nn.Module):
     def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
         super().__init__()
         cfg = config or {}
-        for invalid_key in (
-            "deeplabv3_backbone_channels",
-            "deeplabv3_aspp_channels",
-            "backbone_channels",
-            "aspp_channels",
-            "backbone_channel",
-            "aspp_channel",
-            "kernel_sizes",
-            "batch_sizes",
-            "window_size_choices",
-        ):
-            if invalid_key in cfg:
-                raise KeyError(
-                    f"Invalid key '{invalid_key}' in DeepLabV3 config; "
-                    "use singular 'deeplabv3_backbone_channel', 'deeplabv3_aspp_channel', "
-                    "and 'kernel_size' outside Bayesian optimization."
-                )
-
-        for int_key in ("batch_size", "window_size", "window_size_choice"):
-            if int_key in cfg:
-                raw_v = cfg[int_key]
-                if isinstance(raw_v, bool) or not isinstance(raw_v, int) or raw_v <= 0:
-                    raise ValueError(f"{int_key} must be a positive integer, got {raw_v!r}")
-
         self.n_points = int(n_points)
-        raw_bb = cfg.get("deeplabv3_backbone_channel", 32)
-        if isinstance(raw_bb, bool) or not isinstance(raw_bb, int) or raw_bb <= 0:
-            raise ValueError(
-                f"deeplabv3_backbone_channel must be a positive integer, got {raw_bb!r}"
-            )
-        backbone_channels = raw_bb
+        max_allowed_k = validate_common_model_config(
+            cfg,
+            self.n_points,
+            _DISALLOWED_DEEPLAB_KEYS,
+            (
+                "DeepLabV3",
+                "use singular 'deeplabv3_backbone_channel', "
+                "'deeplabv3_aspp_channel', and 'kernel_size' outside "
+                "Bayesian optimization.",
+            ),
+        )
 
-        raw_aspp = cfg.get("deeplabv3_aspp_channel", 32)
-        if isinstance(raw_aspp, bool) or not isinstance(raw_aspp, int) or raw_aspp <= 0:
-            raise ValueError(
-                f"deeplabv3_aspp_channel must be a positive integer, got {raw_aspp!r}"
-            )
-        aspp_channels = raw_aspp
 
-        raw_kernel = cfg.get("kernel_size", 3)
-        if isinstance(raw_kernel, bool) or not isinstance(raw_kernel, int):
-            raise ValueError(
-                f"kernel_size must be a positive odd integer, got {raw_kernel!r}"
-            )
-        kernel_size = raw_kernel
+        backbone_channels = validate_positive_int(
+            cfg.get("deeplabv3_backbone_channel", 32), "deeplabv3_backbone_channel"
+        )
+        aspp_channels = validate_positive_int(
+            cfg.get("deeplabv3_aspp_channel", 32), "deeplabv3_aspp_channel"
+        )
+        kernel_size = validate_odd_kernel_size(
+            cfg.get("kernel_size", 3), max_allowed=max_allowed_k
+        )
 
-        multi_grid, aspp_rates = tuple(cfg.get("multi_grid", (1, 2, 4))), tuple(cfg.get("aspp_rates", (2, 4, 6)))
+        multi_grid = tuple(cfg.get("multi_grid", (1, 2, 4)))
+        aspp_rates = tuple(cfg.get("aspp_rates", (2, 4, 6)))
         dropout = float(cfg.get("dropout", 0.1))
-        use_batch_norm, padding_mode = bool(cfg.get("use_batch_norm", True)), str(cfg.get("padding_mode", "reflect"))
+        use_batch_norm = bool(cfg.get("use_batch_norm", True))
+        padding_mode = str(cfg.get("padding_mode", "reflect"))
         self.residual = bool(cfg.get("residual", True))
 
-        explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
-        max_allowed_k = min(self.n_points, explicit_ws) if explicit_ws is not None else self.n_points
-
-        if kernel_size <= 0 or kernel_size % 2 == 0:
-            raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
-        if kernel_size > max_allowed_k:
-            raise ValueError(
-                f"kernel_size ({kernel_size}) cannot be larger than window_size / n_points ({max_allowed_k})."
-            )
-
-        kw = dict(kernel_size=kernel_size, use_batch_norm=use_batch_norm, dropout=dropout, padding_mode=padding_mode)
-        self.backbone = ResNet1DBackbone(1, backbone_channels, multi_grid, n_points=self.n_points, **kw)
-        self.aspp = ASPP1D(backbone_channels, aspp_channels, aspp_rates, n_points=self.n_points, **kw)
+        shared_kwargs = {
+            "kernel_size": kernel_size,
+            "use_batch_norm": use_batch_norm,
+            "dropout": dropout,
+            "padding_mode": padding_mode,
+        }
+        self.backbone = ResNet1DBackbone(
+            1, backbone_channels, multi_grid, **shared_kwargs
+        )
+        self.aspp = ASPP1D(
+            backbone_channels, aspp_channels, aspp_rates, **shared_kwargs
+        )
         self.head = nn.Conv1d(aspp_channels, 1, kernel_size=1)
 
     def forward(
-        self, x: torch.Tensor,
+        self,
+        x: torch.Tensor,
         cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Transform input spectrum x to target spectrum y.
@@ -262,11 +307,8 @@ class DeepLabV3(nn.Module):
         ValueError
             If x is not a 3D tensor of shape (batch_size, 1, n_points).
         """
-        if x.dim() != 3 or x.size(1) != 1:
-            raise ValueError(
-                f"Expected 3D tensor of shape (batch, 1, seq_len), got shape {tuple(x.shape)}"
-            )
-
+        del cond
+        validate_3d_spectrum_tensor(x)
         delta = self.head(self.aspp(self.backbone(x)))
         return (x + delta) if self.residual else delta
 
@@ -280,8 +322,4 @@ class DeepLabV3(nn.Module):
         torch.Tensor
             Scalar tensor representing sum of squares of conv weights.
         """
-        device = next(self.parameters()).device
-        return sum(
-            (torch.sum(m.weight ** 2) for m in self.modules() if isinstance(m, nn.Conv1d) and m.weight.requires_grad),
-            torch.tensor(0.0, device=device),
-        )
+        return compute_conv1d_l2_reg(self)

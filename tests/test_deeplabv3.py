@@ -91,7 +91,6 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             out_channels=16,
             multi_grid=(1, 2, 4),
             kernel_size=3,
-            n_points=50,
         )
         self.assertEqual(len(backbone_3.blocks), 3)
 
@@ -101,7 +100,6 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             out_channels=16,
             multi_grid=(1, 2, 2, 4),
             kernel_size=3,
-            n_points=50,
         )
         self.assertEqual(len(backbone_4.blocks), 4)
 
@@ -121,7 +119,6 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             out_channels=16,
             aspp_rates=(3, 6, 9),
             kernel_size=3,
-            n_points=60,
         )
         self.assertEqual(len(aspp.atrous_branches), 3)
 
