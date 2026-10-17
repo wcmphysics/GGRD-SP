@@ -14,6 +14,12 @@ import numpy as np
 import pandas as pd
 import torch
 
+_MATERN_NU_MAP: dict[str, float] = {
+    "matern52": 2.5,
+    "matern32": 1.5,
+    "matern12": 0.5,
+}
+
 
 class SigmoidStepKernel(gpytorch.kernels.Kernel):
     """Sigmoid-based step jump covariance kernel for abrupt baseline shifts.
@@ -21,7 +27,8 @@ class SigmoidStepKernel(gpytorch.kernels.Kernel):
     k(t1, t2) = s(t1) * s(t2)
     where s(t) = sigmoid(steepness * (t - step_time))
 
-    When wrapped by ScaleKernel, provides a learnable variance scale sigma_jump^2.
+    When wrapped by ScaleKernel, provides a learnable variance scale
+    sigma_jump^2.
     """
 
     is_stationary = False
@@ -36,16 +43,14 @@ class SigmoidStepKernel(gpytorch.kernels.Kernel):
         **kwargs: Any,
     ) -> None:
         super().__init__(active_dims=active_dims, **kwargs)
+        step_tensor = torch.tensor([float(step_time)])
         if learn_step_time:
             self.register_parameter(
                 name="raw_step_time",
-                parameter=torch.nn.Parameter(torch.tensor([float(step_time)])),
+                parameter=torch.nn.Parameter(step_tensor),
             )
         else:
-            self.register_buffer(
-                "raw_step_time",
-                torch.tensor([float(step_time)]),
-            )
+            self.register_buffer("raw_step_time", step_tensor)
         self.register_parameter(
             name="raw_steepness",
             parameter=torch.nn.Parameter(torch.tensor([float(steepness)])),
@@ -100,47 +105,38 @@ def build_composite_kernel(
     comp = cfg.get("composition", "product_with_jump")
 
     # 1. Continuous time kernel
-    k_type = t_cfg.get("type", "rbf").lower()
-    t_len = float(t_cfg.get("initial_lengthscale", 5.0))
-    if k_type == "matern52":
-        base_t = gpytorch.kernels.MaternKernel(nu=2.5, active_dims=[0])
-    elif k_type == "matern32":
-        base_t = gpytorch.kernels.MaternKernel(nu=1.5, active_dims=[0])
-    elif k_type == "matern12":
-        base_t = gpytorch.kernels.MaternKernel(nu=0.5, active_dims=[0])
+    k_type = str(t_cfg.get("type", "rbf")).lower()
+    if k_type in _MATERN_NU_MAP:
+        base_t: gpytorch.kernels.Kernel = gpytorch.kernels.MaternKernel(
+            nu=_MATERN_NU_MAP[k_type], active_dims=[0]
+        )
     else:
         base_t = gpytorch.kernels.RBFKernel(active_dims=[0])
-    base_t.lengthscale = t_len
+    base_t.lengthscale = float(t_cfg.get("initial_lengthscale", 5.0))
     k_time_cont = gpytorch.kernels.ScaleKernel(base_t)
 
     # 2. Optional sigmoid abrupt jump kernel on time
     if t_jump_cfg.get("enabled", True):
-        step_t = float(t_jump_cfg.get("initial_step_time_days", 10.0))
-        steep = float(t_jump_cfg.get("initial_steepness", 2.0))
-        learn_t = bool(t_jump_cfg.get("learn_step_time", True))
         step_kern = SigmoidStepKernel(
-            step_time=step_t,
-            steepness=steep,
-            learn_step_time=learn_t,
+            step_time=float(t_jump_cfg.get("initial_step_time_days", 10.0)),
+            steepness=float(t_jump_cfg.get("initial_steepness", 2.0)),
+            learn_step_time=bool(t_jump_cfg.get("learn_step_time", True)),
             active_dims=[0],
         )
-        k_jump = gpytorch.kernels.ScaleKernel(step_kern)
-        k_time = k_time_cont + k_jump
+        k_time = k_time_cont + gpytorch.kernels.ScaleKernel(step_kern)
     else:
         k_time = k_time_cont
 
     # 3. Categorical die kernel
-    d_type = die_cfg.get("type", "index").lower()
-    num_dies = int(die_cfg.get("num_dies", 9))
-    rank = int(die_cfg.get("rank", 2))
-    if d_type == "index":
-        k_die = gpytorch.kernels.IndexKernel(
-            num_tasks=num_dies, rank=rank, active_dims=[1]
+    if str(die_cfg.get("type", "index")).lower() == "index":
+        k_die: gpytorch.kernels.Kernel = gpytorch.kernels.IndexKernel(
+            num_tasks=int(die_cfg.get("num_dies", 9)),
+            rank=int(die_cfg.get("rank", 2)),
+            active_dims=[1],
         )
     else:
-        d_len = float(die_cfg.get("initial_lengthscale", 1.0))
         base_d = gpytorch.kernels.RBFKernel(active_dims=[1])
-        base_d.lengthscale = d_len
+        base_d.lengthscale = float(die_cfg.get("initial_lengthscale", 1.0))
         k_die = gpytorch.kernels.ScaleKernel(base_d)
 
     # 4. Composition
@@ -169,9 +165,9 @@ class DieFluxExactGPModel(gpytorch.models.ExactGP):
         self, x: torch.Tensor
     ) -> gpytorch.distributions.MultivariateNormal:
         """Compute the prior MultivariateNormal distribution at inputs x."""
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        return gpytorch.distributions.MultivariateNormal(
+            self.mean_module(x), self.covar_module(x)
+        )
 
 
 def get_default_gp_flux_config() -> dict[str, Any]:
@@ -227,38 +223,33 @@ def build_gp_flux_dataset(
     Returns
     -------
     dict[str, Any]
-        Dictionary containing tensors, metadata subsets, and normalization stats.
+        Dictionary containing tensors, metadata subsets, and normalization
+        stats.
     """
     cfg = {**get_default_gp_flux_config(), **(config or {})}
     ref_date = pd.to_datetime(cfg.get("reference_date", "2026-01-01"))
     unpaired_split = str(cfg.get("unpaired_split", "train"))
     target_col = str(cfg.get("target_column", "die_flux"))
 
-    # Filter to requested tool and deduplicate by measurement_id and die
-    df_tool = df_meta[df_meta["tool"] == tool_name].copy()
+    df_tool = df_meta[df_meta["tool"] == tool_name]
     if df_tool.empty:
         raise ValueError(f"No records found in df_meta for tool '{tool_name}'.")
-
     if target_col not in df_tool.columns:
         raise KeyError(f"Target column '{target_col}' not found in df_meta.")
 
     die_df = df_tool.drop_duplicates(subset=["measurement_id", "die"]).copy()
-
-    # Route unpaired measurements (split == 'none' or null) to user choice
     if "split" not in die_df.columns:
         die_df["split"] = unpaired_split
     else:
         mask_unpaired = die_df["split"].isna() | (die_df["split"] == "none")
         die_df.loc[mask_unpaired, "split"] = unpaired_split
 
-    # Compute continuous absolute elapsed days from reference date
     die_df["time"] = pd.to_datetime(die_df["time"])
     die_df["time_days"] = (
         (die_df["time"] - ref_date).dt.total_seconds() / 86400.0
     ).astype(float)
     die_df["die_idx"] = die_df["die"].astype(int)
 
-    # Standardize target flux strictly using training split statistics
     df_train = die_df[die_df["split"] == "train"]
     if df_train.empty:
         raise ValueError(
@@ -269,21 +260,25 @@ def build_gp_flux_dataset(
     y_std = float(df_train[target_col].std(ddof=0))
     if y_std < 1e-8:
         y_std = 1.0
-
     die_df["target_norm"] = (die_df[target_col] - y_mean) / y_std
 
-    def _extract_tensors(subset: pd.DataFrame) -> tuple[torch.Tensor, torch.Tensor]:
+    def _extract_tensors(
+        split_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        subset = die_df[die_df["split"] == split_name]
         if subset.empty:
-            return torch.empty((0, 2), dtype=torch.float32), torch.empty(
-                (0,), dtype=torch.float32
+            return (
+                torch.empty((0, 2), dtype=torch.float32),
+                torch.empty((0,), dtype=torch.float32),
             )
-        x_mat = subset[["time_days", "die_idx"]].to_numpy(dtype=np.float32)
-        y_vec = subset["target_norm"].to_numpy(dtype=np.float32)
-        return torch.tensor(x_mat), torch.tensor(y_vec)
+        return (
+            torch.tensor(subset[["time_days", "die_idx"]].to_numpy(dtype=np.float32)),
+            torch.tensor(subset["target_norm"].to_numpy(dtype=np.float32)),
+        )
 
-    train_x, train_y = _extract_tensors(die_df[die_df["split"] == "train"])
-    val_x, val_y = _extract_tensors(die_df[die_df["split"] == "val"])
-    test_x, test_y = _extract_tensors(die_df[die_df["split"] == "test"])
+    train_x, train_y = _extract_tensors("train")
+    val_x, val_y = _extract_tensors("val")
+    test_x, test_y = _extract_tensors("test")
 
     return {
         "tool": tool_name,
@@ -309,7 +304,8 @@ def train_gp_die_flux_model(
     Parameters
     ----------
     train_x : torch.Tensor
-        Training inputs of shape (N, 2), where column 0 is time and column 1 is die.
+        Training inputs of shape (N, 2), where column 0 is time and column 1
+        is die.
     train_y : torch.Tensor
         Normalized training targets of shape (N,).
     config : dict[str, Any] | None, optional
@@ -322,12 +318,13 @@ def train_gp_die_flux_model(
     """
     cfg = config or {}
     train_cfg = cfg.get("training", {})
-    kernel_cfg = cfg.get("kernel", {})
     num_iter = int(train_cfg.get("num_iterations", 150))
     lr = float(train_cfg.get("learning_rate", 0.05))
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
-    model = DieFluxExactGPModel(train_x, train_y, likelihood, kernel_config=kernel_cfg)
+    model = DieFluxExactGPModel(
+        train_x, train_y, likelihood, kernel_config=cfg.get("kernel", {})
+    )
 
     model.train()
     likelihood.train()
@@ -336,8 +333,7 @@ def train_gp_die_flux_model(
 
     for _ in range(num_iter):
         optimizer.zero_grad()
-        output = model(train_x)
-        loss = -mll(output, train_y)
+        loss = -mll(model(train_x), train_y)
         loss.backward()
         optimizer.step()
 
@@ -379,22 +375,38 @@ def predict_gp_die_flux(
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         pred_dist = likelihood(model(eval_x))
         mean_norm = pred_dist.mean.cpu().numpy()
-        lower_norm, upper_norm = pred_dist.confidence_region()
-        lower_norm = lower_norm.cpu().numpy()
-        upper_norm = upper_norm.cpu().numpy()
+        lower_t, upper_t = pred_dist.confidence_region()
+        lower_norm, upper_norm = lower_t.cpu().numpy(), upper_t.cpu().numpy()
 
     y_mean = scaler.get("mean", 0.0)
     y_std = scaler.get("std", 1.0)
+    return (
+        mean_norm * y_std + y_mean,
+        lower_norm * y_std + y_mean,
+        upper_norm * y_std + y_mean,
+    )
 
-    pred_mean = mean_norm * y_std + y_mean
-    pred_lower = lower_norm * y_std + y_mean
-    pred_upper = upper_norm * y_std + y_mean
 
-    return pred_mean, pred_lower, pred_upper
+def _build_split_metrics_row(
+    df_subset: pd.DataFrame, tool_label: str, die_label: str
+) -> dict[str, Any]:
+    """Compute MAE and MAPE metrics across train, val, and test splits."""
+    row: dict[str, Any] = {"tool": tool_label, "die": die_label}
+    for split_name in ("train", "val", "test"):
+        s_rows = df_subset[df_subset["split"] == split_name]
+        if s_rows.empty:
+            row[f"mae_{split_name}"] = np.nan
+            row[f"mape_{split_name}%"] = "-"
+        else:
+            row[f"mae_{split_name}"] = round(float(s_rows["abs_err"].mean()), 2)
+            row[f"mape_{split_name}%"] = f"{float(s_rows['ape'].mean()):.2f}%"
+    return row
 
 
 def evaluate_gp_die_flux_models(
-    models_dict: dict[str, tuple[DieFluxExactGPModel, gpytorch.likelihoods.GaussianLikelihood]],
+    models_dict: dict[
+        str, tuple[DieFluxExactGPModel, gpytorch.likelihoods.GaussianLikelihood]
+    ],
     datasets_dict: dict[str, dict[str, Any]],
 ) -> pd.DataFrame:
     """Evaluate MAE and MAPE across train, val, and test per die and tool.
@@ -412,57 +424,35 @@ def evaluate_gp_die_flux_models(
         Summary table with columns: 'tool', 'die', 'mae_train', 'mape_train%',
         'mae_val', 'mape_val%', 'mae_test', 'mape_test%'.
     """
-    records = []
+    records: list[dict[str, Any]] = []
 
     for tool_name, (model, likelihood) in models_dict.items():
         ds = datasets_dict[tool_name]
-        die_df = ds["die_df"]
-        scaler = ds["scaler"]
+        die_df = ds["die_df"].copy()
         target_col = ds["target_column"]
 
-        # Predict across all records in die_df
         all_x = torch.tensor(
             die_df[["time_days", "die_idx"]].to_numpy(dtype=np.float32)
         )
-        pred_mean, _, _ = predict_gp_die_flux(model, likelihood, all_x, scaler)
-        die_df = die_df.copy()
+        pred_mean, _, _ = predict_gp_die_flux(
+            model, likelihood, all_x, ds["scaler"]
+        )
         die_df["pred_flux"] = pred_mean
         die_df["abs_err"] = (die_df["pred_flux"] - die_df[target_col]).abs()
         safe_true = np.maximum(die_df[target_col].to_numpy(), 1e-8)
         die_df["ape"] = (die_df["abs_err"] / safe_true) * 100.0
 
-        dies = sorted(die_df["die_idx"].unique())
-        for d in dies:
-            d_sub = die_df[die_df["die_idx"] == d]
-            row: dict[str, Any] = {"tool": tool_name, "die": str(d)}
-            for split_name in ["train", "val", "test"]:
-                s_rows = d_sub[d_sub["split"] == split_name]
-                if not s_rows.empty:
-                    mae_val = float(s_rows["abs_err"].mean())
-                    mape_val = float(s_rows["ape"].mean())
-                    row[f"mae_{split_name}"] = round(mae_val, 2)
-                    row[f"mape_{split_name}%"] = f"{mape_val:.2f}%"
-                else:
-                    row[f"mae_{split_name}"] = np.nan
-                    row[f"mape_{split_name}%"] = "-"
-            records.append(row)
+        for die_id in sorted(die_df["die_idx"].unique()):
+            records.append(
+                _build_split_metrics_row(
+                    die_df[die_df["die_idx"] == die_id], tool_name, str(die_id)
+                )
+            )
+        records.append(
+            _build_split_metrics_row(die_df, f"{tool_name} (Mean)", "All")
+        )
 
-        # Tool average row
-        tool_row: dict[str, Any] = {"tool": f"{tool_name} (Mean)", "die": "All"}
-        for split_name in ["train", "val", "test"]:
-            s_rows = die_df[die_df["split"] == split_name]
-            if not s_rows.empty:
-                mae_val = float(s_rows["abs_err"].mean())
-                mape_val = float(s_rows["ape"].mean())
-                tool_row[f"mae_{split_name}"] = round(mae_val, 2)
-                tool_row[f"mape_{split_name}%"] = f"{mape_val:.2f}%"
-            else:
-                tool_row[f"mae_{split_name}"] = np.nan
-                tool_row[f"mape_{split_name}%"] = "-"
-        records.append(tool_row)
-
-    df_metrics = pd.DataFrame(records)
-    return df_metrics
+    return pd.DataFrame(records)
 
 
 def run_gp_flux_pipeline(
@@ -481,44 +471,41 @@ def run_gp_flux_pipeline(
     Returns
     -------
     tuple[dict[str, Any], pd.DataFrame]
-        Dictionary of trained model bundles and the performance metrics DataFrame.
+        Dictionary of trained model bundles and the performance metrics
+        DataFrame.
     """
     cfg = {**get_default_gp_flux_config(), **(config or {})}
 
-    # Identify source and target tools
-    src_cfg = cfg.get("source_tool")
-    tgt_cfg = cfg.get("target_tool")
+    src_cfg, tgt_cfg = cfg.get("source_tool"), cfg.get("target_tool")
     if src_cfg and tgt_cfg:
         tools_to_run = [str(src_cfg), str(tgt_cfg)]
     elif "tool_target" in df_meta.columns and df_meta["tool_target"].dropna().any():
         paired_rows = df_meta[df_meta["tool_target"].notna()]
-        source_tool = str(paired_rows["tool"].iloc[0])
-        target_tool = str(paired_rows["tool_target"].iloc[0])
-        tools_to_run = [source_tool, target_tool]
+        tools_to_run = [
+            str(paired_rows["tool"].iloc[0]),
+            str(paired_rows["tool_target"].iloc[0]),
+        ]
     else:
         tools_to_run = list(df_meta["tool"].dropna().unique())[:2]
 
     models_dict = {}
     datasets_dict = {}
 
-    for t in tools_to_run:
-        ds = build_gp_flux_dataset(df_meta, t, cfg)
-        datasets_dict[t] = ds
-
-        # Print sample counts separately as requested
-        n_tr = len(ds["train_x"])
-        n_va = len(ds["val_x"])
-        n_te = len(ds["test_x"])
-        print(f"  [{t}] GP dataset sample counts: train={n_tr}, val={n_va}, test={n_te}")
-
-        model, likelihood = train_gp_die_flux_model(ds["train_x"], ds["train_y"], cfg)
-        models_dict[t] = (model, likelihood)
+    for tool_name in tools_to_run:
+        ds = build_gp_flux_dataset(df_meta, tool_name, cfg)
+        datasets_dict[tool_name] = ds
+        print(
+            f"  [{tool_name}] GP dataset sample counts: "
+            f"train={len(ds['train_x'])}, val={len(ds['val_x'])}, "
+            f"test={len(ds['test_x'])}"
+        )
+        models_dict[tool_name] = train_gp_die_flux_model(
+            ds["train_x"], ds["train_y"], cfg
+        )
 
     df_metrics = evaluate_gp_die_flux_models(models_dict, datasets_dict)
-
-    bundle = {
+    return {
         "models": models_dict,
         "datasets": datasets_dict,
         "config": cfg,
-    }
-    return bundle, df_metrics
+    }, df_metrics
