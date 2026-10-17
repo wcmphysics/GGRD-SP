@@ -1,7 +1,8 @@
 """Quantitative model evaluation and prediction metrics for GGRD-SP.
 
-Provides numerical metrics comparing predicted spectra against ground truth target spectra,
-fulfilling Part 4 of GEMINI.md independently from plotting libraries.
+Provides numerical metrics comparing predicted spectra against ground truth
+target spectra, fulfilling Part 4 of GEMINI.md independently from plotting
+libraries.
 """
 
 from __future__ import annotations
@@ -18,19 +19,20 @@ def calculate_prediction_metrics(
     data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate quantitative evaluation metrics comparing predicted spectra with ground truth target spectra.
+    """Calculate quantitative metrics comparing predicted and target spectra.
 
-    Computes Normalized MSE, Raw RMSE, and Peak Relative Error % per paired sample.
+    Computes Normalized MSE, Raw RMSE, and Peak Relative Error % per paired
+    sample.
 
     Parameters
     ----------
     data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
         Original measured data (ary_intensity, ary_energy, df_meta).
     data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Predicted data (ary_intensity_predicted, ary_energy_predicted, df_meta_predicted).
+        Predicted data (ary_intensity_pred, ary_energy_pred, df_meta_pred).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'regions' (list[str] | None): Specific regions to evaluate (default all).
+        - 'regions' (list[str] | None): Specific regions to evaluate.
         - 'eps' (float): Epsilon floor for maximum normalization (default 1e-4).
 
     Returns
@@ -43,8 +45,8 @@ def calculate_prediction_metrics(
 
     cfg = config or {}
     regions_filter = cfg.get("regions")
-    eps: float = float(cfg.get("eps", 1e-4))
-    norm_by_tgt_max: bool = bool(cfg.get("normalized_by_target_max", True))
+    eps = max(float(cfg.get("eps", 1e-4)), 1e-12)
+    norm_by_tgt_max = bool(cfg.get("normalized_by_target_max", True))
     mse_col = "MSE_normalized_by_target" if norm_by_tgt_max else "MSE"
 
     records: list[dict[str, Any]] = []
@@ -72,7 +74,10 @@ def calculate_prediction_metrics(
         tgt_meas_id = str(src_row["measurement_id_target"])
 
         # Use spectrum_index_target directly from df_meta if available
-        if "spectrum_index_target" in src_match.columns and pd.notna(src_row["spectrum_index_target"]):
+        if (
+            "spectrum_index_target" in src_match.columns
+            and pd.notna(src_row["spectrum_index_target"])
+        ):
             tgt_idx = int(src_row["spectrum_index_target"])
         else:
             tgt_match = df_meta_orig[
@@ -86,28 +91,24 @@ def calculate_prediction_metrics(
 
         y_true = ary_intensity_orig[tgt_idx]
         y_pred = ary_intensity_pred[pred_idx]
+        diff = y_pred - y_true
 
-        safe_eps = max(float(eps), 1e-12)
-        max_true = max(float(np.max(np.abs(y_true))), safe_eps)
+        max_true = max(float(np.max(np.abs(y_true))), eps)
         max_pred = float(np.max(np.abs(y_pred)))
 
-        if norm_by_tgt_max:
-            mse_val = float(np.mean(((y_pred - y_true) / max_true) ** 2))
-        else:
-            mse_val = float(np.mean((y_pred - y_true) ** 2))
-
-        raw_rmse = float(np.sqrt(np.mean((y_pred - y_true) ** 2)))
+        mse_val = float(
+            np.mean((diff / max_true) ** 2) if norm_by_tgt_max else np.mean(diff**2)
+        )
+        raw_rmse = float(np.sqrt(np.mean(diff**2)))
         peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
-        max_err_pct = float(np.max(np.abs(y_pred - y_true)) / max_true * 100.0)
-
-        split_val = str(pred_row.get("split", "all"))
+        max_err_pct = float(np.max(np.abs(diff)) / max_true * 100.0)
 
         records.append({
             "source_measurement_id": src_meas_id,
             "target_measurement_id": tgt_meas_id,
             "region": region,
             "die": die,
-            "split": split_val,
+            "split": str(pred_row.get("split", "all")),
             mse_col: mse_val,
             "rmse": raw_rmse,
             "peak_err_pct": peak_err_pct,
@@ -134,76 +135,96 @@ def calculate_prediction_metrics(
                 "max_err_pct_std",
             ]
         )
-    else:
-        group_cols = list(cfg.get("group_by", ["region"]))
-        metrics_to_agg = [mse_col, "rmse", "peak_err_pct", "max_err_pct"]
-        df_summary = (
-            df_per_sample.groupby(group_cols)[metrics_to_agg]
-            .agg(["mean", "std"])
-            .reset_index()
-        )
-        # Flatten column multi-index
-        df_summary.columns = [
-            "_".join(col).strip("_") for col in df_summary.columns.values
-        ]
+        return df_per_sample, df_summary
 
+    group_cols = list(cfg.get("group_by", ["region"]))
+    metrics_to_agg = [mse_col, "rmse", "peak_err_pct", "max_err_pct"]
+    df_summary = (
+        df_per_sample.groupby(group_cols)[metrics_to_agg]
+        .agg(["mean", "std"])
+        .reset_index()
+    )
+    # Flatten column multi-index
+    df_summary.columns = [
+        "_".join(col).strip("_") for col in df_summary.columns.values
+    ]
     return df_per_sample, df_summary
 
 
+_MSE_SPEC = ("MSE", "MSE", lambda m, s: f"{m:.6f} ± {s:.6f}")
+_NORM_MSE_SPEC = (
+    "MSE_normalized_by_target",
+    "norm_mse",
+    lambda m, s: f"{m:.4f} ± {s:.4f}",
+)
+_RMSE_SPEC = ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}")
+_PEAK_ERR_SPEC = ("peak_err_pct", "peak_err%", lambda m, s: f"{m:.2f}% ± {s:.2f}%")
+_MAX_ERR_SPEC = ("max_err_pct", "max%err", lambda m, s: f"{m:.2f}% ± {s:.2f}%")
+
 METRIC_SPECS: dict[str, tuple[str, str, Any]] = {
-    "mse": ("MSE", "MSE", lambda m, s: f"{m:.6f} ± {s:.6f}"),
-    "mse_normalized_by_target": (
-        "MSE_normalized_by_target",
-        "norm_mse",
-        lambda m, s: f"{m:.4f} ± {s:.4f}",
-    ),
-    "norm_mse": (
-        "MSE_normalized_by_target",
-        "norm_mse",
-        lambda m, s: f"{m:.4f} ± {s:.4f}",
-    ),
-    "normalized_mse": (
-        "MSE_normalized_by_target",
-        "norm_mse",
-        lambda m, s: f"{m:.4f} ± {s:.4f}",
-    ),
-    "rmse": ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}"),
-    "rms": ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}"),
-    "peak_err%": ("peak_err_pct", "peak_err%", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
-    "peak_err_pct": ("peak_err_pct", "peak_err%", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
-    "max%err": ("max_err_pct", "max%err", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
-    "max_err%": ("max_err_pct", "max%err", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
-    "max_err_pct": ("max_err_pct", "max%err", lambda m, s: f"{m:.2f}% ± {s:.2f}%"),
+    "mse": _MSE_SPEC,
+    "mse_normalized_by_target": _NORM_MSE_SPEC,
+    "norm_mse": _NORM_MSE_SPEC,
+    "normalized_mse": _NORM_MSE_SPEC,
+    "rmse": _RMSE_SPEC,
+    "rms": _RMSE_SPEC,
+    "peak_err%": _PEAK_ERR_SPEC,
+    "peak_err_pct": _PEAK_ERR_SPEC,
+    "max%err": _MAX_ERR_SPEC,
+    "max_err%": _MAX_ERR_SPEC,
+    "max_err_pct": _MAX_ERR_SPEC,
 }
+
+
+def _resolve_metric_column(
+    columns: pd.Index,
+    col_name: str,
+    label: str,
+    is_normalized: bool,
+) -> tuple[str, str]:
+    """Resolve effective metric column name and display label."""
+    actual_col = col_name
+    actual_label = "MSE" if (not is_normalized and label == "norm_mse") else label
+    if actual_col not in columns and col_name in (
+        "MSE",
+        "MSE_normalized_by_target",
+        "normalized_mse",
+    ):
+        for alt in ("MSE_normalized_by_target", "MSE", "normalized_mse"):
+            if alt in columns:
+                actual_col = alt
+                actual_label = "MSE" if alt == "MSE" else "norm_mse"
+                break
+    return actual_col, actual_label
 
 
 def format_side_by_side_metrics(
     df_per_sample: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Format sample prediction metrics into a side-by-side comparison across splits.
+    """Format sample prediction metrics into side-by-side split comparisons.
 
-    Produces a clean comparison table comparing model performance across configured
-    splits ('train', 'test', etc.) and metrics ('norm_mse', 'peak_err%', 'max%err', etc.)
-    for each spectral region, with columns grouped by split.
+    Produces a clean comparison table comparing model performance across
+    configured splits ('train', 'test', etc.) and metrics ('norm_mse',
+    'peak_err%', 'max%err', etc.) for each spectral region, with columns
+    grouped by split.
 
     Parameters
     ----------
     df_per_sample : pd.DataFrame
-        DataFrame of per-sample evaluation metrics containing 'region', 'split',
-        'normalized_mse', 'rmse', 'peak_err_pct', and 'max_err_pct'.
+        DataFrame of per-sample evaluation metrics containing 'region',
+        'split', 'normalized_mse', 'rmse', 'peak_err_pct', and 'max_err_pct'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'splits' (list[str]): Data splits to display (default ['train', 'test']).
-        - 'metrics' (list[str]): Metrics to display (default ['norm_mse', 'peak_err%', 'max%err']).
-          Supported metrics: 'norm_mse' (or 'normalized_mse'), 'rmse' (or 'rms'),
-          'peak_err%' (or 'peak_err_pct'), 'max%err' (or 'max_err%').
-        - 'format_str' (bool): Format values as 'mean ± std' string (default True).
+        - 'splits' (list[str]): Splits to display (default ['train', 'test']).
+        - 'metrics' (list[str]): Metrics to display (default ['norm_mse',
+          'peak_err%', 'max%err']).
+        - 'format_str' (bool): Format as 'mean ± std' string (default True).
 
     Returns
     -------
     pd.DataFrame
-        DataFrame with regions as rows and side-by-side metric columns grouped by split.
+        DataFrame with regions as rows and metric columns grouped by split.
     """
     if df_per_sample.empty or "split" not in df_per_sample.columns:
         return pd.DataFrame()
@@ -218,8 +239,9 @@ def format_side_by_side_metrics(
             or "normalized_mse" in df_per_sample.columns
         )
     default_mse_key = "norm_mse" if is_normalized else "mse"
-    default_metrics = [default_mse_key, "peak_err%", "max%err"]
-    chosen_metrics = list(cfg.get("metrics", default_metrics))
+    chosen_metrics = list(
+        cfg.get("metrics", [default_mse_key, "peak_err%", "max%err"])
+    )
 
     # Resolve metric specifications
     resolved_metrics: list[tuple[str, str, Any]] = []
@@ -232,7 +254,9 @@ def format_side_by_side_metrics(
         resolved_metrics.append(METRIC_SPECS[m_lower])
 
     # Filter splits to those requested and actually present in the data
-    present_splits = [s for s in preferred_splits if s in df_per_sample["split"].unique()]
+    present_splits = [
+        s for s in preferred_splits if s in df_per_sample["split"].unique()
+    ]
     if not present_splits:
         return pd.DataFrame()
 
@@ -246,44 +270,24 @@ def format_side_by_side_metrics(
         # Group by split: for each split, output configured metrics in order
         for split in present_splits:
             s_df = reg_df[reg_df["split"] == split]
-            if s_df.empty:
-                for col_name, label, _ in resolved_metrics:
-                    actual_label = label
-                    if not is_normalized and actual_label == "norm_mse":
-                        actual_label = "MSE"
-                    if format_str:
-                        row_dict[f"{actual_label}_{split}"] = "N/A"
-                    else:
-                        row_dict[f"{actual_label}_{split}_mean"] = np.nan
-                        row_dict[f"{actual_label}_{split}_std"] = np.nan
-                continue
-
             for col_name, label, fmt_fn in resolved_metrics:
-                actual_col = col_name
-                actual_label = label
-                if actual_col not in s_df.columns and col_name in (
-                    "MSE", "MSE_normalized_by_target", "normalized_mse"
-                ):
-                    for alt in ("MSE_normalized_by_target", "MSE", "normalized_mse"):
-                        if alt in s_df.columns:
-                            actual_col = alt
-                            if alt == "MSE" and actual_label == "norm_mse":
-                                actual_label = "MSE"
-                            elif alt != "MSE" and actual_label == "MSE":
-                                actual_label = "norm_mse"
-                            break
-                if actual_col not in s_df.columns:
-                    val_mean = np.nan
-                    val_std = np.nan
+                actual_col, actual_label = _resolve_metric_column(
+                    s_df.columns, col_name, label, bool(is_normalized)
+                )
+                if s_df.empty or actual_col not in s_df.columns:
+                    val_mean, val_std = np.nan, np.nan
                 else:
                     val_mean = float(s_df[actual_col].mean())
-                    val_std = float(s_df[actual_col].std()) if len(s_df) > 1 else 0.0
+                    val_std = (
+                        float(s_df[actual_col].std()) if len(s_df) > 1 else 0.0
+                    )
 
                 if format_str:
-                    if np.isnan(val_mean):
-                        row_dict[f"{actual_label}_{split}"] = "N/A"
-                    else:
-                        row_dict[f"{actual_label}_{split}"] = fmt_fn(val_mean, val_std)
+                    row_dict[f"{actual_label}_{split}"] = (
+                        "N/A"
+                        if np.isnan(val_mean)
+                        else fmt_fn(val_mean, val_std)
+                    )
                 else:
                     row_dict[f"{actual_label}_{split}_mean"] = val_mean
                     row_dict[f"{actual_label}_{split}_std"] = val_std
@@ -291,3 +295,4 @@ def format_side_by_side_metrics(
         rows.append(row_dict)
 
     return pd.DataFrame(rows)
+

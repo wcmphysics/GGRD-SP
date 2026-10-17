@@ -15,7 +15,7 @@ import pandas as pd
 from utility.flux import trapezoid_integral
 
 
-# Standard Scofield relative sensitivity factors (RSF) for Al-Ka X-ray excitation
+# Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation
 DEFAULT_SCOFIELD_RSF: dict[str, float] = {
     "C1s": 1.000,
     "Al2p": 0.537,
@@ -25,20 +25,32 @@ DEFAULT_SCOFIELD_RSF: dict[str, float] = {
 }
 
 
+def _mean_std(
+    series: pd.Series,
+    decimals: int | None = None,
+) -> tuple[float, float]:
+    """Return sample mean and sample standard deviation (0.0 if len <= 1)."""
+    mean_val = float(series.mean())
+    std_val = float(series.std(ddof=1)) if len(series) > 1 else 0.0
+    if decimals is not None:
+        return round(mean_val, decimals), round(std_val, decimals)
+    return mean_val, std_val
+
+
 def get_default_quantification_config() -> dict[str, Any]:
-    """Return default configuration options for atomic percentage quantification.
+    """Return default configuration for atomic percentage quantification.
 
     Returns
     -------
     dict[str, Any]
         Dictionary packaging quantification parameters:
         - 'material': 'NMG'
-        - 'measurement_id': None (if None, calculates for all sessions in df_meta)
+        - 'measurement_id': None (if None, calculates for all sessions)
         - 'rsf_dict': dict mapping region name to relative sensitivity factor
         - 'default_endpoint_strategy': 'minima' ('minima', 'edge', or 'direct')
-        - 'default_endpoint_average_ev': 1.0 (average intensity over 1.0 eV window with mirror padding)
-        - 'region_endpoint_config': None (optional dict mapping region to strategy/average/points overrides)
-        - 'smooth_endpoints_search': False (optional smoothing for minima search)
+        - 'default_endpoint_average_ev': 1.0 (average over 1.0 eV window)
+        - 'region_endpoint_config': None (optional per-region overrides)
+        - 'smooth_endpoints_search': False
         - 'max_iter': 50
         - 'tol': 1e-5
     """
@@ -61,10 +73,11 @@ def _calculate_endpoint_intensity(
     idx: int,
     average_width_ev: float | None = 1.0,
 ) -> float:
-    """Calculate boundary intensity averaged over an energy window centered at idx with mirror padding.
+    """Calculate boundary intensity averaged over a mirror-padded eV window.
 
-    If the averaging window extends outside available spectral data, reflection padding
-    without edge repetition (matching CNN ReflectionPad1d / np.pad mode='reflect') is used.
+    If the averaging window extends outside available spectral data, reflection
+    padding without edge repetition (matching CNN ReflectionPad1d / np.pad
+    mode='reflect') is used.
 
     Parameters
     ----------
@@ -75,8 +88,8 @@ def _calculate_endpoint_intensity(
     idx : int
         Index of the endpoint (0 <= idx < len(intensity)).
     average_width_ev : float | None, optional
-        Averaging window width in eV. If None or <= 0.0, raw intensity at idx is returned.
-        Default is 1.0 eV.
+        Averaging window width in eV. If None or <= 0.0, raw intensity at idx
+        is returned. Default is 1.0 eV.
 
     Returns
     -------
@@ -103,7 +116,9 @@ def _calculate_endpoint_intensity(
     padded_e = np.concatenate([e_left, energy, e_right])
 
     target_e = float(energy[idx])
-    mask = (padded_e >= target_e - half_w - 1e-9) & (padded_e <= target_e + half_w + 1e-9)
+    mask = (padded_e >= target_e - half_w - 1e-9) & (
+        padded_e <= target_e + half_w + 1e-9
+    )
     if not np.any(mask):
         return float(intensity[idx])
     return float(np.mean(padded_i[mask]))
@@ -115,14 +130,14 @@ def _find_minima_endpoints(
     smooth_search: bool = False,
     region: str = "",
 ) -> tuple[int, int]:
-    """Determine low and high BE endpoints via directional minima search from peak maximum.
+    """Determine low and high BE endpoints via directional minima search.
 
     Procedure:
     1. Locate maximum intensity index in the regional spectrum.
     2. Search in the high BE direction for the lowest intensity -> E2 index.
     3. Search in the low BE direction for the lowest intensity -> E1 index.
     If E1 >= E2:
-        Fallback to full spectrum bounds [0, n_pts - 1] with an informative warning.
+        Fallback to full spectrum bounds [0, n_pts - 1] with a warning.
 
     Parameters
     ----------
@@ -140,6 +155,7 @@ def _find_minima_endpoints(
     tuple[int, int]
         (idx_1, idx_2) where idx_1 < idx_2.
     """
+    del energy
     n_pts = len(intensity)
     if n_pts < 2:
         return 0, max(0, n_pts - 1)
@@ -162,11 +178,70 @@ def _find_minima_endpoints(
     if idx_1 >= idx_2:
         region_label = f" for '{region}'" if region else ""
         warnings.warn(
-            f"Degenerate minima{region_label} endpoints detected (idx_1={idx_1} >= idx_2={idx_2}). "
+            f"Degenerate minima{region_label} endpoints detected "
+            f"(idx_1={idx_1} >= idx_2={idx_2}). "
             f"Falling back to full spectrum bounds [0, {n_pts - 1}]."
         )
         return 0, n_pts - 1
 
+    return idx_1, idx_2
+
+
+def _resolve_direct_endpoints(
+    energy: np.ndarray,
+    cfg: dict[str, Any],
+    region_cfg: dict[str, Any],
+    strategy: str,
+) -> tuple[int, int]:
+    """Resolve and validate direct energy endpoints to index bounds."""
+    region = str(cfg.get("region", ""))
+    direct_pts = (
+        region_cfg.get("energy_endpoints")
+        or region_cfg.get("points")
+        or cfg.get("energy_endpoints")
+        or cfg.get("points")
+    )
+    if isinstance(direct_pts, dict):
+        direct_pts = direct_pts.get(region)
+
+    if direct_pts is None:
+        raise ValueError(
+            f"Strategy '{strategy}' specified for region '{region}', but no "
+            "endpoint coordinates ('energy_endpoints': (e_start, e_end)) "
+            "were provided in config."
+        )
+    if not isinstance(direct_pts, (tuple, list)) or len(direct_pts) != 2:
+        raise ValueError(
+            f"Invalid energy_endpoints format for region '{region}': expected "
+            f"tuple or list of 2 numbers (e_start, e_end), got {direct_pts}"
+        )
+
+    p1, p2 = float(direct_pts[0]), float(direct_pts[1])
+    if not (np.isfinite(p1) and np.isfinite(p2)):
+        raise ValueError(
+            f"Invalid non-finite energy_endpoints coordinates for region "
+            f"'{region}': got ({p1}, {p2})"
+        )
+
+    e_min = float(min(energy[0], energy[-1]))
+    e_max = float(max(energy[0], energy[-1]))
+    if max(p1, p2) <= e_min or min(p1, p2) >= e_max:
+        raise ValueError(
+            f"Direct energy_endpoints ({p1}, {p2}) lie entirely outside "
+            f"spectral energy range [{e_min:.2f}, {e_max:.2f}] for region "
+            f"'{region}'."
+        )
+
+    idx_a = int(np.argmin(np.abs(energy - p1)))
+    idx_b = int(np.argmin(np.abs(energy - p2)))
+    idx_1, idx_2 = min(idx_a, idx_b), max(idx_a, idx_b)
+    if idx_1 >= idx_2:
+        raise ValueError(
+            f"Direct energy_endpoints ({p1}, {p2}) resolve to degenerate "
+            f"index range [idx_1={idx_1}, idx_2={idx_2}] on energy span "
+            f"[{energy[0]:.2f}, {energy[-1]:.2f}] for region '{region}'. "
+            "Endpoints must map to distinct spectral indices."
+        )
     return idx_1, idx_2
 
 
@@ -175,17 +250,15 @@ def determine_shirley_endpoints(
     intensity: np.ndarray,
     config: dict[str, Any] | None = None,
 ) -> tuple[int, int, float, float]:
-    """Determine start and end index and boundary baseline intensities for Shirley background.
+    """Determine endpoint indices and baseline intensities for Shirley baseline.
 
     Supports three strategies:
-    1. 'minima' (or 'special'): Directional minima search on both sides of peak maximum (Default).
-    2. 'edge' (or 'bounds'): Boundary points of the spectral region [0, N-1].
-    3. 'direct' (or 'manual', 'custom', 'points'): Directly user-specified start and end points
-       (e_start, e_end) in eV.
+    1. 'minima': Directional minima search on both sides of peak maximum.
+    2. 'edge': Boundary points of the spectral region [0, N-1].
+    3. 'direct': Directly user-specified start and end points in eV.
 
-    All strategies support optional boundary intensity averaging over an energy window of width W eV
-    centered at each endpoint, utilizing CNN mirror reflection padding without edge repetition
-    (ReflectionPad1d / np.pad mode='reflect') when the window extends outside available spectral data.
+    All strategies support optional boundary intensity averaging over an energy
+    window centered at each endpoint with mirror reflection padding.
 
     Parameters
     ----------
@@ -196,23 +269,21 @@ def determine_shirley_endpoints(
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'region' (str): Name of spectral region (e.g. 'Ti2p', 'Al2p').
-        - 'strategy' | 'endpoint_strategy' (str): Strategy ('minima', 'edge', or 'direct').
-          Default is 'minima'.
-        - 'points' | 'direct_points' (tuple[float, float] | None): Energy coordinates (e_start, e_end)
-          for the 'direct' strategy.
-        - 'average_width_ev' | 'average_ev' (float | None): Window width in eV for intensity averaging
-          (default 1.0 eV, 0.0 or None to disable).
-        - 'smooth_search' (bool): Smooth search curve before directional minima search (default False).
-        - 'region_endpoint_config' (dict[str, dict[str, Any]] | None): Per-region overrides, e.g.:
-          {'Al2p': {'strategy': 'edge', 'average_ev': 0.5},
-           'Ti2p': {'strategy': 'direct', 'points': (453.0, 467.0), 'average_ev': 1.0}}.
+        - 'strategy' (str): Strategy ('minima', 'edge', or 'direct').
+        - 'points' | 'energy_endpoints' (tuple[float, float] | None): Energy
+          coordinates (e_start, e_end) for the 'direct' strategy.
+        - 'average_width_ev' | 'average_ev' (float | None): Window width in eV
+          for intensity averaging (default 1.0 eV).
+        - 'smooth_search' (bool): Smooth curve before minima search.
+        - 'region_endpoint_config' (dict[str, dict[str, Any]] | None):
+          Per-region overrides.
 
     Returns
     -------
     tuple[int, int, float, float]
         (idx_1, idx_2, i_1, i_2) where:
         - idx_1, idx_2: Start and end indices (idx_1 < idx_2).
-        - i_1, i_2: Baseline intensities at idx_1 and idx_2 after optional averaging.
+        - i_1, i_2: Baseline intensities at idx_1 and idx_2 after averaging.
     """
     cfg = dict(config or {})
     region = str(cfg.get("region", ""))
@@ -221,20 +292,18 @@ def determine_shirley_endpoints(
         val = float(intensity[0]) if n_pts == 1 else 0.0
         return 0, max(0, n_pts - 1), val, val
 
-    # Per-region configuration override
     per_region_map = cfg.get("region_endpoint_config") or {}
-    region_cfg = per_region_map.get(region, {}) if isinstance(per_region_map, dict) else {}
-
-    # 1. Strategy resolution: Per-region > Specific user strategy > Default
-    strategy = region_cfg.get(
-        "strategy",
-        cfg.get(
-            "strategy",
-            cfg.get("default_endpoint_strategy", "minima"),
-        ),
+    region_cfg = (
+        per_region_map.get(region, {})
+        if isinstance(per_region_map, dict)
+        else {}
     )
 
-    # 2. Averaging width resolution: Per-region > Top-level > Default
+    strategy = region_cfg.get(
+        "strategy",
+        cfg.get("strategy", cfg.get("default_endpoint_strategy", "minima")),
+    )
+
     if "average_width_ev" in region_cfg:
         avg_ev = region_cfg["average_width_ev"]
     elif "average_ev" in region_cfg:
@@ -243,24 +312,17 @@ def determine_shirley_endpoints(
         avg_ev = cfg["average_width_ev"]
     else:
         avg_ev = cfg.get(
-            "default_endpoint_average_ev",
-            cfg.get("average_ev", 1.0),
+            "default_endpoint_average_ev", cfg.get("average_ev", 1.0)
         )
 
-    # 3. Smoothing flag resolution: Per-region > General smoothing > Default
     smooth_search = bool(
         region_cfg.get(
             "smooth_search",
-            cfg.get(
-                "smooth_search",
-                cfg.get("smooth_endpoints_search", False),
-            ),
+            cfg.get("smooth_search", cfg.get("smooth_endpoints_search", False)),
         )
     )
 
     norm_strategy = str(strategy).lower().strip()
-
-    # 4. Strategy execution
     if norm_strategy in ("minima", "directional_minima"):
         idx_1, idx_2 = _find_minima_endpoints(
             energy, intensity, smooth_search=smooth_search, region=region
@@ -268,59 +330,21 @@ def determine_shirley_endpoints(
     elif norm_strategy in ("edge", "bounds"):
         idx_1, idx_2 = 0, n_pts - 1
     elif norm_strategy in ("direct", "custom"):
-        # Resolve direct energy endpoints from per-region or top-level config
-        direct_pts = (
-            region_cfg.get("energy_endpoints")
-            or region_cfg.get("points")
-            or cfg.get("energy_endpoints")
-            or cfg.get("points")
+        idx_1, idx_2 = _resolve_direct_endpoints(
+            energy, cfg, region_cfg, str(strategy)
         )
-        if isinstance(direct_pts, dict):
-            direct_pts = direct_pts.get(region)
-
-        if direct_pts is None:
-            raise ValueError(
-                f"Strategy '{strategy}' specified for region '{region}', but no endpoint "
-                f"coordinates ('energy_endpoints': (e_start, e_end)) were provided in config."
-            )
-        if not isinstance(direct_pts, (tuple, list)) or len(direct_pts) != 2:
-            raise ValueError(
-                f"Invalid energy_endpoints format for region '{region}': expected tuple or list "
-                f"of 2 numbers (e_start, e_end), got {direct_pts}"
-            )
-
-        p1, p2 = float(direct_pts[0]), float(direct_pts[1])
-        if not (np.isfinite(p1) and np.isfinite(p2)):
-            raise ValueError(
-                f"Invalid non-finite energy_endpoints coordinates for region '{region}': got ({p1}, {p2})"
-            )
-
-        e_min, e_max = float(min(energy[0], energy[-1])), float(max(energy[0], energy[-1]))
-        p_low, p_high = min(p1, p2), max(p1, p2)
-        if p_high <= e_min or p_low >= e_max:
-            raise ValueError(
-                f"Direct energy_endpoints ({p1}, {p2}) lie entirely outside spectral energy range "
-                f"[{e_min:.2f}, {e_max:.2f}] for region '{region}'."
-            )
-
-        idx_a = int(np.argmin(np.abs(energy - p1)))
-        idx_b = int(np.argmin(np.abs(energy - p2)))
-        idx_1, idx_2 = min(idx_a, idx_b), max(idx_a, idx_b)
-        if idx_1 >= idx_2:
-            raise ValueError(
-                f"Direct energy_endpoints ({p1}, {p2}) resolve to degenerate index range "
-                f"[idx_1={idx_1}, idx_2={idx_2}] on energy span [{energy[0]:.2f}, {energy[-1]:.2f}] "
-                f"for region '{region}'. Endpoints must map to distinct spectral indices."
-            )
     else:
         raise ValueError(
             f"Unknown endpoint strategy '{strategy}' for region '{region}'. "
-            f"Supported strategies are: 'minima', 'edge', 'direct'."
+            "Supported strategies are: 'minima', 'edge', 'direct'."
         )
 
-    i_1 = _calculate_endpoint_intensity(energy, intensity, idx_1, average_width_ev=avg_ev)
-    i_2 = _calculate_endpoint_intensity(energy, intensity, idx_2, average_width_ev=avg_ev)
-
+    i_1 = _calculate_endpoint_intensity(
+        energy, intensity, idx_1, average_width_ev=avg_ev
+    )
+    i_2 = _calculate_endpoint_intensity(
+        energy, intensity, idx_2, average_width_ev=avg_ev
+    )
     return idx_1, idx_2, i_1, i_2
 
 
@@ -340,9 +364,9 @@ def calculate_shirley_background(
     config : dict[str, Any] | None, optional
         Dictionary bundling options:
         - 'region' (str): Name of the spectral region (e.g. 'Ti2p', 'Al2p').
-        - 'strategy' | 'endpoint_strategy' (str): 'minima', 'edge', or 'direct' (default 'minima').
-        - 'points' (tuple[float, float] | None): Energy endpoints (e_start, e_end) for 'direct' strategy.
-        - 'average_width_ev' (float | None): Averaging width in eV (default 1.0).
+        - 'strategy' (str): 'minima', 'edge', or 'direct' (default 'minima').
+        - 'points' (tuple[float, float] | None): Energy endpoints for 'direct'.
+        - 'average_width_ev' (float | None): Averaging width in eV (def 1.0).
         - 'region_endpoint_config' (dict | None): Per-region overrides.
         - 'max_iter' (int): Maximum Shirley iterations (default 50).
         - 'tol' (float): Convergence threshold (default 1e-5).
@@ -350,8 +374,8 @@ def calculate_shirley_background(
     Returns
     -------
     tuple[np.ndarray, float]
-        - background: 1D array of the same shape as intensity. Outside active [E1, E2],
-          background equals intensity B(E) = I(E).
+        - background: 1D array of the same shape as intensity. Outside active
+          [E1, E2], background equals intensity B(E) = I(E).
         - net_area: Integrated net peak area integral(I(E) - B(E)) dE.
 
     Raises
@@ -361,34 +385,27 @@ def calculate_shirley_background(
     """
     if len(energy) != len(intensity):
         raise ValueError(
-            f"energy and intensity arrays must have matching lengths, got {len(energy)} vs {len(intensity)}"
+            f"energy and intensity arrays must have matching lengths, "
+            f"got {len(energy)} vs {len(intensity)}"
         )
 
     cfg = config or {}
-    max_iter: int = int(cfg.get("max_iter", 50))
-    tol: float = float(cfg.get("tol", 1e-5))
+    max_iter = int(cfg.get("max_iter", 50))
+    tol = float(cfg.get("tol", 1e-5))
 
-    n_pts = len(intensity)
-    if n_pts < 2:
+    if len(intensity) < 2:
         return intensity.copy(), 0.0
 
     # Ensure internal calculations operate on ascending energy order
     is_descending = energy[0] > energy[-1]
-    if is_descending:
-        e_work = energy[::-1]
-        i_work = intensity[::-1]
-    else:
-        e_work = energy
-        i_work = intensity
+    e_work = energy[::-1] if is_descending else energy
+    i_work = intensity[::-1] if is_descending else intensity
 
-    # Determine endpoints and boundary intensities via unified strategy resolver
-    idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(e_work, i_work, config=cfg)
-
-    # Extract sub-interval
+    idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(
+        e_work, i_work, config=cfg
+    )
     e_sub = e_work[idx_1 : idx_2 + 1]
     i_sub = i_work[idx_1 : idx_2 + 1]
-
-    # Initial linear background connecting endpoints
     e_span = float(e_sub[-1] - e_sub[0])
 
     if e_span == 0.0 or len(e_sub) < 2:
@@ -397,40 +414,30 @@ def calculate_shirley_background(
     else:
         # Linear initialization using effective boundary intensities
         b_sub = i_1 + (i_2 - i_1) * (e_sub - e_sub[0]) / e_span
+        dx = np.diff(e_sub)
 
-        # Iterative Shirley background calculation
         for _ in range(max_iter):
             peak = np.maximum(0.0, i_sub - b_sub)
             total_peak_area = float(trapezoid_integral(peak, e_sub))
-
             if total_peak_area <= 0.0:
                 break
 
-            # Cumulative area from e_sub[0] to each e_sub[k]
-            dx = np.diff(e_sub)
             trap_steps = 0.5 * (peak[:-1] + peak[1:]) * dx
             cum_area = np.concatenate(([0.0], np.cumsum(trap_steps)))
-
             b_new = i_1 + (i_2 - i_1) * (cum_area / total_peak_area)
             max_change = float(np.max(np.abs(b_new - b_sub)))
             b_sub = b_new
-
             if max_change < tol:
                 break
 
-        # Physical safeguard: background cannot exceed measured spectrum intensity
+        # Physical safeguard: background cannot exceed measured intensity
         b_sub = np.minimum(b_sub, i_sub)
         net_area = float(trapezoid_integral(np.maximum(0.0, i_sub - b_sub), e_sub))
 
     # Construct full background array: B(E) = I(E) outside [E1, E2]
     b_work = i_work.copy()
     b_work[idx_1 : idx_2 + 1] = b_sub
-
-    # If original input was descending, flip background back to match original order
-    if is_descending:
-        background = b_work[::-1]
-    else:
-        background = b_work
+    background = b_work[::-1] if is_descending else b_work
 
     return background, max(0.0, net_area)
 
@@ -441,11 +448,12 @@ def calculate_atomic_percentages(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate atomic percentages for all elements in wide format (per-die and summary).
+    """Calculate atomic percentages in wide format (per-die and summary).
 
     Fulfills Part 5 of GEMINI.md:
-    - Calculates net peak area via Shirley background subtraction for each region.
-    - Supports systematic Shirley endpoint determination ('minima', 'edge', or 'direct') across all regions.
+    - Calculates net peak area via Shirley background subtraction per region.
+    - Supports systematic Shirley endpoint determination ('minima', 'edge', or
+      'direct') across all regions.
     - Normalizes net areas by Relative Sensitivity Factors (RSF).
     - Returns per-die atomic percentages and summary statistics across dies.
 
@@ -462,8 +470,8 @@ def calculate_atomic_percentages(
         - 'measurement_id' (str | None): Filter to specific measurement session.
         - 'material' (str | None): Target material (default 'NMG').
         - 'rsf_dict' (dict[str, float]): Element RSF mapping.
-        - 'default_endpoint_strategy' (str): 'minima', 'edge', or 'direct' (default 'minima').
-        - 'default_endpoint_average_ev' (float | None): Default averaging width in eV (default 1.0).
+        - 'default_endpoint_strategy' (str): 'minima', 'edge', or 'direct'.
+        - 'default_endpoint_average_ev' (float | None): Default averaging width.
         - 'region_endpoint_config' (dict | None): Per-region overrides.
         - 'max_iter' (int): Shirley max iterations (default 50).
         - 'tol' (float): Shirley tolerance (default 1e-5).
@@ -472,12 +480,12 @@ def calculate_atomic_percentages(
     -------
     tuple[pd.DataFrame, pd.DataFrame]
         - df_per_die: Wide DataFrame with per-die atomic percentages.
-        - df_summary: DataFrame with mean and std across dies for each measurement.
+        - df_summary: DataFrame with mean and std across dies per measurement.
 
     Raises
     ------
     ValueError
-        If no matching data is found, required columns are missing, or RSF is non-positive.
+        If no matching data is found, required columns are missing, or RSF <= 0.
     """
     cfg = get_default_quantification_config()
     if config is not None:
@@ -500,27 +508,31 @@ def calculate_atomic_percentages(
 
     if filtered_df.empty:
         raise ValueError(
-            f"No spectra found matching criteria: measurement_id={target_meas}, material={material}"
+            f"No spectra found matching criteria: "
+            f"measurement_id={target_meas}, material={material}"
         )
 
-    # Single-pass calculation of scaled peak areas per row
     rows_data: list[dict[str, Any]] = []
     for _, row in filtered_df.iterrows():
         region = str(row["region"])
         spec_idx = int(row["spectrum_index"])
-        shirley_cfg = dict(cfg, region=region)
         _, net_area = calculate_shirley_background(
-            ary_energy[spec_idx], ary_intensity[spec_idx], shirley_cfg
+            ary_energy[spec_idx],
+            ary_intensity[spec_idx],
+            dict(cfg, region=region),
         )
 
         if region not in rsf_dict:
             warnings.warn(
-                f"Region '{region}' not found in rsf_dict. Defaulting RSF to 1.0. "
-                "Atomic percentages may be uncalibrated without specific sensitivity factors."
+                f"Region '{region}' not found in rsf_dict. Defaulting RSF to "
+                "1.0. Atomic percentages may be uncalibrated without specific "
+                "sensitivity factors."
             )
         rsf = float(rsf_dict.get(region, 1.0))
         if rsf <= 0.0:
-            raise ValueError(f"RSF for region '{region}' must be positive, got {rsf}")
+            raise ValueError(
+                f"RSF for region '{region}' must be positive, got {rsf}"
+            )
 
         rows_data.append({
             "measurement_id": str(row["measurement_id"]),
@@ -530,39 +542,52 @@ def calculate_atomic_percentages(
             "scaled_area": max(0.0, net_area) / rsf,
         })
 
-    df_calc = pd.DataFrame(rows_data)
-    if not df_calc.empty:
-        df_calc = df_calc.drop_duplicates(
-            subset=["measurement_id", "material", "die", "region"], keep="last"
-        )
+    df_calc = pd.DataFrame(rows_data).drop_duplicates(
+        subset=["measurement_id", "material", "die", "region"], keep="last"
+    )
 
     # Normalize scaled areas row-wise to 100% per measurement session and die
-    totals = df_calc.groupby(["measurement_id", "material", "die"])["scaled_area"].transform("sum")
-    df_calc["at_pct"] = np.where(totals > 0.0, (df_calc["scaled_area"] / totals) * 100.0, 0.0).round(4)
+    totals = df_calc.groupby(["measurement_id", "material", "die"])[
+        "scaled_area"
+    ].transform("sum")
+    df_calc["at_pct"] = np.where(
+        totals > 0.0, (df_calc["scaled_area"] / totals) * 100.0, 0.0
+    ).round(4)
     df_calc["col_name"] = df_calc["region"] + "_at%"
 
-    # Pivot regions to columns in wide format preserving regional discovery order
-    df_per_die = (
-        df_calc.pivot(index=["measurement_id", "material", "die"], columns="col_name", values="at_pct")
-        .reset_index()
-    )
+    # Pivot regions to wide format preserving regional discovery order
+    df_per_die = df_calc.pivot(
+        index=["measurement_id", "material", "die"],
+        columns="col_name",
+        values="at_pct",
+    ).reset_index()
     df_per_die.columns.name = None
-    region_cols = [f"{r}_at%" for r in filtered_df["region"].unique() if f"{r}_at%" in df_per_die.columns]
+    region_cols = [
+        f"{r}_at%"
+        for r in filtered_df["region"].unique()
+        if f"{r}_at%" in df_per_die.columns
+    ]
     df_per_die = df_per_die[["measurement_id", "material", "die"] + region_cols]
 
     # Summary statistics (mean and std across dies) per measurement session
     summary_records: list[dict[str, Any]] = []
     for meas_id, m_df in df_per_die.groupby("measurement_id", sort=False):
         mat_val = m_df["material"].iloc[0]
-        mean_row: dict[str, Any] = {"measurement_id": meas_id, "material": mat_val, "metric": "mean"}
-        std_row: dict[str, Any] = {"measurement_id": meas_id, "material": mat_val, "metric": "std"}
+        mean_row: dict[str, Any] = {
+            "measurement_id": meas_id,
+            "material": mat_val,
+            "metric": "mean",
+        }
+        std_row: dict[str, Any] = {
+            "measurement_id": meas_id,
+            "material": mat_val,
+            "metric": "std",
+        }
         for col in region_cols:
-            mean_row[col] = round(float(m_df[col].mean()), 4)
-            std_row[col] = round(float(m_df[col].std(ddof=1)), 4) if len(m_df) > 1 else 0.0
+            mean_row[col], std_row[col] = _mean_std(m_df[col], decimals=4)
         summary_records.extend([mean_row, std_row])
 
-    df_summary = pd.DataFrame(summary_records)
-    return df_per_die, df_summary
+    return df_per_die, pd.DataFrame(summary_records)
 
 
 def calculate_atomic_percentage_split_statistics(
@@ -570,27 +595,27 @@ def calculate_atomic_percentage_split_statistics(
     data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calculate atomic percentage statistics across data splits (Train, Test, Val).
+    """Calculate atomic percentage statistics across data splits.
 
     Fulfills chemical quantification comparison across splits:
-    1. Computes Shirley net peak areas and atomic percentages for Source, True Target,
-       and Predicted Target spectra across each die of all paired sessions.
+    1. Computes Shirley net peak areas and atomic percentages for Source, True
+       Target, and Predicted Target spectra across each die of paired sessions.
     2. Groups results by data split ('train', 'test', etc.) and element.
-    3. Provides detailed element-wise statistics: Source mean/std, Target mean/std,
-       Predicted mean/std, error (Pred - Target), MAE, and baseline MAE.
+    3. Provides detailed element-wise statistics: Source mean/std, Target
+       mean/std, Predicted mean/std, error (Pred - Target), MAE, and base MAE.
 
     Parameters
     ----------
     data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
         Original measured data (ary_intensity, ary_energy, df_meta).
     data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        Predicted data (ary_intensity_predicted, ary_energy_predicted, df_meta_predicted).
+        Predicted data (ary_intensity_pred, ary_energy_pred, df_meta_pred).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'splits' (list[str]): Data splits to evaluate (default ['train', 'test']).
+        - 'splits' (list[str]): Splits to evaluate (default ['train', 'test']).
         - 'material' (str | None): Target material (default 'NMG').
-        - 'rsf_dict' (dict[str, float]): RSF mapping (default DEFAULT_SCOFIELD_RSF).
-        - 'quantification_config' (dict | None): Extra options for calculate_atomic_percentages.
+        - 'rsf_dict' (dict[str, float]): RSF mapping.
+        - 'quantification_config' (dict | None): Extra quantification options.
 
     Returns
     -------
@@ -603,15 +628,10 @@ def calculate_atomic_percentage_split_statistics(
 
     cfg = config or {}
     splits_filter = list(cfg.get("splits", ["train", "test"]))
-    material = cfg.get("material", "NMG")
-    rsf_dict = cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF)
-    quant_extra = cfg.get("quantification_config", {})
+    quant_cfg = dict(cfg.get("quantification_config", {}))
+    quant_cfg.setdefault("material", cfg.get("material", "NMG"))
+    quant_cfg.setdefault("rsf_dict", cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF))
 
-    quant_cfg = dict(quant_extra)
-    quant_cfg.setdefault("material", material)
-    quant_cfg.setdefault("rsf_dict", rsf_dict)
-
-    # 1. Compute per-die atomic percentages for original and predicted datasets
     df_per_die_orig, _ = calculate_atomic_percentages(
         ary_energy_orig, ary_intensity_orig, df_meta_orig, config=quant_cfg
     )
@@ -619,29 +639,36 @@ def calculate_atomic_percentage_split_statistics(
         ary_energy_pred, ary_intensity_pred, df_meta_pred, config=quant_cfg
     )
 
-    # 2. Build mapping between predicted session, source session, target session, and split
-    pred_meta_subset = df_meta_pred[
-        ["measurement_id", "source_measurement_id", "split"]
-    ].dropna().drop_duplicates()
-
-    src_target_map = df_meta_orig[
-        ["measurement_id", "measurement_id_target"]
-    ].dropna().drop_duplicates().rename(columns={"measurement_id": "source_measurement_id"})
-
+    pred_meta_subset = (
+        df_meta_pred[["measurement_id", "source_measurement_id", "split"]]
+        .dropna()
+        .drop_duplicates()
+    )
+    src_target_map = (
+        df_meta_orig[["measurement_id", "measurement_id_target"]]
+        .dropna()
+        .drop_duplicates()
+        .rename(columns={"measurement_id": "source_measurement_id"})
+    )
     session_mapping = pred_meta_subset.merge(
         src_target_map, on="source_measurement_id", how="inner"
     )
-
     if splits_filter is not None:
-        session_mapping = session_mapping[session_mapping["split"].isin(splits_filter)]
+        session_mapping = session_mapping[
+            session_mapping["split"].isin(splits_filter)
+        ]
 
     if session_mapping.empty:
-        warnings.warn("No paired sessions found matching requested splits for atomic percentage statistics.")
+        warnings.warn(
+            "No paired sessions found matching requested splits for atomic "
+            "percentage statistics."
+        )
         return pd.DataFrame(), pd.DataFrame()
 
-    element_cols = [c for c in df_per_die_orig.columns if c.endswith("_at%")]
+    element_cols = [
+        c for c in df_per_die_orig.columns if c.endswith("_at%")
+    ]
 
-    # 3. Combine per-die atomic percentages for Source, Target, and Predicted
     records: list[dict[str, Any]] = []
     for _, map_row in session_mapping.iterrows():
         p_id = str(map_row["measurement_id"])
@@ -649,24 +676,29 @@ def calculate_atomic_percentage_split_statistics(
         t_id = str(map_row["measurement_id_target"])
         split_val = str(map_row["split"])
 
-        sub_p = df_per_die_pred[df_per_die_pred["measurement_id"] == p_id].set_index("die")
-        sub_s = df_per_die_orig[df_per_die_orig["measurement_id"] == s_id].set_index("die")
-        sub_t = df_per_die_orig[df_per_die_orig["measurement_id"] == t_id].set_index("die")
+        sub_p = df_per_die_pred[
+            df_per_die_pred["measurement_id"] == p_id
+        ].set_index("die")
+        sub_s = df_per_die_orig[
+            df_per_die_orig["measurement_id"] == s_id
+        ].set_index("die")
+        sub_t = df_per_die_orig[
+            df_per_die_orig["measurement_id"] == t_id
+        ].set_index("die")
 
-        common_dies = sorted(set(sub_p.index).intersection(sub_s.index).intersection(sub_t.index))
+        common_dies = sorted(
+            set(sub_p.index).intersection(sub_s.index).intersection(sub_t.index)
+        )
         for die in common_dies:
             for c in element_cols:
-                elem = c[:-4] if c.endswith("_at%") else c
                 val_s = float(sub_s.loc[die, c])
                 val_t = float(sub_t.loc[die, c])
                 val_p = float(sub_p.loc[die, c])
                 diff_val = val_p - val_t
-                abs_diff = abs(diff_val)
-                base_diff = abs(val_s - val_t)
 
                 records.append({
                     "split": split_val,
-                    "element": elem,
+                    "element": c[:-4],
                     "source_measurement_id": s_id,
                     "target_measurement_id": t_id,
                     "predicted_measurement_id": p_id,
@@ -675,18 +707,21 @@ def calculate_atomic_percentage_split_statistics(
                     "target_at%": val_t,
                     "pred_at%": val_p,
                     "diff_at%": diff_val,
-                    "abs_diff_at%": abs_diff,
-                    "base_abs_diff_at%": base_diff,
+                    "abs_diff_at%": abs(diff_val),
+                    "base_abs_diff_at%": abs(val_s - val_t),
                 })
 
     df_samples = pd.DataFrame(records)
     if df_samples.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # 4. Aggregate summary statistics by (split, element)
     summary_records: list[dict[str, Any]] = []
-    ordered_splits = [s for s in splits_filter if s in df_samples["split"].unique()]
-    ordered_elements = [c[:-4] for c in element_cols if c[:-4] in df_samples["element"].unique()]
+    ordered_splits = [
+        s for s in splits_filter if s in df_samples["split"].unique()
+    ]
+    ordered_elements = [
+        c[:-4] for c in element_cols if c[:-4] in df_samples["element"].unique()
+    ]
 
     for split in ordered_splits:
         sp_df = df_samples[df_samples["split"] == split]
@@ -695,46 +730,38 @@ def calculate_atomic_percentage_split_statistics(
             if el_df.empty:
                 continue
 
-            n_samples = len(el_df)
-            src_mean = float(el_df["source_at%"].mean())
-            src_std = float(el_df["source_at%"].std(ddof=1)) if n_samples > 1 else 0.0
-            tgt_mean = float(el_df["target_at%"].mean())
-            tgt_std = float(el_df["target_at%"].std(ddof=1)) if n_samples > 1 else 0.0
-            pred_mean = float(el_df["pred_at%"].mean())
-            pred_std = float(el_df["pred_at%"].std(ddof=1)) if n_samples > 1 else 0.0
-
-            diff_mean = float(el_df["diff_at%"].mean())
-            diff_std = float(el_df["diff_at%"].std(ddof=1)) if n_samples > 1 else 0.0
-            mae = float(el_df["abs_diff_at%"].mean())
-            mae_std = float(el_df["abs_diff_at%"].std(ddof=1)) if n_samples > 1 else 0.0
-            base_mae = float(el_df["base_abs_diff_at%"].mean())
+            src_mean, src_std = _mean_std(el_df["source_at%"], decimals=3)
+            tgt_mean, tgt_std = _mean_std(el_df["target_at%"], decimals=3)
+            pred_mean, pred_std = _mean_std(el_df["pred_at%"], decimals=3)
+            diff_mean, diff_std = _mean_std(el_df["diff_at%"], decimals=3)
+            mae, mae_std = _mean_std(el_df["abs_diff_at%"], decimals=3)
+            base_mae = round(float(el_df["base_abs_diff_at%"].mean()), 3)
 
             summary_records.append({
                 "split": split,
                 "element": elem,
-                "n_samples": n_samples,
-                "source_mean": round(src_mean, 3),
-                "source_std": round(src_std, 3),
-                "target_mean": round(tgt_mean, 3),
-                "target_std": round(tgt_std, 3),
-                "pred_mean": round(pred_mean, 3),
-                "pred_std": round(pred_std, 3),
-                "diff_mean": round(diff_mean, 3),
-                "diff_std": round(diff_std, 3),
-                "mae": round(mae, 3),
-                "mae_std": round(mae_std, 3),
-                "base_mae": round(base_mae, 3),
+                "n_samples": len(el_df),
+                "source_mean": src_mean,
+                "source_std": src_std,
+                "target_mean": tgt_mean,
+                "target_std": tgt_std,
+                "pred_mean": pred_mean,
+                "pred_std": pred_std,
+                "diff_mean": diff_mean,
+                "diff_std": diff_std,
+                "mae": mae,
+                "mae_std": mae_std,
+                "base_mae": base_mae,
             })
 
-    df_summary = pd.DataFrame(summary_records)
-    return df_samples, df_summary
+    return df_samples, pd.DataFrame(summary_records)
 
 
 def format_side_by_side_atomic_percentages(
     df_split_summary: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Format split atomic percentage summary into a side-by-side comparison table.
+    """Format split atomic percentage summary into a side-by-side table.
 
     Produces a clean comparison table with elements as rows and metrics grouped
     side-by-side across splits (e.g. Train vs. Test).
@@ -742,12 +769,12 @@ def format_side_by_side_atomic_percentages(
     Parameters
     ----------
     df_split_summary : pd.DataFrame
-        Summary DataFrame output from calculate_atomic_percentage_split_statistics.
+        Summary DataFrame from calculate_atomic_percentage_split_statistics.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'splits' (list[str]): Data splits to display (default ['train', 'test']).
-        - 'format_str' (bool): Format values as 'mean ± std%' string (default True).
-        - 'include_overall' (bool): Include 'Overall (MAE)' summary row across all elements (default True).
+        - 'splits' (list[str]): Splits to display (default ['train', 'test']).
+        - 'format_str' (bool): Format as 'mean ± std%' string (default True).
+        - 'include_overall' (bool): Include 'Overall (MAE)' row (default True).
 
     Returns
     -------
@@ -762,7 +789,9 @@ def format_side_by_side_atomic_percentages(
     format_str = bool(cfg.get("format_str", True))
     include_overall = bool(cfg.get("include_overall", True))
 
-    present_splits = [s for s in preferred_splits if s in df_split_summary["split"].unique()]
+    present_splits = [
+        s for s in preferred_splits if s in df_split_summary["split"].unique()
+    ]
     if not present_splits:
         return pd.DataFrame()
 
@@ -773,19 +802,32 @@ def format_side_by_side_atomic_percentages(
         row_dict: dict[str, Any] = {"element": elem}
         for split in present_splits:
             s_df = df_split_summary[
-                (df_split_summary["split"] == split) & (df_split_summary["element"] == elem)
+                (df_split_summary["split"] == split)
+                & (df_split_summary["element"] == elem)
             ]
             if s_df.empty:
                 continue
             r = s_df.iloc[0]
 
-            mae_val = float(r["mae"]) if "mae" in r and pd.notna(r["mae"]) else 0.0
-            mae_std = float(r["mae_std"]) if "mae_std" in r and pd.notna(r["mae_std"]) else 0.0
+            mae_val = (
+                float(r["mae"]) if "mae" in r and pd.notna(r["mae"]) else 0.0
+            )
+            mae_std = (
+                float(r["mae_std"])
+                if "mae_std" in r and pd.notna(r["mae_std"])
+                else 0.0
+            )
 
             if format_str:
-                row_dict[f"target_{split}"] = f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
-                row_dict[f"pred_{split}"] = f"{r['pred_mean']:.2f}% ± {r['pred_std']:.2f}%"
-                row_dict[f"diff_{split}"] = f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
+                row_dict[f"target_{split}"] = (
+                    f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
+                )
+                row_dict[f"pred_{split}"] = (
+                    f"{r['pred_mean']:.2f}% ± {r['pred_std']:.2f}%"
+                )
+                row_dict[f"diff_{split}"] = (
+                    f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
+                )
                 row_dict[f"mae_{split}"] = f"{mae_val:.2f}% ± {mae_std:.2f}%"
             else:
                 row_dict[f"target_mean_{split}"] = r["target_mean"]
@@ -805,13 +847,14 @@ def format_side_by_side_atomic_percentages(
             sp_df = df_split_summary[df_split_summary["split"] == split]
             if sp_df.empty:
                 continue
-            mean_mae = float(sp_df["mae"].mean())
-            std_mae = float(sp_df["mae"].std(ddof=1)) if len(sp_df) > 1 else 0.0
+            mean_mae, std_mae = _mean_std(sp_df["mae"])
             if format_str:
                 overall_row[f"target_{split}"] = "-"
                 overall_row[f"pred_{split}"] = "-"
                 overall_row[f"diff_{split}"] = "-"
-                overall_row[f"mae_{split}"] = f"{mean_mae:.2f}% ± {std_mae:.2f}%"
+                overall_row[f"mae_{split}"] = (
+                    f"{mean_mae:.2f}% ± {std_mae:.2f}%"
+                )
             else:
                 overall_row[f"target_mean_{split}"] = np.nan
                 overall_row[f"target_std_{split}"] = np.nan
@@ -825,4 +868,3 @@ def format_side_by_side_atomic_percentages(
         rows.append(overall_row)
 
     return pd.DataFrame(rows)
-
