@@ -8,6 +8,7 @@ spectrum as if measured on a target tool, fulfilling Part 3 of GEMINI.md.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import torch
 import torch.nn as nn
@@ -178,3 +179,118 @@ class ResNet1D(nn.Module):
             Scalar tensor representing sum of squared convolutional weights.
         """
         return compute_conv1d_l2_reg(self)
+
+
+class ResNetScaledShort1D(ResNet1D):
+    """Residual 1D CNN with FiLM-scaled shortcut:
+    y = gamma_out * x + Delta(x, cond).
+
+    Extends ResNet1D by modulating the shortcut connection with a
+    multiplicative gain gamma_out derived via Feature-wise Linear Modulation
+    (FiLM). The shortcut gain scales the baseline spectrum x by a
+    condition-dependent factor (e.g., tool or flux ratio) while the residual
+    branch Delta learns localized spectral shape differences.
+
+    Parameters
+    ----------
+    n_points : int
+        Number of spectral data points (length of input regional spectrum or
+        patch window).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary. Must have 'use_film': True. Supports all
+        standard ResNet1D parameters plus:
+        - 'film_internal_layers' (bool): Whether to apply FiLM conditioning to
+          internal convolutional layers (default True). When False, internal
+          layers learn unconditioned Delta(x), and FiLM is only applied to the
+          shortcut.
+    """
+
+    def __init__(
+        self, n_points: int, config: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(n_points, config)
+        cfg = config or {}
+        if not self.use_film:
+            raise ValueError(
+                "ResNetScaledShort1D requires FiLM conditioning. "
+                "Please set 'use_film': True in model config."
+            )
+
+        self.film_internal_layers = bool(cfg.get("film_internal_layers", True))
+        if not self.film_internal_layers:
+            self.film_gen = None
+
+        shortcut_cfg = {
+            **cfg,
+            "use_sliding_window": False,
+            "encode_window_energy": False,
+        }
+        self.shortcut_film_gen = FiLMGenerator([1], config=shortcut_cfg)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Apply scaled-shortcut residual transformation:
+        y = gamma_out * x + Delta(x, cond).
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input spectral tensor of shape (batch_size, 1, n_points).
+        cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
+            Metadata conditioning features dictionary. Required.
+
+        Returns
+        -------
+        torch.Tensor
+            Transformed spectrum of shape (batch_size, 1, n_points).
+
+        Raises
+        ------
+        ValueError
+            If x is not a 3D tensor or cond is None or not a dict.
+        """
+        validate_3d_spectrum_tensor(x)
+        if cond is None or not isinstance(cond, dict):
+            raise ValueError(
+                "ResNetScaledShort1D requires a metadata conditioning dictionary "
+                f"'cond', got {type(cond).__name__ if cond is not None else 'None'}."
+            )
+
+        shortcut_mods = self.shortcut_film_gen(cond)
+        gamma_out, _ = shortcut_mods[0]
+        if (gamma_out < 0.0).any():
+            warnings.warn(
+                "Negative shortcut gain detected in ResNetScaledShort1D; "
+                "clamping gamma_out to 0.0.",
+                UserWarning,
+                stacklevel=2,
+            )
+            gamma_out = torch.clamp(gamma_out, min=0.0)
+
+        film_modulations = (
+            self.film_gen(cond)
+            if (self.use_film and self.film_gen is not None)
+            else None
+        )
+
+        hidden_features = x
+        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
+            ((self.conv1, self.bn1), (self.conv2, self.bn2))
+        ):
+            hidden_features = batch_norm_layer(conv_layer(hidden_features))
+            if film_modulations is not None:
+                gamma, beta = film_modulations[layer_index]
+                hidden_features = (
+                    gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1)
+                )
+            hidden_features = self.dropout(self.activation(hidden_features))
+
+        delta = self.conv3(hidden_features)
+        return (gamma_out.unsqueeze(-1) * x) + delta
+
+
+__all__ = ["ResNet1D", "ResNetScaledShort1D"]
+
