@@ -1,8 +1,8 @@
 """Feature-wise Linear Modulation (FiLM) module.
 
 Enables dynamic feature conditioning using metadata (die ID,
-tool indices, measurement time, and Tier 2 source integrated
-area/flux) without target data leakage.
+tool indices, standardized measurement time, and standardized
+source die flux) without target data leakage.
 """
 
 from __future__ import annotations
@@ -14,20 +14,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-
-
-def _parse_time_diff(t1: Any, t2: Any) -> float:
-    """Compute time difference in days between two timestamps."""
-    if t1 is None or t2 is None or pd.isna(t1) or pd.isna(t2):
-        return 0.0
-    try:
-        return abs((pd.Timestamp(t2) - pd.Timestamp(t1)).total_seconds()) / 86400.0
-    except (ValueError, TypeError) as exc:
-        warnings.warn(
-            f"Failed to parse timestamps '{t1}' and '{t2}': {exc}. "
-            "Defaulting time diff to 0.0."
-        )
-        return 0.0
 
 
 def _parse_die(value: Any) -> int:
@@ -70,6 +56,27 @@ def _parse_tool_index(val: Any, field_name: str) -> int:
         ) from err
 
 
+def _parse_required_float(val: Any, field_name: str) -> float:
+    """Extract finite float metadata value or raise informative ValueError."""
+    if val is None or pd.isna(val):
+        raise ValueError(
+            f"Metadata field '{field_name}' is missing or null. "
+            f"Please ensure '{field_name}' is populated in df_meta."
+        )
+    try:
+        raw_val = val.item() if hasattr(val, "item") else val
+        res = float(raw_val)
+        if not np.isfinite(res):
+            raise ValueError(
+                f"Metadata field '{field_name}' must be finite, got {res}."
+            )
+        return res
+    except (ValueError, TypeError) as err:
+        raise ValueError(
+            f"Invalid numeric value '{val}' in '{field_name}'."
+        ) from err
+
+
 def _extract_meta_column(meta: Any, key: str, n: int) -> list[Any]:
     """Extract a list of length n for a metadata key from dict or list."""
     if isinstance(meta, dict):
@@ -85,12 +92,11 @@ def _extract_meta_column(meta: Any, key: str, n: int) -> list[Any]:
 
 
 def prepare_film_condition_tensor(
-    metadata: list[dict[str, Any]] | dict[str, Any] | None = None,
-    scale_x: torch.Tensor | np.ndarray | None = None,
-    device: torch.device | None = None,
-    num_samples: int = 1,
-    window_energy: torch.Tensor | np.ndarray | None = None,
+    metadata: list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None = None,
     config: dict[str, Any] | None = None,
+    *,
+    device: torch.device | None = None,
+    window_energy: torch.Tensor | np.ndarray | None = None,
 ) -> dict[str, torch.Tensor]:
     """Extract and pack conditioning features from metadata.
 
@@ -100,21 +106,21 @@ def prepare_film_condition_tensor(
 
     Parameters
     ----------
-    metadata : list[dict[str, Any]] | dict[str, Any] | None, optional
-        Sample metadata with 'die', 'tool_index',
-        'tool_target_index', 'time'.
-    scale_x : torch.Tensor | np.ndarray | None, optional
-        Source scale factors (e.g. Total Integrated Flux F_src).
+    metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
+        Sample metadata with 'die', 'tool_index', 'tool_target_index',
+        and (when enabled) 'die_flux_normalized' and 'time_normalized'.
+    config : dict[str, Any] | None, optional
+        Optional configuration containing:
+        - 'encode_flux' (bool): Include 'die_flux_normalized' (default True).
+        - 'encode_time' (bool): Include 'time_normalized' (default True).
+        - 'energy_scale_ev' (float): Window energy scale factor
+          (default 1000.0).
+        - 'num_samples' (int): Batch size fallback when metadata is empty.
     device : torch.device | None, optional
         PyTorch computation device.
-    num_samples : int, optional
-        Batch size fallback when metadata is empty (default 1).
     window_energy : torch.Tensor | np.ndarray | None, optional
         Starting and ending binding energies of the window patch,
         shape (B, 2).
-    config : dict[str, Any] | None, optional
-        Optional configuration containing 'energy_scale_ev' (default
-        1000.0).
 
     Returns
     -------
@@ -123,12 +129,15 @@ def prepare_film_condition_tensor(
         - 'die': LongTensor (B,)
         - 'tool_src': LongTensor (B,)
         - 'tool_tgt': LongTensor (B,)
-        - 'log_flux_src': FloatTensor (B, 1)
-        - 'delta_time_days': FloatTensor (B, 1)
+        - 'die_flux_normalized': FloatTensor (B, 1) (if encode_flux=True)
+        - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
         - 'window_energy': FloatTensor (B, 2) (if provided)
     """
     cfg = config or {}
+    num_samples = int(cfg.get("num_samples", 1))
     energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
+    encode_flux = bool(cfg.get("encode_flux", cfg.get("use_flux", True)))
+    encode_time = bool(cfg.get("encode_time", cfg.get("use_time", True)))
 
     meta = (
         metadata.to_dict(orient="records")
@@ -147,17 +156,6 @@ def prepare_film_condition_tensor(
     else:
         n = num_samples
 
-    if scale_x is None:
-        log_f = torch.zeros((n, 1), dtype=torch.float32)
-    else:
-        sx = torch.as_tensor(scale_x, dtype=torch.float32)
-        sx_2d = (
-            sx.view(1, 1).expand(n, 1)
-            if sx.numel() == 1 and n > 1
-            else sx.view(n, 1)
-        )
-        log_f = torch.log10(torch.clamp(sx_2d, min=1e-4))
-
     t_src = [
         _parse_tool_index(x, "tool_index")
         for x in _extract_meta_column(meta, "tool_index", n)
@@ -165,13 +163,6 @@ def prepare_film_condition_tensor(
     t_tgt = [
         _parse_tool_index(x, "tool_target_index")
         for x in _extract_meta_column(meta, "tool_target_index", n)
-    ]
-    dt = [
-        _parse_time_diff(t1, t2)
-        for t1, t2 in zip(
-            _extract_meta_column(meta, "time", n),
-            _extract_meta_column(meta, "time_target", n),
-        )
     ]
 
     ret: dict[str, torch.Tensor] = {
@@ -182,11 +173,25 @@ def prepare_film_condition_tensor(
         ),
         "tool_src": torch.tensor(t_src, dtype=torch.long, device=device),
         "tool_tgt": torch.tensor(t_tgt, dtype=torch.long, device=device),
-        "log_flux_src": log_f.to(device) if device is not None else log_f,
-        "delta_time_days": torch.tensor(
-            dt, dtype=torch.float32, device=device
-        ).unsqueeze(-1),
     }
+
+    if encode_flux:
+        flux_vals = [
+            _parse_required_float(x, "die_flux_normalized")
+            for x in _extract_meta_column(meta, "die_flux_normalized", n)
+        ]
+        ret["die_flux_normalized"] = torch.tensor(
+            flux_vals, dtype=torch.float32, device=device
+        ).unsqueeze(-1)
+
+    if encode_time:
+        time_vals = [
+            _parse_required_float(x, "time_normalized")
+            for x in _extract_meta_column(meta, "time_normalized", n)
+        ]
+        ret["time_normalized"] = torch.tensor(
+            time_vals, dtype=torch.float32, device=device
+        ).unsqueeze(-1)
 
     we_data = window_energy
     if we_data is None:
@@ -226,6 +231,8 @@ class FiLMGenerator(nn.Module):
         - 'num_tools' (int): Maximum tools count (default 8).
         - 'tool_embed_dim' (int): Tool embedding dim (default 4).
         - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
+        - 'encode_flux' (bool): Encode 'die_flux_normalized' (default True).
+        - 'encode_time' (bool): Encode 'time_normalized' (default True).
         - 'use_sliding_window' (bool): Whether sliding window is used.
         - 'encode_window_energy' (bool): Whether to encode window energy.
     """
@@ -241,12 +248,21 @@ class FiLMGenerator(nn.Module):
         tool_dim = int(cfg.get("tool_embed_dim", 4))
         hidden_dim = int(cfg.get("hidden_dim", 32))
 
+        self.encode_flux = bool(
+            cfg.get("encode_flux", cfg.get("use_flux", True))
+        )
+        self.encode_time = bool(
+            cfg.get("encode_time", cfg.get("use_time", True))
+        )
         self.encode_window_energy = bool(
             cfg.get("use_sliding_window", False)
         ) and bool(cfg.get("encode_window_energy", False))
+
+        flux_dim = 1 if self.encode_flux else 0
+        time_dim = 1 if self.encode_time else 0
         energy_dim = 2 if self.encode_window_energy else 0
 
-        in_dim = die_dim + (2 * tool_dim) + 2 + energy_dim
+        in_dim = die_dim + (2 * tool_dim) + flux_dim + time_dim + energy_dim
         self.channels_list = list(channels_list)
         self.die_embedding = nn.Embedding(num_dies, die_dim)
         self.tool_embedding = nn.Embedding(num_tools, tool_dim)
@@ -274,9 +290,9 @@ class FiLMGenerator(nn.Module):
         Parameters
         ----------
         cond : dict[str, torch.Tensor]
-            Conditioning features with 'die', 'tool_src',
-            'tool_tgt', 'log_flux_src', 'delta_time_days', and
-            optionally 'window_energy'.
+            Conditioning features with 'die', 'tool_src', 'tool_tgt',
+            and optional 'die_flux_normalized', 'time_normalized', and
+            'window_energy'.
 
         Returns
         -------
@@ -301,9 +317,25 @@ class FiLMGenerator(nn.Module):
             self.die_embedding(cond_dev["die"]),
             self.tool_embedding(cond_dev["tool_src"]),
             self.tool_embedding(cond_dev["tool_tgt"]),
-            cond_dev["log_flux_src"],
-            cond_dev["delta_time_days"],
         ]
+        if self.encode_flux:
+            flux_t = cond_dev.get("die_flux_normalized")
+            if flux_t is None:
+                raise KeyError(
+                    "FiLMGenerator expects 'die_flux_normalized' in conditioning "
+                    "dictionary when encode_flux=True."
+                )
+            feat_list.append(flux_t)
+
+        if self.encode_time:
+            time_t = cond_dev.get("time_normalized")
+            if time_t is None:
+                raise KeyError(
+                    "FiLMGenerator expects 'time_normalized' in conditioning "
+                    "dictionary when encode_time=True."
+                )
+            feat_list.append(time_t)
+
         if self.encode_window_energy:
             we = cond_dev.get("window_energy")
             if we is None:

@@ -62,7 +62,7 @@ def main() -> None:
         "train_ratio": 0.5,
         "val_ratio": 0.2,
         "test_ratio": 0.3,
-        "seed": 42,
+        "seed": None,
     }
 
     # Stage 4B: Gaussian Process die flux prediction configuration
@@ -122,6 +122,8 @@ def main() -> None:
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
         "use_film": False,
+        "encode_flux": True,
+        "encode_time": True,
         "encode_window_energy": True,
         "energy_scale_ev": 1000.0,
         "die_embed_dim": 4,
@@ -180,7 +182,6 @@ def main() -> None:
     prediction_config = {
         "source_tool": source_tool,
         "target_tool": target_tool,
-        "normalization_mode": "none",
         "clamp_non_negative": True,
         "film_config": film_config,
     }
@@ -208,8 +209,9 @@ def main() -> None:
         f"{ary_intensity.shape[1]} points"
     )
 
-    # Calculate hierarchical flux metrics across regions, dies, and measurements
+    # Calculate hierarchical flux metrics and standardized measurement time
     df_meta = utility.calculate_flux(ary_intensity, ary_energy, df_meta)
+    df_meta = utility.calculate_normalized_time(df_meta)
     print(
         f"Calculated spectral fluxes: mean regional={df_meta['regional_flux'].mean():.2f}, "
         f"mean die={df_meta['die_flux'].mean():.2f}, "
