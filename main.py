@@ -129,6 +129,7 @@ def main() -> None:
         "die_embed_dim": 4,
         "tool_embed_dim": 4,
         "hidden_dim": 32,
+        'relative_learning_rate': 0.1
     }
 
     # Stage 7A: Bayesian optimization configuration (plural search keys)
