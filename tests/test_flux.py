@@ -9,6 +9,7 @@ import pandas as pd
 
 from utility.flux import (
     calculate_flux,
+    calculate_normalized_time,
     integrate_spectral_flux,
     trapezoid_integral,
 )
@@ -138,6 +139,27 @@ class TestCalculateFlux(unittest.TestCase):
             [150.0, 150.0, 150.0, 150.0],
             rtol=1e-5,
         )
+        # die_flux_normalized for unique dies [50.0, 100.0] -> [-1.0, 1.0]
+        np.testing.assert_allclose(
+            df_res["die_flux_normalized"].to_numpy(),
+            [-1.0, -1.0, 1.0, 1.0],
+            rtol=1e-5,
+        )
+
+    def test_zero_std_die_flux_emits_warning(self) -> None:
+        """Verify warning and 0.0 fallback when all dies have identical flux."""
+        identical_intensity = np.full((2, 11), 2.0)
+        meta = pd.DataFrame({
+            "spectrum_index": [0, 1],
+            "measurement_id": ["m1", "m1"],
+            "die": [1, 2],
+            "region": ["C1s", "C1s"],
+        })
+        with self.assertWarns(UserWarning):
+            res = calculate_flux(identical_intensity, self.ary_energy[:2], meta)
+        np.testing.assert_allclose(
+            res["die_flux_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
+        )
 
     def test_df_meta_immutability(self) -> None:
         """Verify original df_meta DataFrame is not mutated in-place."""
@@ -159,6 +181,7 @@ class TestCalculateFlux(unittest.TestCase):
             "die_flux",
             "mean_die_flux",
             "measurement_flux",
+            "die_flux_normalized",
         ]:
             self.assertIn(col, res.columns)
         self.assertEqual(len(res), 0)
@@ -216,7 +239,6 @@ class TestCalculateFlux(unittest.TestCase):
         self.assertTrue((m2_rows["measurement_flux"] == 100.0).all())
         self.assertTrue((m2_rows["mean_die_flux"] == 100.0).all())
 
-
     def test_integration_with_synthetic_pipeline(self) -> None:
         """Verify calculate_flux works with generate_pseudo_measurements."""
         config = get_default_measurement_config()
@@ -236,6 +258,71 @@ class TestCalculateFlux(unittest.TestCase):
             self.assertIn(col, meta_with_flux.columns)
             self.assertFalse(meta_with_flux[col].isna().any())
             self.assertTrue((meta_with_flux[col] > 0).all())
+        self.assertIn("die_flux_normalized", meta_with_flux.columns)
+        self.assertFalse(meta_with_flux["die_flux_normalized"].isna().any())
+
+
+class TestCalculateNormalizedTime(unittest.TestCase):
+    """Test suite for calculate_normalized_time in utility.flux."""
+
+    def test_normalized_time_across_unique_measurements(self) -> None:
+        """Verify z-score standardization across unique measurement sessions."""
+        # m1 has 2 rows, m2 has 1 row -> unique times are 00:00 and 02:00
+        # mean = 01:00, diff = [-3600s, +3600s], std = 3600s -> [-1.0, +1.0]
+        meta = pd.DataFrame({
+            "measurement_id": ["m1", "m1", "m2"],
+            "time": [
+                "2026-01-01 00:00:00",
+                "2026-01-01 00:00:00",
+                "2026-01-01 02:00:00",
+            ],
+        })
+        res = calculate_normalized_time(meta)
+        self.assertIn("time_normalized", res.columns)
+        np.testing.assert_allclose(
+            res["time_normalized"].to_numpy(),
+            [-1.0, -1.0, 1.0],
+            rtol=1e-5,
+        )
+
+    def test_zero_std_time_emits_warning(self) -> None:
+        """Verify warning and 0.0 output when measurements share timestamp."""
+        meta = pd.DataFrame({
+            "measurement_id": ["m1", "m2"],
+            "time": ["2026-01-01 00:00:00", "2026-01-01 00:00:00"],
+        })
+        with self.assertWarns(UserWarning):
+            res = calculate_normalized_time(meta)
+        np.testing.assert_allclose(
+            res["time_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
+        )
+
+    def test_empty_and_invalid_time_inputs(self) -> None:
+        """Verify empty DataFrame handling and ValueError on invalid inputs."""
+        empty = pd.DataFrame(columns=["measurement_id", "time"])
+        res = calculate_normalized_time(empty)
+        self.assertIn("time_normalized", res.columns)
+        self.assertEqual(len(res), 0)
+
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(pd.DataFrame({"measurement_id": ["m1"]}))
+
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(
+                pd.DataFrame({"measurement_id": ["m1"], "time": [None]})
+            )
+
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(
+                pd.DataFrame(
+                    {"measurement_id": [None], "time": ["2026-01-01 00:00:00"]}
+                )
+            )
+
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(
+                pd.DataFrame({"measurement_id": ["m1"], "time": ["not-a-date"]})
+            )
 
 
 if __name__ == "__main__":

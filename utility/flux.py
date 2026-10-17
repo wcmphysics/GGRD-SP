@@ -7,6 +7,7 @@ hierarchical flux metrics across regions, dies, and measurement sessions.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -73,13 +74,14 @@ def calculate_flux(
 ) -> pd.DataFrame:
     """Compute hierarchical spectral fluxes for regions, dies, and sessions.
 
-    Computes integrated flux on raw spectra and appends five hierarchical
-    columns:
+    Computes integrated flux on raw spectra and appends six columns:
     1. 'regional_flux': flux of a region of a die from a measurement.
     2. 'mean_regional_flux': average 'regional_flux' among regions of that die.
     3. 'die_flux': total sum of 'regional_flux' across all regions of that die.
     4. 'mean_die_flux': average 'die_flux' among unique dies in measurement.
     5. 'measurement_flux': total sum of 'die_flux' in that measurement.
+    6. 'die_flux_normalized': z-score standardized 'die_flux' across unique
+       dies.
 
     Parameters
     ----------
@@ -96,7 +98,7 @@ def calculate_flux(
     Returns
     -------
     pd.DataFrame
-        New copy of df_meta with the 5 appended flux columns.
+        New copy of df_meta with the 6 appended flux columns.
 
     Raises
     ------
@@ -126,6 +128,7 @@ def calculate_flux(
             "die_flux",
             "mean_die_flux",
             "measurement_flux",
+            "die_flux_normalized",
         ]:
             df_res[col] = pd.Series(dtype=np.float32)
         return df_res
@@ -150,7 +153,7 @@ def calculate_flux(
     df_res["mean_regional_flux"] = die_group.transform("mean").astype(np.float32)
     df_res["die_flux"] = die_group.transform("sum").astype(np.float32)
 
-    # 4 & 5. Group unique dies by measurement_id for mean die and total flux
+    # 4, 5 & 6. Group unique dies for measurement metrics and z-score flux
     die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
     meas_mean_die = die_summary.groupby("measurement_id")["die_flux"].mean()
     meas_total_die = die_summary.groupby("measurement_id")["die_flux"].sum()
@@ -161,6 +164,88 @@ def calculate_flux(
     df_res["measurement_flux"] = (
         df_res["measurement_id"].map(meas_total_die).astype(np.float32)
     )
+
+    die_flux_vals = die_summary["die_flux"].to_numpy(dtype=np.float64)
+    flux_mean = float(np.mean(die_flux_vals))
+    flux_std = float(np.std(die_flux_vals))
+    if flux_std == 0.0:
+        warnings.warn(
+            "Standard deviation of die_flux across unique dies is 0.0; "
+            "setting die_flux_normalized to 0.0."
+        )
+        df_res["die_flux_normalized"] = np.float32(0.0)
+    else:
+        df_res["die_flux_normalized"] = (
+            (df_res["die_flux"] - flux_mean) / flux_std
+        ).astype(np.float32)
+
+    return df_res
+
+
+def calculate_normalized_time(df_meta: pd.DataFrame) -> pd.DataFrame:
+    """Standardize measurement time across all unique measurement sessions.
+
+    Computes the time difference between each measurement timestamp and the
+    mean timestamp across all unique measurements (spanning all tools and
+    materials), normalized by the standard deviation of those time differences.
+
+    Parameters
+    ----------
+    df_meta : pd.DataFrame
+        Metadata DataFrame containing 'measurement_id' and 'time'.
+
+    Returns
+    -------
+    pd.DataFrame
+        New copy of df_meta with appended 'time_normalized' column.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing or timestamps are null/invalid.
+    """
+    missing_cols = [
+        c for c in ("measurement_id", "time") if c not in df_meta.columns
+    ]
+    if missing_cols:
+        raise ValueError(
+            f"df_meta missing required columns for time normalization: {missing_cols}"
+        )
+
+    df_res = df_meta.copy()
+    if df_res.empty:
+        df_res["time_normalized"] = pd.Series(dtype=np.float32)
+        return df_res
+
+    if df_res["measurement_id"].isna().any() or df_res["time"].isna().any():
+        raise ValueError(
+            "Columns 'measurement_id' and 'time' in df_meta must not contain "
+            "null values when computing time_normalized."
+        )
+
+    try:
+        all_ts = pd.to_datetime(df_res["time"])
+    except (ValueError, TypeError) as err:
+        raise ValueError(
+            f"Failed to parse timestamps in df_meta['time']: {err}"
+        ) from err
+
+    meas_summary = df_res.drop_duplicates(subset=["measurement_id"])
+    meas_ts = pd.to_datetime(meas_summary["time"])
+    mean_ts = meas_ts.mean()
+
+    meas_diff_sec = (meas_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
+    all_diff_sec = (all_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
+    std_sec = float(np.std(meas_diff_sec))
+
+    if std_sec == 0.0:
+        warnings.warn(
+            "Standard deviation of measurement time differences is 0.0; "
+            "setting time_normalized to 0.0."
+        )
+        df_res["time_normalized"] = np.float32(0.0)
+    else:
+        df_res["time_normalized"] = (all_diff_sec / std_sec).astype(np.float32)
 
     return df_res
 

@@ -4,6 +4,7 @@
 from utility.evaluation import calculate_prediction_metrics, format_side_by_side_metrics
 from utility.flux import (
     calculate_flux,
+    calculate_normalized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
     trapezoid_integral,
@@ -36,6 +37,7 @@ __all__ = [
     "generate_pseudo_measurements",
     "get_default_measurement_config",
     "calculate_flux",
+    "calculate_normalized_time",
     "integrate_spectral_flux",
     "trapezoid_integral",
     "normalize_spectral_data",
