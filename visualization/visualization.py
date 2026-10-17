@@ -76,8 +76,7 @@ def _finish_fig(fig: plt.Figure, cfg: dict[str, Any], title: str | None = None) 
     """Apply figure suptitle, tight layout, and optional show."""
     if t := (title if title is not None else cfg.get("title")):
         fig.suptitle(t, fontsize=12, fontweight="bold")
-    if fig is not None:
-        fig.tight_layout()
+    fig.tight_layout()
     if cfg.get("show"):
         plt.show()
 
@@ -813,6 +812,24 @@ def plot_sliding_window_slices(spectrum: np.ndarray, energy: np.ndarray | None =
     return fig, (ax_top, ax_bot)
 
 
+def _filter_atomic_df(
+    df: pd.DataFrame,
+    cfg: dict[str, Any],
+    name: str,
+) -> pd.DataFrame:
+    """Filter atomic percentage DataFrame by configured splits and elements."""
+    if cfg.get("splits") is not None:
+        valid_splits = [str(s).lower() for s in cfg["splits"]]
+        df = df[df["split"].str.lower().isin(valid_splits)]
+    if cfg.get("elements") is not None:
+        df = df[df["element"].isin(cfg["elements"])]
+    if df.empty:
+        raise ValueError(
+            f"No records in {name} match requested splits or elements filter."
+        )
+    return df
+
+
 def plot_atomic_percentage_distributions(df_at_samples: pd.DataFrame, plot_config: dict[str, Any] | None = None
                                          ) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
     """Plot atomic percentage distributions comparing Target and Predicted.
@@ -844,13 +861,8 @@ def plot_atomic_percentage_distributions(df_at_samples: pd.DataFrame, plot_confi
         If df_at_samples is empty or filtered dataset has zero records.
     """
     _check_meta(df_at_samples, {"split", "element", "target_at%", "pred_at%", "diff_at%"}, "df_at_samples")
-    cfg, df = plot_config or {}, df_at_samples.copy()
-    if cfg.get("splits") is not None:
-        df = df[df["split"].str.lower().isin([str(s).lower() for s in cfg["splits"]])]
-    if cfg.get("elements") is not None:
-        df = df[df["element"].isin(cfg["elements"])]
-    if df.empty:
-        raise ValueError("No records in df_at_samples match requested splits or elements filter.")
+    cfg = plot_config or {}
+    df = _filter_atomic_df(df_at_samples.copy(), cfg, "df_at_samples")
     fig, (ax_abs, ax_diff) = _prepare_canvas(cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2)
     df_abs = pd.melt(df, id_vars=["split", "element"], value_vars=["target_at%", "pred_at%"],
                      var_name="spectrum_type", value_name="atomic_percent")
@@ -924,17 +936,12 @@ def plot_atomic_percentage_mae(df_at_data: pd.DataFrame, plot_config: dict[str, 
     _check_meta(df_at_data, {"split", "element"}, "df_at_data")
     df = df_at_data.copy()
     if "abs_diff_at%" not in df.columns:
-        if "diff_at%" in df.columns:
-            df["abs_diff_at%"] = df["diff_at%"].abs()
-        else:
+        if "diff_at%" not in df.columns:
             raise KeyError("df_at_data must contain sample-level 'abs_diff_at%' (or 'diff_at%') column.")
+        df["abs_diff_at%"] = df["diff_at%"].abs()
     cfg = plot_config or {}
-    if cfg.get("splits") is not None:
-        df = df[df["split"].str.lower().isin([str(s).lower() for s in cfg["splits"]])]
-    if cfg.get("elements") is not None:
-        df = df[df["element"].isin(cfg["elements"])]
-    if df.empty:
-        raise ValueError("No records in df_at_data match the requested splits or elements filter.")
+    df = _filter_atomic_df(df, cfg, "df_at_data")
+
     inc_ovr, sh_val = bool(cfg.get("include_overall", True)), bool(cfg.get("show_values", True))
     bar_w, ref_pct = float(cfg.get("bar_half_width", 0.09)), float(cfg.get("reference_percentile", 90.0))
     fig, (ax_strip, ax_ecdf) = _prepare_canvas(cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2)
@@ -1162,7 +1169,7 @@ def plot_gp_die_flux_timeline(
 ) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
     """Plot two-panel GP die flux prediction timeline for a selected die.
 
-    Displays source tool and target tool total flux timelines for the chosen die.
+    Displays source and target tool total flux timelines for the chosen die.
     Points are colored by split (train: blue, val: orange, test: bright green)
     and annotated with percentage prediction error relative to ground truth.
 
@@ -1317,5 +1324,3 @@ def plot_gp_die_flux_timeline(
     )
     _finish_fig(fig, cfg, fig_title)
     return fig, (ax_s, ax_t)
-
-

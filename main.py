@@ -255,7 +255,7 @@ def main() -> None:
     # STAGE 4: TRAIN-VAL-TEST DATA SPLITTING
     # =========================================================================
     print("\n=== Stage 4: Train-Val-Test Session Splitting ===")
-    df_meta, measurement_mapping, session_splits = utility.split_measurement_sessions(
+    df_meta, _, session_splits = utility.split_measurement_sessions(
         df_meta, splitting_config
     )
     print(
