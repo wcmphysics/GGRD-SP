@@ -94,31 +94,67 @@ class ResNet1D(nn.Module):
         self.use_film = bool(cfg.get("use_film", False))
         self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
 
-        # 3-layer CNN backbone: 1 -> hidden -> hidden -> 1 (residual Delta)
-        self.conv1 = build_conv1d_layer(
-            (1, resnet_channel), kernel_size, padding_mode=padding_mode
-        )
-        self.conv2 = build_conv1d_layer(
-            (resnet_channel, resnet_channel),
-            kernel_size,
-            padding_mode=padding_mode,
-        )
-        self.conv3 = build_conv1d_layer(
+        self.num_layers = int(cfg.get("num_layers", 3))
+        if self.num_layers < 2:
+            raise ValueError(
+                f"ResNet1D num_layers must be >= 2, got {self.num_layers}."
+            )
+        num_hidden = self.num_layers - 1
+
+        # Hidden conv layers and normalizations
+        self.hidden_convs = nn.ModuleList([
+            build_conv1d_layer(
+                (1 if i == 0 else resnet_channel, resnet_channel),
+                kernel_size,
+                padding_mode=padding_mode,
+            )
+            for i in range(num_hidden)
+        ])
+        self.hidden_bns = nn.ModuleList([
+            nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
+            for _ in range(num_hidden)
+        ])
+        self.conv_out = build_conv1d_layer(
             (resnet_channel, 1), kernel_size, padding_mode=padding_mode
         )
 
+        # Backward compatibility aliases for 3-layer architecture
+        self.conv1 = self.hidden_convs[0]
+        self.conv2 = self.hidden_convs[1] if num_hidden > 1 else None
+        self.conv3 = self.conv_out
+        self.bn1 = self.hidden_bns[0]
+        self.bn2 = self.hidden_bns[1] if num_hidden > 1 else None
+
         # Normalization, activation, and dropout layers
-        self.bn1 = nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
-        self.bn2 = nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
         self.activation = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
         # Optional FiLM generator for metadata-conditioned modulation
         self.film_gen = (
-            FiLMGenerator([resnet_channel, resnet_channel], config=cfg)
+            FiLMGenerator([resnet_channel] * num_hidden, config=cfg)
             if self.use_film
             else None
         )
+
+    def _forward_delta(
+        self,
+        x: torch.Tensor,
+        film_modulations: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+    ) -> torch.Tensor:
+        """Execute the convolutional residual branch Delta(x)."""
+        hidden_features = x
+        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
+            zip(self.hidden_convs, self.hidden_bns)
+        ):
+            hidden_features = batch_norm_layer(conv_layer(hidden_features))
+            if film_modulations is not None:
+                gamma, beta = film_modulations[layer_index]
+                hidden_features = (
+                    gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1)
+                )
+            hidden_features = self.dropout(self.activation(hidden_features))
+
+        return self.conv_out(hidden_features)
 
     def forward(
         self,
@@ -126,7 +162,6 @@ class ResNet1D(nn.Module):
         cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Apply residual transformation: y = x + Delta(x, cond).
-
 
         Parameters
         ----------
@@ -153,19 +188,7 @@ class ResNet1D(nn.Module):
             else None
         )
 
-        hidden_features = x
-        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
-            ((self.conv1, self.bn1), (self.conv2, self.bn2))
-        ):
-            hidden_features = batch_norm_layer(conv_layer(hidden_features))
-            if film_modulations is not None:
-                gamma, beta = film_modulations[layer_index]
-                hidden_features = (
-                    gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1)
-                )
-            hidden_features = self.dropout(self.activation(hidden_features))
-
-        return x + self.conv3(hidden_features)
+        return x + self._forward_delta(x, film_modulations)
 
     def get_l2_regularization(self) -> torch.Tensor:
         """Compute the sum of squared weights for conv layers.
@@ -276,21 +299,33 @@ class ResNetScaledShort1D(ResNet1D):
             else None
         )
 
-        hidden_features = x
-        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
-            ((self.conv1, self.bn1), (self.conv2, self.bn2))
-        ):
-            hidden_features = batch_norm_layer(conv_layer(hidden_features))
-            if film_modulations is not None:
-                gamma, beta = film_modulations[layer_index]
-                hidden_features = (
-                    gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1)
-                )
-            hidden_features = self.dropout(self.activation(hidden_features))
-
-        delta = self.conv3(hidden_features)
+        delta = self._forward_delta(x, film_modulations)
         return (gamma_out.unsqueeze(-1) * x) + delta
 
 
-__all__ = ["ResNet1D", "ResNetScaledShort1D"]
+class ResNet5L1D(ResNet1D):
+    """5-layer 1D ResNet: 4 hidden convolutional layers + 1 projection layer.
+
+    Transforms a 1D regional spectrum sequence from source tool to target tool
+    while preserving sequence length: y = x + Delta(x, cond).
+    Features 4 hidden layers of uniform channel width (resnet_channel), mirror
+    padding, identity shortcut, and optional FiLM modulation across all 4
+    hidden layers.
+
+    Parameters
+    ----------
+    n_points : int
+        Number of spectral data points (length of input regional spectrum or
+        patch window).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary. Accepts standard ResNet1D hyperparameters.
+    """
+
+    def __init__(
+        self, n_points: int, config: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(n_points, {**(config or {}), "num_layers": 5})
+
+
+__all__ = ["ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
 
