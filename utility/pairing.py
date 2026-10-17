@@ -1,7 +1,7 @@
 """Spectrum pairing module for GGRD-SP.
 
-Provides 1-to-1 matching between source tool and target tool measurement sessions
-within a user-defined time threshold, fulfilling Part 2 of GEMINI.md.
+Provides 1-to-1 matching between source tool and target tool measurement
+sessions within a user-defined time threshold, fulfilling Part 2 of GEMINI.md.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ except (ImportError, OSError):
     linear_sum_assignment = None
 
 
-
 def get_default_pairing_config() -> dict[str, Any]:
     """Return the default configuration dictionary for spectrum pairing.
 
@@ -29,9 +28,10 @@ def get_default_pairing_config() -> dict[str, Any]:
         - 'source_tool': 'J4'
         - 'target_tool': 'J5'
         - 'time_threshold_hours': 12.0
-        - 'method': 'optimal' ('optimal' for Hungarian algorithm, 'greedy' for nearest-first)
-        - 'material': None (optional string; if None, pairs within each material separately)
-        - 'match_t7_code': True (if True and 't7_code' in metadata, only pair measurements with identical t7_code)
+        - 'method': 'optimal' ('optimal' for Hungarian, 'greedy' for nearest)
+        - 'material': None (if None, pairs within each material separately)
+        - 'match_t7_code': True (if True and 't7_code' in metadata, only pair
+          measurements with identical t7_code)
     """
     return {
         "source_tool": "J4",
@@ -44,7 +44,7 @@ def get_default_pairing_config() -> dict[str, Any]:
 
 
 def _safe_to_datetime(series: pd.Series) -> pd.Series:
-    """Safely convert a pandas Series to datetime64 handling mixed formats and timezones.
+    """Safely convert a Series to datetime64 handling mixed formats/timezones.
 
     Parameters
     ----------
@@ -104,11 +104,23 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
         raise ValueError(f"match_t7_code must be a boolean, got {match_t7}")
 
 
+def _extract_tool_sessions(
+    df_pool: pd.DataFrame,
+    tool_name: str,
+) -> pd.DataFrame:
+    """Return unique chronological measurement sessions for a specific tool."""
+    return (
+        df_pool[df_pool["tool"] == tool_name][["measurement_id", "time"]]
+        .drop_duplicates(subset=["measurement_id"])
+        .sort_values("time")
+    )
+
+
 def _compute_cost_matrix(
     src_df: pd.DataFrame,
     tgt_df: pd.DataFrame,
 ) -> tuple[np.ndarray, list[str], list[str]]:
-    """Compute pairwise absolute time delta matrix in hours between source and target sessions.
+    """Compute pairwise absolute time delta matrix in hours between sessions.
 
     Parameters
     ----------
@@ -124,7 +136,9 @@ def _compute_cost_matrix(
     """
     src_times = pd.to_datetime(src_df["time"], utc=True).values[:, None]
     tgt_times = pd.to_datetime(tgt_df["time"], utc=True).values[None, :]
-    delta_hours = (np.abs(src_times - tgt_times) / np.timedelta64(1, "h")).astype(np.float64)
+    delta_hours = (
+        np.abs(src_times - tgt_times) / np.timedelta64(1, "h")
+    ).astype(np.float64)
     return delta_hours, list(src_df["measurement_id"]), list(tgt_df["measurement_id"])
 
 
@@ -140,7 +154,8 @@ def _match_sessions_optimal(
 
     if linear_sum_assignment is None:
         warnings.warn(
-            "scipy.optimize.linear_sum_assignment is unavailable; falling back to greedy pairing algorithm.",
+            "scipy.optimize.linear_sum_assignment is unavailable; falling back "
+            "to greedy pairing algorithm.",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -149,16 +164,13 @@ def _match_sessions_optimal(
     # Assign prohibitive penalty cost to pairs exceeding threshold
     penalty = 1e9
     masked_cost = np.where(cost_matrix <= threshold, cost_matrix, penalty)
-
     row_ind, col_ind = linear_sum_assignment(masked_cost)
 
-    pairs: dict[str, tuple[str, float]] = {}
-    for r, c in zip(row_ind, col_ind):
-        diff = float(cost_matrix[r, c])
-        if diff <= threshold:
-            pairs[src_ids[r]] = (tgt_ids[c], diff)
-
-    return pairs
+    return {
+        src_ids[r]: (tgt_ids[c], float(cost_matrix[r, c]))
+        for r, c in zip(row_ind, col_ind)
+        if float(cost_matrix[r, c]) <= threshold
+    }
 
 
 def _match_sessions_greedy(
@@ -167,7 +179,7 @@ def _match_sessions_greedy(
     cost_matrix: np.ndarray,
     threshold: float,
 ) -> dict[str, tuple[str, float]]:
-    """Perform greedy 1-to-1 matching based on smallest time difference first."""
+    """Perform greedy 1-to-1 matching by smallest time difference first."""
     if cost_matrix.size == 0:
         return {}
 
@@ -197,18 +209,18 @@ def pair_source_target_spectra(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Pair source tool spectra to target tool spectra enforcing 1-to-1 session matching.
+    """Pair source tool spectra to target tool spectra with 1-to-1 matching.
 
     Fulfills Part 2 of GEMINI.md:
-    - Performs session-level 1-to-1 matching between source and target measurements.
+    - Performs session-level 1-to-1 matching between source and target tools.
     - Pairs within each specimen material separately.
-    - If t7_code is present, enforces that only measurements with the same t7_code can pair together.
+    - If t7_code is present, enforces identical t7_code for paired sessions.
     - Adheres to a configurable time threshold (default 12 hours).
     - Appends target pairing information to the metadata DataFrame:
       'tool_target', 'measurement_id_target', 'spectrum_index_target',
-      'time_target', 'time_diff_hours', and 't7_code_target' (if t7_code present).
-    - For source tool rows, 'tool_target' is always populated with the target tool name,
-      even if no matching target session was found.
+      'time_target', 'time_diff_hours', and 't7_code_target' (if present).
+    - For source tool rows, 'tool_target' is always populated with the target
+      tool name, even if no matching target session was found.
 
     Parameters
     ----------
@@ -217,7 +229,7 @@ def pair_source_target_spectra(
         'die', 'region', and 'spectrum_index'.
     config : dict[str, Any] | None, optional
         Configuration dictionary. If None, default settings from
-        `get_default_pairing_config()` are used. Custom keys will override defaults.
+        `get_default_pairing_config()` are used.
 
     Returns
     -------
@@ -239,41 +251,52 @@ def pair_source_target_spectra(
 
     source_tool: str = merged_config["source_tool"]
     target_tool: str = merged_config["target_tool"]
-    threshold_hours: float = float(merged_config["time_threshold_hours"])
+    threshold_hours = float(merged_config["time_threshold_hours"])
     method: str = merged_config["method"]
     material_filter: str | None = merged_config.get("material")
-    match_t7_code: bool = bool(merged_config.get("match_t7_code", True))
+    match_t7_code = bool(merged_config.get("match_t7_code", True))
 
-    required_cols = {"tool", "measurement_id", "time", "die", "region", "spectrum_index"}
+    required_cols = {
+        "tool",
+        "measurement_id",
+        "time",
+        "die",
+        "region",
+        "spectrum_index",
+    }
     missing_cols = required_cols - set(df_meta.columns)
     if missing_cols:
-        raise KeyError(f"df_meta is missing required columns: {sorted(missing_cols)}")
+        raise KeyError(
+            f"df_meta is missing required columns: {sorted(missing_cols)}"
+        )
 
     result_df = df_meta.copy()
     result_df["time"] = _safe_to_datetime(result_df["time"])
     has_t7 = "t7_code" in result_df.columns and match_t7_code
+    matcher = (
+        _match_sessions_optimal if method == "optimal" else _match_sessions_greedy
+    )
 
     # Determine materials to pair over
-    if "material" in result_df.columns:
-        if material_filter:
-            materials_to_process = [material_filter]
-        else:
-            materials_to_process = list(result_df["material"].dropna().unique())
+    if "material" not in result_df.columns:
+        materials_to_process: list[str | None] = [None]
+    elif material_filter:
+        materials_to_process = [material_filter]
     else:
-        materials_to_process = [None]
+        materials_to_process = list(result_df["material"].dropna().unique())
 
     # session_pairs: mapping of (src_meas_id) -> (tgt_meas_id, diff_hours)
     all_session_pairs: dict[str, tuple[str, float]] = {}
 
     for mat in materials_to_process:
-        if mat is not None:
-            mat_mask = result_df["material"] == mat
-            df_mat = result_df[mat_mask]
-        else:
-            df_mat = result_df
+        df_mat = (
+            result_df[result_df["material"] == mat]
+            if mat is not None
+            else result_df
+        )
 
         if has_t7:
-            # Enforce that only measurements with the same t7_code can pair together
+            # Enforce that only measurements with the same t7_code pair together
             t7_groups = list(df_mat["t7_code"].dropna().unique())
             if df_mat["t7_code"].isna().any():
                 t7_groups.append(None)
@@ -288,29 +311,25 @@ def pair_source_target_spectra(
             else:
                 df_pool = df_mat
 
-            src_sessions_df = (
-                df_pool[df_pool["tool"] == source_tool][["measurement_id", "time"]]
-                .drop_duplicates(subset=["measurement_id"])
-                .sort_values("time")
+            src_sessions_df = _extract_tool_sessions(df_pool, source_tool)
+            tgt_sessions_df = _extract_tool_sessions(df_pool, target_tool)
+            if src_sessions_df.empty or tgt_sessions_df.empty:
+                continue
+
+            cost_matrix, src_ids, tgt_ids = _compute_cost_matrix(
+                src_sessions_df, tgt_sessions_df
             )
-            tgt_sessions_df = (
-                df_pool[df_pool["tool"] == target_tool][["measurement_id", "time"]]
-                .drop_duplicates(subset=["measurement_id"])
-                .sort_values("time")
+            all_session_pairs.update(
+                matcher(src_ids, tgt_ids, cost_matrix, threshold_hours)
             )
 
-            if not src_sessions_df.empty and not tgt_sessions_df.empty:
-                cost_matrix, src_ids, tgt_ids = _compute_cost_matrix(src_sessions_df, tgt_sessions_df)
-                if method == "optimal":
-                    mat_pairs = _match_sessions_optimal(src_ids, tgt_ids, cost_matrix, threshold_hours)
-                else:
-                    mat_pairs = _match_sessions_greedy(src_ids, tgt_ids, cost_matrix, threshold_hours)
-                all_session_pairs.update(mat_pairs)
-
-    # Build target lookup index: (measurement_id, die, region) -> (spectrum_index, time)
+    # Build target lookup: (measurement_id, die, region) -> (spec_idx, time)
     tgt_spectra = result_df[result_df["tool"] == target_tool]
     tgt_lookup: dict[tuple[str, int, str], tuple[int, pd.Timestamp]] = {
-        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): (int(r["spectrum_index"]), pd.Timestamp(r["time"]))
+        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): (
+            int(r["spectrum_index"]),
+            pd.Timestamp(r["time"]),
+        )
         for _, r in tgt_spectra.iterrows()
     }
     tgt_t7_lookup: dict[str, Any] = (
@@ -321,7 +340,9 @@ def pair_source_target_spectra(
 
     # Prepare target columns aligning with result_df
     n_rows = len(result_df)
-    col_tool = [target_tool if t == source_tool else None for t in result_df["tool"]]
+    col_tool = [
+        target_tool if t == source_tool else None for t in result_df["tool"]
+    ]
     col_meas: list[str | None] = [None] * n_rows
     col_spec: list[int | None] = [None] * n_rows
     col_time: list[pd.Timestamp | None] = [None] * n_rows
@@ -331,31 +352,44 @@ def pair_source_target_spectra(
     src_mask = result_df["tool"] == source_tool
     if src_mask.any() and not all_session_pairs:
         warnings.warn(
-            f"No session pairs could be formed between source tool '{source_tool}' and target tool "
-            f"'{target_tool}' within time threshold of {threshold_hours} hours. All target metadata "
+            f"No session pairs could be formed between source tool "
+            f"'{source_tool}' and target tool '{target_tool}' within time "
+            f"threshold of {threshold_hours} hours. All target metadata "
             "columns will remain null."
         )
 
-    if all_session_pairs:
-        for row_idx, (_, row) in enumerate(result_df.iterrows()):
-            if row["tool"] == source_tool:
-                src_meas = str(row["measurement_id"])
-                if src_meas in all_session_pairs:
-                    tgt_meas, diff_h = all_session_pairs[src_meas]
-                    key = (tgt_meas, int(row["die"]), str(row["region"]))
-                    if key in tgt_lookup:
-                        col_meas[row_idx] = tgt_meas
-                        col_spec[row_idx], col_time[row_idx] = tgt_lookup[key]
-                        col_diff[row_idx] = diff_h
-                        if "t7_code" in result_df.columns:
-                            col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
+    for row_idx, (_, row) in enumerate(result_df.iterrows()):
+        if row["tool"] != source_tool:
+            continue
+        src_meas = str(row["measurement_id"])
+        if src_meas not in all_session_pairs:
+            continue
+        tgt_meas, diff_h = all_session_pairs[src_meas]
+        key = (tgt_meas, int(row["die"]), str(row["region"]))
+        if key not in tgt_lookup:
+            continue
 
-    result_df["tool_target"] = pd.Series(col_tool, index=result_df.index, dtype="object")
-    result_df["measurement_id_target"] = pd.Series(col_meas, index=result_df.index, dtype="object")
-    result_df["spectrum_index_target"] = pd.Series(col_spec, index=result_df.index, dtype="Int64")
-    result_df["time_target"] = pd.to_datetime(pd.Series(col_time, index=result_df.index))
-    result_df["time_diff_hours"] = pd.Series(col_diff, index=result_df.index, dtype="float64")
+        col_meas[row_idx] = tgt_meas
+        col_spec[row_idx], col_time[row_idx] = tgt_lookup[key]
+        col_diff[row_idx] = diff_h
+        if "t7_code" in result_df.columns:
+            col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
+
+    idx = result_df.index
+    result_df["tool_target"] = pd.Series(col_tool, index=idx, dtype="object")
+    result_df["measurement_id_target"] = pd.Series(
+        col_meas, index=idx, dtype="object"
+    )
+    result_df["spectrum_index_target"] = pd.Series(
+        col_spec, index=idx, dtype="Int64"
+    )
+    result_df["time_target"] = pd.to_datetime(pd.Series(col_time, index=idx))
+    result_df["time_diff_hours"] = pd.Series(
+        col_diff, index=idx, dtype="float64"
+    )
     if "t7_code" in result_df.columns:
-        result_df["t7_code_target"] = pd.Series(col_t7, index=result_df.index, dtype="object")
+        result_df["t7_code_target"] = pd.Series(
+            col_t7, index=idx, dtype="object"
+        )
 
     return result_df

@@ -6,8 +6,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
 from utility.flux import compute_die_total_flux
+
+
+def _peak_scale(spectrum: np.ndarray, eps: float) -> float:
+    """Return peak absolute intensity floored at eps."""
+    return max(float(np.max(np.abs(spectrum))), eps)
 
 
 def normalize_spectral_data(
@@ -44,6 +48,9 @@ def normalize_spectral_data(
     eps = float(cfg.get("eps", 1e-6))
 
     ary_norm = ary_intensity.astype(np.float32, copy=True)
+    if norm_mode == "no_normalization":
+        return ary_norm, ary_energy, df_meta
+
     n_total = len(ary_norm)
 
     if norm_mode == "total_flux":
@@ -51,19 +58,17 @@ def normalize_spectral_data(
         for _, row in df_meta.iterrows():
             idx = int(row["spectrum_index"])
             if 0 <= idx < n_total:
-                scale = max(
-                    flux_map.get((str(row["measurement_id"]), int(row["die"])), eps),
-                    eps,
-                )
+                key = (str(row["measurement_id"]), int(row["die"]))
+                scale = max(flux_map.get(key, eps), eps)
                 ary_norm[idx] = ary_norm[idx] / scale
 
     elif norm_mode == "regional_max":
         for _, row in df_meta.iterrows():
             idx = int(row["spectrum_index"])
             if 0 <= idx < n_total:
-                peak = float(np.max(np.abs(ary_intensity[idx])))
-                scale = max(peak, eps)
-                ary_norm[idx] = ary_norm[idx] / scale
+                ary_norm[idx] = ary_norm[idx] / _peak_scale(
+                    ary_intensity[idx], eps
+                )
 
     elif norm_mode == "source_regional_max":
         if "spectrum_index_target" not in df_meta.columns:
@@ -77,13 +82,10 @@ def normalize_spectral_data(
             src_idx = int(row["spectrum_index"])
             tgt_idx = int(row["spectrum_index_target"])
             if 0 <= src_idx < n_total and 0 <= tgt_idx < n_total:
-                src_peak = float(np.max(np.abs(ary_intensity[src_idx])))
-                scale = max(src_peak, eps)
+                scale = _peak_scale(ary_intensity[src_idx], eps)
                 ary_norm[src_idx] = ary_intensity[src_idx] / scale
                 ary_norm[tgt_idx] = ary_intensity[tgt_idx] / scale
 
-    elif norm_mode == "no_normalization":
-        pass
     else:
         raise ValueError(
             f"Unknown normalization_mode '{norm_mode}'. "
@@ -92,3 +94,4 @@ def normalize_spectral_data(
         )
 
     return ary_norm, ary_energy, df_meta
+

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 
-# Default regional energy boundaries and characteristic peak parameters for TiAlC (NMG)
+# Default regional energy boundaries and peak parameters for TiAlC (NMG)
 DEFAULT_REGION_PROFILES: dict[str, dict[str, Any]] = {
     "Al2p": {
         "energy_range": (70.0, 78.0),
@@ -74,7 +74,7 @@ DEFAULT_REGION_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
-# Default die-to-die spatial baseline factors for NMG (center > mid > edge with individual variation)
+# Default die-to-die spatial baseline factors for NMG (center > mid > edge)
 DEFAULT_DIE_FACTORS_NMG: dict[int, float] = {
     0: 1.20,  # Center (Die 0)
     1: 0.82,  # Edge (Die 1)
@@ -88,11 +88,20 @@ DEFAULT_DIE_FACTORS_NMG: dict[int, float] = {
 }
 
 
+def _parse_start_time(start_time: str | datetime) -> datetime:
+    """Parse start_time string or return datetime directly."""
+    return (
+        datetime.fromisoformat(start_time)
+        if isinstance(start_time, str)
+        else start_time
+    )
+
+
 def pseudo_voigt(
     energy: np.ndarray,
     peak_params: dict[str, Any],
 ) -> np.ndarray:
-    """Calculate a pseudo-Voigt profile as linear combination of Gaussian and Lorentzian.
+    """Calculate a pseudo-Voigt profile (Gaussian + Lorentzian combination).
 
     Parameters
     ----------
@@ -103,7 +112,7 @@ def pseudo_voigt(
         - 'center' (float): Peak center position in eV.
         - 'amplitude' (float): Peak height/amplitude.
         - 'fwhm' (float): Full width at half maximum in eV (must be > 0).
-        - 'eta' (float, optional): Lorentzian fraction (0.0 to 1.0, default 0.3).
+        - 'eta' (float, optional): Lorentzian fraction in [0.0, 1.0] (def 0.3).
 
     Returns
     -------
@@ -142,12 +151,12 @@ def calculate_time_decay_factor(
     config: dict[str, Any] | None = None,
     rng: np.random.Generator | None = None,
     cycle_cache: dict[int, float] | None = None,
-    **kwargs: Any,
 ) -> float:
-    """Calculate the time decay scale factor with periodic maintenance jump resets.
+    """Calculate the time decay scale factor with maintenance jump resets.
 
     Models linear decay over operating days with periodic maintenance resets,
-    capturing renewed intensity (jump up) after optics cleaning or filament replacement.
+    capturing renewed intensity (jump up) after optics cleaning or filament
+    replacement.
 
     Parameters
     ----------
@@ -156,7 +165,8 @@ def calculate_time_decay_factor(
     base_time : datetime
         Reference start timestamp.
     config : dict[str, Any] | None, optional
-        Configuration dictionary with decay parameters (can package 'rng', 'cycle_cache').
+        Configuration dictionary with decay parameters (can package 'rng',
+        'cycle_cache').
     rng : np.random.Generator | None, optional
         Random number generator.
     cycle_cache : dict[int, float] | None, optional
@@ -168,11 +178,10 @@ def calculate_time_decay_factor(
         Multiplicative time-dependent intensity scale factor.
     """
     cfg = dict(config or {})
-    cfg.update(kwargs)
-    rng = rng if rng is not None else cfg.get("rng")
-    if rng is None:
-        rng = np.random.default_rng()
-    cycle_cache = cycle_cache if cycle_cache is not None else cfg.get("cycle_cache")
+    rng = rng or cfg.get("rng") or np.random.default_rng()
+    cycle_cache = (
+        cycle_cache if cycle_cache is not None else cfg.get("cycle_cache")
+    )
 
     decay_rate = float(cfg.get("time_decay_rate", 0.005))
     if decay_rate <= 0.0:
@@ -190,7 +199,11 @@ def calculate_time_decay_factor(
 
     if cycle_cache is not None:
         if cycle_idx not in cycle_cache:
-            reset_level = 1.0 if (cycle_idx == 0 or jump_std == 0.0) else float(rng.normal(1.0, jump_std))
+            reset_level = (
+                1.0
+                if (cycle_idx == 0 or jump_std == 0.0)
+                else float(rng.normal(1.0, jump_std))
+            )
             cycle_cache[cycle_idx] = float(np.clip(reset_level, 0.8, 1.3))
         base_level = cycle_cache[cycle_idx]
     else:
@@ -201,7 +214,7 @@ def calculate_time_decay_factor(
 
 
 def get_default_measurement_config() -> dict[str, Any]:
-    """Return the default configuration dictionary for pseudo-measurement generation.
+    """Return the default configuration dictionary for pseudo-measurements.
 
     Returns
     -------
@@ -259,22 +272,31 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError("regions list cannot be empty")
 
     measurements_per_tool = config.get("measurements_per_tool", {})
-    if not measurements_per_tool or all(v <= 0 for v in measurements_per_tool.values()):
-        raise ValueError("measurements_per_tool must specify at least one tool with count > 0")
+    if not measurements_per_tool or all(
+        v <= 0 for v in measurements_per_tool.values()
+    ):
+        raise ValueError(
+            "measurements_per_tool must specify at least one tool with count > 0"
+        )
 
     if any(v < 0 for v in measurements_per_tool.values()):
-        raise ValueError(f"measurements_per_tool counts cannot be negative: {measurements_per_tool}")
+        raise ValueError(
+            f"measurements_per_tool counts cannot be negative: "
+            f"{measurements_per_tool}"
+        )
 
     meas_per_t7 = config.get("measurements_per_t7_code", 10)
     if not isinstance(meas_per_t7, int) or meas_per_t7 <= 0:
         raise ValueError(
-            f"measurements_per_t7_code must be a positive integer, got {meas_per_t7}"
+            f"measurements_per_t7_code must be a positive integer, "
+            f"got {meas_per_t7}"
         )
 
     interval_range = config.get("interval_hours_range", (4.0, 24.0))
     if not (isinstance(interval_range, (tuple, list)) and len(interval_range) == 2):
         raise ValueError(
-            f"interval_hours_range must be a tuple/list of 2 floats, got {interval_range}"
+            f"interval_hours_range must be a tuple/list of 2 floats, "
+            f"got {interval_range}"
         )
     if interval_range[0] < 0 or interval_range[1] <= interval_range[0]:
         raise ValueError(
@@ -307,14 +329,15 @@ def generate_tool_timeline(
     dict[str, list[datetime]]
         Mapping of tool name to chronological list of measurement datetimes.
     """
-    measurements_per_tool: dict[str, int] = timeline_config.get("measurements_per_tool", {})
-    start_time: str | datetime = timeline_config.get("start_time", "2026-01-01 00:00:00")
-    interval_range: tuple[float, float] = timeline_config.get("interval_hours_range", (4.0, 24.0))
-
-    if isinstance(start_time, str):
-        base_dt = datetime.fromisoformat(start_time)
-    else:
-        base_dt = start_time
+    measurements_per_tool: dict[str, int] = timeline_config.get(
+        "measurements_per_tool", {}
+    )
+    base_dt = _parse_start_time(
+        timeline_config.get("start_time", "2026-01-01 00:00:00")
+    )
+    interval_range: tuple[float, float] = timeline_config.get(
+        "interval_hours_range", (4.0, 24.0)
+    )
 
     timeline: dict[str, list[datetime]] = {}
     for tool in tools:
@@ -323,11 +346,39 @@ def generate_tool_timeline(
         tool_times: list[datetime] = []
         for _ in range(n_meas):
             tool_times.append(current_dt)
-            delta_hours = float(rng.uniform(interval_range[0], interval_range[1]))
+            delta_hours = float(
+                rng.uniform(interval_range[0], interval_range[1])
+            )
             current_dt += timedelta(hours=delta_hours)
         timeline[tool] = tool_times
 
     return timeline
+
+
+def _synthesize_regional_spectrum(
+    e_grid: np.ndarray,
+    profile: dict[str, Any],
+    synth_params: dict[str, float],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Synthesize a regional XPS spectrum with peaks, baseline, and noise."""
+    tool_shift = synth_params["tool_shift"]
+    total_scale = synth_params["total_scale"]
+    noise_relative_std = synth_params["noise_relative_std"]
+    intensity = np.zeros_like(e_grid)
+    for peak in profile["peaks"]:
+        peak_shifted = {
+            "center": peak["center"] + tool_shift,
+            "amplitude": peak["amplitude"] * total_scale,
+            "fwhm": peak["fwhm"],
+            "eta": peak.get("eta", 0.3),
+        }
+        intensity += pseudo_voigt(energy=e_grid, peak_params=peak_shifted)
+
+    intensity += profile.get("baseline", 10.0) * total_scale
+    noise_sigma = float(np.max(intensity)) * noise_relative_std
+    intensity += rng.normal(0.0, noise_sigma, size=len(e_grid))
+    return np.clip(intensity, 0.0, None)
 
 
 def generate_pseudo_measurements(
@@ -336,15 +387,15 @@ def generate_pseudo_measurements(
     """Generate synthetic XPS regional spectra and corresponding metadata.
 
     Fulfills Part 1 of the program structure defined in GEMINI.md.
-    Binding energy arrays for regions with the same name are identical and sorted
-    in ascending order. Tool discrepancies (energy shifts and intensity scales) and
-    die-to-die variations are captured in the intensity arrays.
+    Binding energy arrays for regions with the same name are identical and
+    sorted in ascending order. Tool discrepancies (energy shifts and intensity
+    scales) and die-to-die variations are captured in the intensity arrays.
 
     Parameters
     ----------
     config : dict[str, Any] | None, optional
         Configuration dictionary. If None, default settings from
-        `get_default_measurement_config()` are used. Custom keys override defaults.
+        `get_default_measurement_config()` are used.
 
     Returns
     -------
@@ -364,28 +415,31 @@ def generate_pseudo_measurements(
     n_die: int = merged_config["n_die"]
     n_points: int = merged_config["n_points"]
     meas_per_tool: dict[str, int] = merged_config["measurements_per_tool"]
-    meas_per_t7: int = int(merged_config.get("measurements_per_t7_code", 10))
+    meas_per_t7 = int(merged_config.get("measurements_per_t7_code", 10))
     tool_offsets: dict[str, dict[str, float]] = merged_config["tool_offsets"]
     die_variation_std: float = merged_config["die_variation_std"]
     noise_relative_std: float = merged_config["noise_relative_std"]
     region_profiles: dict[str, dict[str, Any]] = merged_config["region_profiles"]
 
-    seed: int | None = merged_config.get("seed")
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(merged_config.get("seed"))
 
-    # Precompute fixed 1D binding energy arrays for each region (ascending order)
+    # Precompute fixed 1D binding energy arrays for each region (ascending)
     region_energy_grids: dict[str, np.ndarray] = {}
     for region_name in regions:
         profile = region_profiles.get(region_name)
         if profile is None:
-            raise ValueError(f"No profile definition found for region: '{region_name}'")
+            raise ValueError(
+                f"No profile definition found for region: '{region_name}'"
+            )
         e_min, e_max = profile["energy_range"]
         if e_min >= e_max:
             raise ValueError(
                 f"energy_range for region '{region_name}' must have min < max, "
                 f"got ({e_min}, {e_max})"
             )
-        region_energy_grids[region_name] = np.linspace(e_min, e_max, n_points, dtype=np.float64)
+        region_energy_grids[region_name] = np.linspace(
+            e_min, e_max, n_points, dtype=np.float64
+        )
 
     # Generate timeline per tool
     tools = list(meas_per_tool.keys())
@@ -399,33 +453,28 @@ def generate_pseudo_measurements(
         rng=rng,
     )
 
-    # Parse start time reference for time decay calculations
-    start_time_cfg = merged_config.get("start_time", "2026-01-01 00:00:00")
-    base_time = (
-        datetime.fromisoformat(start_time_cfg)
-        if isinstance(start_time_cfg, str)
-        else start_time_cfg
+    base_time = _parse_start_time(
+        merged_config.get("start_time", "2026-01-01 00:00:00")
     )
 
     die_base_factors_cfg = merged_config.get("die_base_factors")
     if die_base_factors_cfg is None:
-        if n_die == 9:
-            die_base_factors = DEFAULT_DIE_FACTORS_NMG
-        else:
-            die_base_factors = {i: 1.0 for i in range(n_die)}
+        die_base_factors = (
+            DEFAULT_DIE_FACTORS_NMG
+            if n_die == 9
+            else {i: 1.0 for i in range(n_die)}
+        )
     else:
-        die_base_factors = {int(k): float(v) for k, v in die_base_factors_cfg.items()}
+        die_base_factors = {
+            int(k): float(v) for k, v in die_base_factors_cfg.items()
+        }
 
     die_repeatability_std = float(
         merged_config.get("die_repeatability_std", die_variation_std)
     )
 
-    # Tool maintenance reset cycle caches
     tool_maint_caches: dict[str, dict[int, float]] = {t: {} for t in tools}
-
-    # Calculate total spectra count
-    total_measurements = sum(meas_per_tool.values())
-    n_total = total_measurements * n_die * len(regions)
+    n_total = sum(meas_per_tool.values()) * n_die * len(regions)
 
     ary_intensity = np.empty((n_total, n_points), dtype=np.float64)
     ary_energy = np.empty((n_total, n_points), dtype=np.float64)
@@ -437,12 +486,10 @@ def generate_pseudo_measurements(
         t_offset = tool_offsets.get(tool, {"shift_ev": 0.0, "scale": 1.0})
         tool_shift = t_offset.get("shift_ev", 0.0)
         tool_scale = t_offset.get("scale", 1.0)
-        meas_times = timelines.get(tool, [])
 
-        for meas_num, meas_time in enumerate(meas_times):
+        for meas_num, meas_time in enumerate(timelines.get(tool, [])):
             meas_id = f"{material}_M_{tool}_{meas_num:05d}"
-            t7_idx = (meas_num // meas_per_t7) + 1
-            t7_code = f"T7_{t7_idx:03d}"
+            t7_code = f"T7_{(meas_num // meas_per_t7) + 1:03d}"
 
             time_scale = calculate_time_decay_factor(
                 meas_time=meas_time,
@@ -456,43 +503,27 @@ def generate_pseudo_measurements(
                 base_die = float(die_base_factors.get(die_idx, 1.0))
                 if die_repeatability_std > 0.0:
                     die_noise = float(rng.normal(0.0, die_repeatability_std))
-                    die_scale = float(np.clip(base_die * (1.0 + die_noise), 0.1, 3.0))
+                    die_scale = float(
+                        np.clip(base_die * (1.0 + die_noise), 0.1, 3.0)
+                    )
                 else:
                     die_scale = base_die
 
                 total_scale = float(tool_scale * time_scale * die_scale)
+                synth_params = {
+                    "tool_shift": tool_shift,
+                    "total_scale": total_scale,
+                    "noise_relative_std": noise_relative_std,
+                }
 
                 for region_name in regions:
                     e_grid = region_energy_grids[region_name]
-                    profile = region_profiles[region_name]
-
-                    # Base profile shifted by tool shift (observed peak position = center + shift)
-                    intensity = np.zeros_like(e_grid)
-                    for peak in profile["peaks"]:
-                        peak_shifted = {
-                            "center": peak["center"] + tool_shift,
-                            "amplitude": peak["amplitude"] * total_scale,
-                            "fwhm": peak["fwhm"],
-                            "eta": peak.get("eta", 0.3),
-                        }
-                        intensity += pseudo_voigt(energy=e_grid, peak_params=peak_shifted)
-
-                    # Add baseline with total scale factor
-                    baseline = profile.get("baseline", 10.0) * total_scale
-                    intensity += baseline
-
-                    # Add measurement noise (Poisson-like scaling + Gaussian detector floor)
-                    peak_max = float(np.max(intensity))
-                    noise_sigma = peak_max * noise_relative_std
-                    noise = rng.normal(0.0, noise_sigma, size=n_points)
-                    intensity += noise
-
-                    # XPS intensity cannot be negative
-                    intensity = np.clip(intensity, 0.0, None)
-
-                    # Assign into output arrays
-                    ary_intensity[spectrum_idx] = intensity
-                    # Fixed binding energy grid for this region
+                    ary_intensity[spectrum_idx] = _synthesize_regional_spectrum(
+                        e_grid=e_grid,
+                        profile=region_profiles[region_name],
+                        synth_params=synth_params,
+                        rng=rng,
+                    )
                     ary_energy[spectrum_idx] = e_grid
 
                     meta_records.append(
@@ -512,9 +543,8 @@ def generate_pseudo_measurements(
                             "scale_total": total_scale,
                         }
                     )
-
                     spectrum_idx += 1
 
-    df_meta = pd.DataFrame(meta_records)
+    return ary_intensity, ary_energy, pd.DataFrame(meta_records)
 
-    return ary_intensity, ary_energy, df_meta
+

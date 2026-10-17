@@ -1,7 +1,7 @@
 """Spectral patching and sliding window geometric transformations.
 
-Provides sequence slicing, window-to-point calculations, and overlap reconstruction
-utilities independent of neural network models.
+Provides sequence slicing, window-to-point calculations, and overlap
+reconstruction utilities independent of neural network models.
 """
 
 from __future__ import annotations
@@ -13,11 +13,35 @@ import numpy as np
 import torch
 
 
+def _resolve_step_points(
+    cfg: dict[str, Any],
+    delta_e: float,
+    pts_keys: tuple[str, str],
+    ev_spec: tuple[str, float],
+) -> int:
+    """Resolve a step or window size in data points from points or eV."""
+    primary_pts_key, alias_pts_key = pts_keys
+    pts_val = cfg.get(primary_pts_key, cfg.get(alias_pts_key))
+    if pts_val is not None:
+        points = int(pts_val)
+        if points <= 0:
+            raise ValueError(
+                f"{primary_pts_key} must be strictly positive, got {points}."
+            )
+        return points
+
+    ev_key, default_ev = ev_spec
+    ev_val = float(cfg.get(ev_key, default_ev))
+    if ev_val <= 0.0:
+        raise ValueError(f"{ev_key} must be strictly positive, got {ev_val}.")
+    return int(round(ev_val / delta_e))
+
+
 def calculate_window_points(
     energy: np.ndarray,
     config: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
-    """Calculate window size and sliding stride in data points from binding energy grid.
+    """Calculate window size and stride in data points from binding energy grid.
 
     Parameters
     ----------
@@ -25,11 +49,13 @@ def calculate_window_points(
         1D array of binding energies for the spectral region.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'window_size_ev' (float): Desired window width in eV (default 2.0).
-        - 'sliding_stride_ev' (float): Desired sliding stride in eV (default 1.0).
-        - 'window_size_points' | 'window_size' (int | None): Explicit window size in points.
-        - 'sliding_stride_points' | 'stride' (int | None): Explicit stride in points.
-        - 'force_odd_window' (bool): Ensure window size is an odd integer (default True).
+        - 'window_size_ev' (float): Window width in eV (default 2.0).
+        - 'sliding_stride_ev' (float): Sliding stride in eV (default 1.0).
+        - 'window_size_points' | 'window_size' (int | None): Explicit window
+          size in points.
+        - 'sliding_stride_points' | 'stride' (int | None): Explicit stride in
+          points.
+        - 'force_odd_window' (bool): Ensure window size is odd (default True).
 
     Returns
     -------
@@ -42,9 +68,6 @@ def calculate_window_points(
         If energy length < 3 or spacing delta_e <= 0.
     """
     cfg = config or {}
-    w_pts = cfg.get("window_size_points", cfg.get("window_size"))
-    s_pts = cfg.get("sliding_stride_points", cfg.get("stride"))
-
     n_total = len(energy)
     if n_total < 3:
         raise ValueError(f"Energy array length must be >= 3, got {n_total}")
@@ -53,38 +76,30 @@ def calculate_window_points(
     if delta_e <= 0.0:
         raise ValueError("Energy spacing delta_e must be strictly positive.")
 
-    # Determine window size in points
-    if w_pts is not None:
-        window_size = int(w_pts)
-        if window_size <= 0:
-            raise ValueError(f"window_size_points must be strictly positive, got {window_size}.")
-    else:
-        window_size_ev = float(cfg.get("window_size_ev", 2.0))
-        if window_size_ev <= 0.0:
-            raise ValueError(f"window_size_ev must be strictly positive, got {window_size_ev}.")
-        window_size = int(round(window_size_ev / delta_e))
-
+    window_size = _resolve_step_points(
+        cfg,
+        delta_e,
+        ("window_size_points", "window_size"),
+        ("window_size_ev", 2.0),
+    )
     force_odd = bool(cfg.get("force_odd_window", True))
     window_size = min(n_total, window_size)
     if force_odd and window_size % 2 == 0:
-        window_size = window_size - 1 if window_size == n_total else window_size + 1
-
+        window_size = (
+            window_size - 1 if window_size == n_total else window_size + 1
+        )
     window_size = max(3, window_size)
 
-    # Determine sliding stride in points
-    if s_pts is not None:
-        stride = int(s_pts)
-        if stride <= 0:
-            raise ValueError(f"sliding_stride_points must be strictly positive, got {stride}.")
-    else:
-        stride_ev = float(cfg.get("sliding_stride_ev", 1.0))
-        if stride_ev <= 0.0:
-            raise ValueError(f"sliding_stride_ev must be strictly positive, got {stride_ev}.")
-        stride = int(round(stride_ev / delta_e))
-
+    stride = _resolve_step_points(
+        cfg,
+        delta_e,
+        ("sliding_stride_points", "stride"),
+        ("sliding_stride_ev", 1.0),
+    )
     stride = max(1, min(window_size, stride))
 
     return window_size, stride
+
 
 
 def extract_sliding_windows(
@@ -92,12 +107,13 @@ def extract_sliding_windows(
     window_size: int,
     stride: int,
 ) -> tuple[np.ndarray, list[int]]:
-    """Slice a 1D regional spectrum into overlapping window patches without padding.
+    """Slice a 1D regional spectrum into overlapping window patches.
 
-    Extracts valid sub-sequences [start : start + window_size] directly from the
-    unpadded spectrum. Anchors the final window to the right edge (N - window_size)
-    if not aligned by stride, guaranteeing complete 100% spectral coverage using
-    only real physical measurements without artificial boundary padding.
+    Extracts valid sub-sequences [start : start + window_size] directly from
+    the unpadded spectrum. Anchors the final window to the right edge
+    (N - window_size) if not aligned by stride, guaranteeing complete 100%
+    spectral coverage using only real physical measurements without artificial
+    boundary padding.
 
     Parameters
     ----------
@@ -117,7 +133,8 @@ def extract_sliding_windows(
     Raises
     ------
     ValueError
-        If window_size < 1, window_size > len(spectrum), stride < 1, or stride > window_size.
+        If window_size < 1, window_size > len(spectrum), stride < 1, or
+        stride > window_size.
     """
     spectrum_1d = np.asarray(spectrum).ravel()
     n_points = len(spectrum_1d)
@@ -135,11 +152,7 @@ def extract_sliding_windows(
             "as it creates reconstruction gaps."
         )
 
-    start_indices: list[int] = []
-    current_idx = 0
-    while current_idx + window_size <= n_points:
-        start_indices.append(current_idx)
-        current_idx += stride
+    start_indices = list(range(0, n_points - window_size + 1, stride))
 
     # Ensure the rightmost edge of the spectrum is fully covered
     last_possible = n_points - window_size
@@ -157,11 +170,11 @@ def reconstruct_from_patches(
     start_indices: list[int],
     original_length: int,
     config: dict[str, Any] | None = None,
-    **kwargs: Any,
 ) -> np.ndarray:
-    """Reconstruct a full 1D spectrum by accumulating and averaging overlapping predicted patches.
+    """Reconstruct a 1D spectrum by averaging overlapping predicted patches.
 
-    Bundles optional parameters into config dictionary adhering to project interface rules.
+    Bundles optional parameters into config dictionary adhering to project
+    interface rules.
 
     Parameters
     ----------
@@ -174,9 +187,8 @@ def reconstruct_from_patches(
     config : dict[str, Any] | None, optional
         Configuration dictionary containing:
         - 'window_size' (int | None): Window width in points.
-        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed spectrum to non-negative (default False).
-    **kwargs : Any
-        Optional keyword arguments (e.g. window_size) for backward compatibility.
+        - 'clamp_non_negative' (bool): Whether to clamp final reconstructed
+          spectrum to non-negative (default False).
 
     Returns
     -------
@@ -184,7 +196,6 @@ def reconstruct_from_patches(
         Reconstructed 1D spectrum of length original_length.
     """
     cfg = dict(config or {})
-    cfg.update(kwargs)
 
     if isinstance(patches, torch.Tensor):
         patches_np = patches.detach().cpu().numpy()
@@ -205,7 +216,8 @@ def reconstruct_from_patches(
     if original_length > 0 and np.any(counts == 0.0):
         missing = np.where(counts == 0.0)[0]
         warnings.warn(
-            f"Patch reconstruction left {len(missing)} uncovered points in spectrum (e.g. index {missing[0]})."
+            f"Patch reconstruction left {len(missing)} uncovered points in "
+            f"spectrum (e.g. index {missing[0]})."
         )
 
     reconstructed = accum / np.maximum(counts, 1.0)
@@ -213,3 +225,4 @@ def reconstruct_from_patches(
         reconstructed = np.clip(reconstructed, 0.0, None)
 
     return reconstructed
+

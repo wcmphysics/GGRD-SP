@@ -14,12 +14,12 @@ def split_measurement_sessions(
     """Partition paired measurement sessions into train, val, and test splits.
 
     Assigns all dies and spectral regions belonging to a physical measurement
-    session into the same split group, and populates the 'split' column in df_meta.
+    session into the same split group, populating the 'split' column in df_meta.
 
     Parameters
     ----------
     df_meta : pd.DataFrame
-        Metadata DataFrame containing 'measurement_id' and 'measurement_id_target'.
+        Metadata DataFrame with 'measurement_id' and 'measurement_id_target'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'method': 'random' (default) or 'direct'.
@@ -29,15 +29,15 @@ def split_measurement_sessions(
         - 'seed': random seed for permutation (default None).
         - 'source_tool': optional source tool filter string.
         - 'target_tool': optional target tool filter string.
-        - 'direct_assignment': dict with 'train', 'val', 'test' session ID lists.
+        - 'direct_assignment': dict of 'train', 'val', 'test' session ID lists.
 
     Returns
     -------
     tuple[pd.DataFrame, dict[str, str], dict[str, set[str]]]
         Tuple of:
-        - df_meta with updated 'split' column ('train', 'val', 'test', or 'none').
+        - df_meta with 'split' column ('train', 'val', 'test', or 'none').
         - measurement_mapping: dict mapping source measurement ID to target ID.
-        - session_splits: dict mapping 'train', 'val', 'test' to sets of source IDs.
+        - session_splits: dict mapping 'train', 'val', 'test' to source ID sets.
     """
     cfg = config or {}
     df_meta = df_meta.copy()
@@ -152,20 +152,18 @@ def split_measurement_sessions(
 
     # Populate 'split' column in df_meta
     df_meta["split"] = "none"
-
-    # Map target sessions corresponding to each split
-    tgt_train = {measurement_mapping[s] for s in set_train if s in measurement_mapping}
-    tgt_val = {measurement_mapping[s] for s in set_val if s in measurement_mapping}
-    tgt_test = {measurement_mapping[s] for s in set_test if s in measurement_mapping}
-
-    df_meta.loc[df_meta["measurement_id"].isin(set_train | tgt_train), "split"] = "train"
-    df_meta.loc[df_meta["measurement_id"].isin(set_val | tgt_val), "split"] = "val"
-    df_meta.loc[df_meta["measurement_id"].isin(set_test | tgt_test), "split"] = "test"
-
     session_splits = {
         "train": set_train,
         "val": set_val,
         "test": set_test,
     }
+
+    for split_name, src_set in session_splits.items():
+        tgt_set = {
+            measurement_mapping[s] for s in src_set if s in measurement_mapping
+        }
+        df_meta.loc[
+            df_meta["measurement_id"].isin(src_set | tgt_set), "split"
+        ] = split_name
 
     return df_meta, measurement_mapping, session_splits
