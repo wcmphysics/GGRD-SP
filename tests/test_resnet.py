@@ -8,12 +8,13 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 
 from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, create_dataloaders
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.resnet import ResNet1D, ResNetScaledShort1D
+from models.resnet import ResNet1D, ResNet5L1D, ResNetScaledShort1D
 from models.trainer import evaluate, instantiate_model, train_model_region
 
 
@@ -455,6 +456,133 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 },
             )
         self.assertIn("lower than the floor min_learning_rate", str(ctx.exception))
+
+
+class TestResNet5L1D(unittest.TestCase):
+    """Test cases for 5-layer ResNet (ResNet5L1D)."""
+
+    def setUp(self) -> None:
+        self.cond = {
+            "die": torch.tensor([0, 1]),
+            "tool_src": torch.tensor([0, 0]),
+            "tool_tgt": torch.tensor([1, 1]),
+            "die_flux_normalized": torch.tensor([[0.5], [-0.5]]),
+            "time_normalized": torch.tensor([[0.2], [-0.2]]),
+        }
+
+    def test_layer_count_and_channels(self) -> None:
+        """Verify 5 Conv1d layers and 4 hidden BatchNorm layers."""
+        model = ResNet5L1D(
+            n_points=50,
+            config={"resnet_channel": 16, "kernel_size": 3},
+        )
+        def _get_conv(layer: nn.Module) -> nn.Conv1d:
+            return next(m for m in layer.modules() if isinstance(m, nn.Conv1d))
+
+        self.assertEqual(len(model.hidden_convs), 4)
+        self.assertEqual(len(model.hidden_bns), 4)
+        self.assertEqual(_get_conv(model.hidden_convs[0]).in_channels, 1)
+        self.assertEqual(_get_conv(model.hidden_convs[0]).out_channels, 16)
+        for i in range(1, 4):
+            self.assertEqual(_get_conv(model.hidden_convs[i]).in_channels, 16)
+            self.assertEqual(_get_conv(model.hidden_convs[i]).out_channels, 16)
+        self.assertEqual(_get_conv(model.conv_out).in_channels, 16)
+        self.assertEqual(_get_conv(model.conv_out).out_channels, 1)
+
+    def test_forward_pass_shape(self) -> None:
+        """Verify forward pass output shape matches input (B, 1, N)."""
+        model = ResNet5L1D(
+            n_points=40,
+            config={"resnet_channel": 8, "kernel_size": 3},
+        )
+        x = torch.randn(4, 1, 40)
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1, 40))
+
+    def test_film_modulation_all_4_hidden_layers(self) -> None:
+        """Verify FiLM modulates all 4 hidden layers."""
+        model = ResNet5L1D(
+            n_points=40,
+            config={
+                "resnet_channel": 8,
+                "kernel_size": 3,
+                "use_film": True,
+            },
+        )
+        self.assertIsNotNone(model.film_gen)
+        self.assertEqual(model.film_gen.channels_list, [8, 8, 8, 8])
+        x = torch.randn(2, 1, 40)
+        out = model(x, self.cond)
+        self.assertEqual(out.shape, (2, 1, 40))
+
+    def test_instantiate_model_resnet_5l(self) -> None:
+        """Verify instantiate_model supports 'resnet_5L' and 'resnet_5l'."""
+        m1 = instantiate_model("resnet_5L", 50)
+        m2 = instantiate_model("resnet_5l", 50)
+        self.assertIsInstance(m1, ResNet5L1D)
+        self.assertIsInstance(m2, ResNet5L1D)
+
+    def test_training_and_inference_resnet_5l(self) -> None:
+        """Verify training and inference pipeline with resnet_5L."""
+        x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
+        y_raw = (x_raw * 1.05).astype(np.float32)
+        meta_list = [
+            {
+                "spectrum_index": i,
+                "measurement_id": f"M_{i}",
+                "tool": "J4",
+                "die": 0,
+                "region": "Al2p",
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "die_flux_normalized": 0.1,
+                "time_normalized": -0.1,
+            }
+            for i in range(8)
+        ]
+        train_ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta_list)
+        res = train_model_region(
+            train_ds,
+            train_ds,
+            config={
+                "model_type": "resnet_5L",
+                "use_film": True,
+                "epochs": 2,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertIn("model", res)
+        self.assertIsInstance(res["model"], ResNet5L1D)
+        meta_df = pd.DataFrame(meta_list)
+        pred_int, pred_eng, pred_df = predict_spectra(
+            models={"Al2p": res["model"]},
+            data=(x_raw, np.ones_like(x_raw), meta_df),
+            config={"source_tool": "J4", "target_tool": "H1"},
+        )
+        self.assertEqual(pred_int.shape, (8, 40))
+        self.assertEqual(len(pred_df), 8)
+
+    def test_ax_bayesian_optimization_resnet_5l(self) -> None:
+        """Verify Ax Bayesian optimization integration for resnet_5L."""
+        x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
+        y_raw = (x_raw * 1.05).astype(np.float32)
+        train_ds = SpectrumPairDataset(x_raw, y_raw)
+        ax_res = optimize_model_hyperparameters(
+            train_ds,
+            train_ds,
+            config={
+                "model_type": "resnet_5L",
+                "num_trials": 2,
+                "epochs_per_trial": 2,
+                "kernel_sizes": [3],
+                "resnet_channels": [8],
+                "batch_sizes": [8],
+                "seed": 42,
+            },
+        )
+        self.assertIn("best_parameters", ax_res)
+        self.assertEqual(len(ax_res["trials_data"]), 2)
 
 
 if __name__ == "__main__":
