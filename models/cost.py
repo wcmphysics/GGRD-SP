@@ -8,6 +8,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from models.layers import validate_3d_spectrum_tensor
+
 
 def format_loss_log10(loss_val: float) -> str:
     """Format a loss value with both raw and log10 scale representations.
@@ -24,8 +26,7 @@ def format_loss_log10(loss_val: float) -> str:
     """
     if loss_val <= 0.0 or math.isnan(loss_val) or math.isinf(loss_val):
         return f"{loss_val:.6f} (log10: N/A)"
-    log_val = math.log10(loss_val)
-    return f"{loss_val:.6f} (log10: {log_val:+.4f})"
+    return f"{loss_val:.6f} (log10: {math.log10(loss_val):+.4f})"
 
 
 class SpectralLoss(nn.Module):
@@ -69,11 +70,9 @@ class SpectralLoss(nn.Module):
         eps: float = 1e-4,
         region_weights: dict[str, float] | None = None,
         normalized_by_target_max: bool = True,
-        **kwargs: Any,
     ) -> None:
         super().__init__()
-        cfg = dict(config or {})
-        cfg.update(kwargs)
+        cfg = config or {}
         self.w_mse = float(cfg.get("w_mse", w_mse))
         self.w_shape = float(cfg.get("w_shape", w_shape))
         self.w_gradient = float(cfg.get("w_gradient", w_gradient))
@@ -83,6 +82,25 @@ class SpectralLoss(nn.Module):
         self.normalized_by_target_max = bool(
             cfg.get("normalized_by_target_max", normalized_by_target_max)
         )
+
+    def _normalize_pair(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        max_val: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Normalize predicted and true spectra by target maximum if enabled."""
+        if not self.normalized_by_target_max:
+            return y_pred, y_true
+
+        if max_val is None:
+            scale = torch.amax(torch.abs(y_true), dim=-1, keepdim=True)
+        else:
+            scale = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
+            while scale.dim() < y_pred.dim():
+                scale = scale.unsqueeze(-1)
+        scale = torch.clamp(scale, min=self.eps)
+        return y_pred / scale, y_true / scale
 
     def forward(
         self,
@@ -120,35 +138,17 @@ class SpectralLoss(nn.Module):
         ValueError
             If y_pred or y_true does not match shape (batch_size, 1, seq_len).
         """
-        if y_pred.dim() != 3 or y_pred.size(1) != 1:
-            raise ValueError(
-                f"y_pred must have shape (batch, 1, seq_len), got {tuple(y_pred.shape)}"
-            )
-        if y_true.dim() != 3 or y_true.size(1) != 1:
-            raise ValueError(
-                f"y_true must have shape (batch, 1, seq_len), got {tuple(y_true.shape)}"
-            )
+        validate_3d_spectrum_tensor(y_pred, "y_pred")
+        validate_3d_spectrum_tensor(y_true, "y_true")
 
-        if self.normalized_by_target_max:
-            if max_val is None:
-                max_val = torch.amax(torch.abs(y_true), dim=-1, keepdim=True)
-            else:
-                max_val = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
-                while max_val.dim() < y_pred.dim():
-                    max_val = max_val.unsqueeze(-1)
-            max_val = torch.clamp(max_val, min=self.eps)
-            norm_pred = y_pred / max_val
-            norm_true = y_true / max_val
-        else:
-            norm_pred = y_pred
-            norm_true = y_true
-
+        norm_pred, norm_true = self._normalize_pair(y_pred, y_true, max_val)
         total_loss = 0.0 * torch.sum(y_pred)
 
         # 1. Mean-squared error (MSE) component
         if self.w_mse > 0.0:
-            mse_loss = torch.mean((norm_pred - norm_true) ** 2)
-            total_loss = total_loss + self.w_mse * mse_loss
+            total_loss = total_loss + self.w_mse * torch.mean(
+                (norm_pred - norm_true) ** 2
+            )
 
         # 2. Scale-invariant Cosine Shape distance component
         if self.w_shape > 0.0:
@@ -160,22 +160,20 @@ class SpectralLoss(nn.Module):
             ).clamp(min=self.eps)
             cosine_sim = torch.sum(
                 (norm_pred / pred_norm) * (norm_true / true_norm), dim=-1
-            )
-            cosine_sim = torch.clamp(cosine_sim, -1.0, 1.0)
-            shape_loss = torch.mean(1.0 - cosine_sim)
-            total_loss = total_loss + self.w_shape * shape_loss
+            ).clamp(-1.0, 1.0)
+            total_loss = total_loss + self.w_shape * torch.mean(1.0 - cosine_sim)
 
         # 3. Intensity gradient MSE component (central difference)
         if self.w_gradient > 0.0:
             grad_pred = torch.gradient(norm_pred, dim=-1)[0]
             grad_true = torch.gradient(norm_true, dim=-1)[0]
-            grad_loss = torch.mean((grad_pred - grad_true) ** 2)
-            total_loss = total_loss + self.w_gradient * grad_loss
+            total_loss = total_loss + self.w_gradient * torch.mean(
+                (grad_pred - grad_true) ** 2
+            )
 
         # Apply regional weighting if specified
         if region is not None and region in self.region_weights:
-            weight = float(self.region_weights[region])
-            total_loss = total_loss * weight
+            total_loss = total_loss * float(self.region_weights[region])
 
         # Add L2 parameter regularization penalty if model provided
         if self.l2_weight > 0.0 and model is not None:
