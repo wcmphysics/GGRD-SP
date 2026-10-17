@@ -66,8 +66,8 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
         self.assertLess(lr_history[-1], init_lr)
 
-    def test_dynamic_lr_default_min_lr_is_one_thousandth(self) -> None:
-        """Verify min_lr defaults to initial_lr / 1000.0."""
+    def test_dynamic_lr_default_min_lr_is_one_ten_thousandth(self) -> None:
+        """Verify min_lr defaults to initial_lr / 10000.0."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 2e-3
         config = {
@@ -79,7 +79,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
         resolved_cfg = res["config"]
-        expected_min_lr = init_lr / 1000.0
+        expected_min_lr = init_lr / 10000.0
         self.assertAlmostEqual(resolved_cfg["min_lr"], expected_min_lr, places=8)
 
     def test_dynamic_lr_custom_factor_and_explicit_min_lr(self) -> None:
@@ -235,6 +235,14 @@ class TestReduceLROnPlateau(unittest.TestCase):
         with self.assertRaises(ValueError):
             train_model_region(
                 self.train_ds, self.val_ds, config={**base_cfg, "min_learning_rate": -1e-4}
+            )
+
+        # learning_rate < min_learning_rate
+        with self.assertRaises(ValueError):
+            train_model_region(
+                self.train_ds,
+                self.val_ds,
+                config={**base_cfg, "learning_rate": 1e-4, "min_learning_rate": 1e-3},
             )
 
     def test_warning_emitted_when_early_stopping_patience_le_lr_scheduler_patience(self) -> None:

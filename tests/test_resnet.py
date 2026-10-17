@@ -422,6 +422,40 @@ class TestResNetScaledShort1D(unittest.TestCase):
         self.assertEqual(pred_int.shape, (8, 40))
         self.assertEqual(len(pred_df), 8)
 
+    def test_shortcut_initial_lr_below_floor_raises(self) -> None:
+        """Verify ValueError when initial shortcut lr is lower than floor."""
+        x_raw = np.random.uniform(10.0, 50.0, size=(4, 40)).astype(np.float32)
+        y_raw = (x_raw * 1.02).astype(np.float32)
+        meta_list = [
+            {
+                "spectrum_index": i,
+                "measurement_id": f"M_{i}",
+                "tool": "J4",
+                "die": 0,
+                "region": "Al2p",
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "die_flux_normalized": 0.0,
+                "time_normalized": 0.0,
+            }
+            for i in range(4)
+        ]
+        train_ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta_list)
+        # shortcut_lr = 1e-3 * 0.005 = 5e-6 < min_learning_rate (1e-5)
+        with self.assertRaises(ValueError) as ctx:
+            train_model_region(
+                train_ds,
+                train_ds,
+                config={
+                    "model_type": "resnet_scaled_short",
+                    "use_film": True,
+                    "learning_rate": 1e-3,
+                    "relative_learning_rate": 0.005,
+                    "min_learning_rate": 1e-5,
+                },
+            )
+        self.assertIn("lower than the floor min_learning_rate", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
