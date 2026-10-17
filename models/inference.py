@@ -216,7 +216,9 @@ def predict_spectra(
     ) -> dict[str, Any] | None:
         if not getattr(m, "use_film", False):
             return None
-        film_gen = getattr(m, "film_gen", None)
+        film_gen = getattr(m, "film_gen", None) or getattr(
+            m, "shortcut_film_gen", None
+        )
         meta = [
             {**r, "tool_target": target_tool}
             for r in sub_df.to_dict("records")

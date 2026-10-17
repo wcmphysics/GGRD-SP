@@ -137,8 +137,8 @@ def perform_model_training_and_bayesian_optimization(
         Spectral loss criterion for model training.
     config : dict[str, Any] | None, optional
         Training configuration dictionary (singular hyperparameter keys):
-        - 'model_type': architecture name ('resnet', 'residual_unet', 'unet',
-          'deeplabv3').
+        - 'model_type': architecture name ('resnet', 'resnet_scaled_short',
+          'residual_unet', 'unet', 'deeplabv3').
         - 'use_film': whether to enable FiLM tool metadata conditioning
           (default False).
         - 'train_config': training parameters (epochs, learning_rate,

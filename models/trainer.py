@@ -25,11 +25,12 @@ from models.deeplabv3 import DeepLabV3
 from models.film import prepare_film_condition_tensor
 from models.inference import predict_sliding_window_spectrum
 from models.layers import validate_odd_kernel_size, validate_positive_int
-from models.resnet import ResNet1D
+from models.resnet import ResNet1D, ResNetScaledShort1D
 from models.unet import ConventionalUNet1D, ResidualUNet1D
 
 _MODEL_CLASS_MAP: dict[str, type[nn.Module]] = {
     "resnet": ResNet1D,
+    "resnet_scaled_short": ResNetScaledShort1D,
     "residual_unet": ResidualUNet1D,
     "unet": ConventionalUNet1D,
     "deeplabv3": DeepLabV3,
@@ -106,8 +107,8 @@ def instantiate_model(
     model_class = _MODEL_CLASS_MAP.get(model_type.lower())
     if model_class is None:
         raise ValueError(
-            f"Unknown model_type '{model_type}'. "
-            "Choose 'resnet', 'residual_unet', 'unet', or 'deeplabv3'."
+            f"Unknown model_type '{model_type}'. Choose 'resnet', "
+            "'resnet_scaled_short', 'residual_unet', 'unet', or 'deeplabv3'."
         )
     return model_class(n_points=seq_len, config=config or {})
 
@@ -122,7 +123,9 @@ def _batch_cond(
         return None
     num_samples = n if n is not None else len(batch["x"])
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
-    film_gen = getattr(model, "film_gen", None)
+    film_gen = getattr(model, "film_gen", None) or getattr(
+        model, "shortcut_film_gen", None
+    )
     return prepare_film_condition_tensor(
         batch.get("meta"),
         config={
@@ -357,6 +360,12 @@ def train_model_region(
     weight_decay = float(cfg.get("weight_decay", 0.0))
     l2_weight = float(cfg.get("l2_weight", 1e-4))
     verbose = bool(cfg.get("verbose", False))
+    relative_learning_rate = float(cfg.get("relative_learning_rate", 0.1))
+    if relative_learning_rate <= 0.0:
+        raise ValueError(
+            "relative_learning_rate must be strictly positive, "
+            f"got {relative_learning_rate}"
+        )
 
     use_lr_sched = bool(
         cfg.get(
@@ -478,9 +487,26 @@ def train_model_region(
     criterion = cfg.get("criterion") or SpectralLoss(
         config={**cfg, "l2_weight": l2_weight}
     )
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
+    if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
+        shortcut_params = list(model.shortcut_film_gen.parameters())
+        shortcut_param_ids = {id(p) for p in shortcut_params}
+        base_params = [
+            p for p in model.parameters() if id(p) not in shortcut_param_ids
+        ]
+        param_groups = [
+            {"params": base_params, "lr": learning_rate},
+            {
+                "params": shortcut_params,
+                "lr": learning_rate * relative_learning_rate,
+            },
+        ]
+        optimizer = torch.optim.Adam(
+            param_groups, lr=learning_rate, weight_decay=weight_decay
+        )
+    else:
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
     scheduler = (
         ReduceLROnPlateau(
             optimizer,
