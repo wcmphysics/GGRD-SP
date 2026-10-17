@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -12,8 +13,8 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, create_dataloaders
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.resnet import ResNet1D
-from models.trainer import evaluate, train_model_region
+from models.resnet import ResNet1D, ResNetScaledShort1D
+from models.trainer import evaluate, instantiate_model, train_model_region
 
 
 class TestResNet1D(unittest.TestCase):
@@ -34,7 +35,9 @@ class TestResNet1D(unittest.TestCase):
         self.assertEqual(out.shape, (4, 1, 80))
 
     def test_invalid_kernel_size_raises(self) -> None:
-        """Test that even, non-positive, or larger-than-n_points kernel size raises ValueError."""
+        """Test that even, non-positive, or larger-than-n_points kernel size
+        raises ValueError.
+        """
         with self.assertRaises(ValueError):
             ResNet1D(n_points=50, config={"kernel_size": 4})
         with self.assertRaises(ValueError):
@@ -207,6 +210,217 @@ class TestTrainingAndInference(unittest.TestCase):
         self.assertEqual(len(ax_res["trials_data"]), 2)
         self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
         self.assertIn(ax_res["best_parameters"]["resnet_channel"], [8, 16])
+
+
+class TestResNetScaledShort1D(unittest.TestCase):
+    """Test cases for ResNetScaledShort1D with FiLM-scaled shortcut."""
+
+    def setUp(self) -> None:
+        self.cond = {
+            "die": torch.tensor([0, 1]),
+            "tool_src": torch.tensor([0, 0]),
+            "tool_tgt": torch.tensor([1, 1]),
+            "die_flux_normalized": torch.tensor([[0.5], [-0.5]]),
+            "time_normalized": torch.tensor([[0.2], [-0.2]]),
+        }
+
+    def test_requires_use_film_true(self) -> None:
+        """Verify ValueError when use_film is not explicitly enabled."""
+        with self.assertRaises(ValueError):
+            ResNetScaledShort1D(n_points=50)
+        with self.assertRaises(ValueError):
+            ResNetScaledShort1D(n_points=50, config={"use_film": False})
+
+    def test_requires_cond_in_forward(self) -> None:
+        """Verify ValueError when forward is called without metadata dict."""
+        model = ResNetScaledShort1D(n_points=50, config={"use_film": True})
+        x = torch.randn(2, 1, 50)
+        with self.assertRaises(ValueError):
+            model(x)
+        with self.assertRaises(ValueError):
+            model(x, cond=None)
+        with self.assertRaises(ValueError):
+            model(x, cond="not_a_dict")
+
+    def test_identity_initialization(self) -> None:
+        """Verify initial shortcut scaling factor is exactly 1.0."""
+        model = ResNetScaledShort1D(
+            n_points=50,
+            config={"use_film": True, "resnet_channel": 8, "kernel_size": 3},
+        )
+        x = torch.randn(2, 1, 50)
+        out = model(x, self.cond)
+        self.assertEqual(out.shape, (2, 1, 50))
+        shortcut_mods = model.shortcut_film_gen(self.cond)
+        gamma_out, _ = shortcut_mods[0]
+        self.assertTrue(torch.allclose(gamma_out, torch.ones_like(gamma_out)))
+
+    def test_clamping_and_warning_on_negative_gain(self) -> None:
+        """Verify warning is emitted and gamma_out clamped when negative."""
+        model = ResNetScaledShort1D(
+            n_points=50,
+            config={"use_film": True, "resnet_channel": 8, "kernel_size": 3},
+        )
+        with torch.no_grad():
+            model.shortcut_film_gen.gamma_projs[0].bias.fill_(-5.0)
+
+        x = torch.randn(2, 1, 50)
+        with warnings.catch_warnings(record=True) as recorded_warnings:
+            warnings.simplefilter("always")
+            out = model(x, self.cond)
+            self.assertEqual(out.shape, (2, 1, 50))
+            clamping_warns = [
+                w
+                for w in recorded_warnings
+                if issubclass(w.category, UserWarning)
+                and "Negative shortcut gain detected" in str(w.message)
+            ]
+            self.assertGreaterEqual(len(clamping_warns), 1)
+
+    def test_internal_film_layers_toggle(self) -> None:
+        """Verify film_internal_layers disables internal FiLM when False."""
+        model_no_internal = ResNetScaledShort1D(
+            n_points=50,
+            config={
+                "use_film": True,
+                "film_internal_layers": False,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertIsNone(model_no_internal.film_gen)
+        self.assertIsNotNone(model_no_internal.shortcut_film_gen)
+
+        x = torch.randn(2, 1, 50)
+        out = model_no_internal(x, self.cond)
+        self.assertEqual(out.shape, (2, 1, 50))
+
+        model_with_internal = ResNetScaledShort1D(
+            n_points=50,
+            config={
+                "use_film": True,
+                "film_internal_layers": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertIsNotNone(model_with_internal.film_gen)
+        out_with = model_with_internal(x, self.cond)
+        self.assertEqual(out_with.shape, (2, 1, 50))
+
+    def test_shortcut_ignores_window_energy(self) -> None:
+        """Verify shortcut FiLM generator ignores sliding window energy."""
+        model = ResNetScaledShort1D(
+            n_points=30,
+            config={
+                "use_film": True,
+                "use_sliding_window": True,
+                "encode_window_energy": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertTrue(model.film_gen.encode_window_energy)
+        self.assertFalse(model.shortcut_film_gen.encode_window_energy)
+
+    def test_instantiate_model_registration(self) -> None:
+        """Verify instantiate_model supports 'resnet_scaled_short'."""
+        model = instantiate_model(
+            "resnet_scaled_short", 50, {"use_film": True}
+        )
+        self.assertIsInstance(model, ResNetScaledShort1D)
+
+    def test_trainer_relative_learning_rate(self) -> None:
+        """Verify train_model_region configures separate param groups."""
+        x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
+        y_raw = (x_raw * 1.02).astype(np.float32)
+        meta_list = [
+            {
+                "spectrum_index": i,
+                "measurement_id": f"M_{i}",
+                "tool": "J4",
+                "die": 0,
+                "region": "Al2p",
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "die_flux_normalized": 0.0,
+                "time_normalized": 0.0,
+            }
+            for i in range(8)
+        ]
+        train_ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta_list)
+
+        with self.assertRaises(ValueError):
+            train_model_region(
+                train_ds,
+                train_ds,
+                config={
+                    "model_type": "resnet_scaled_short",
+                    "use_film": True,
+                    "relative_learning_rate": -0.5,
+                },
+            )
+
+        res = train_model_region(
+            train_ds,
+            train_ds,
+            config={
+                "model_type": "resnet_scaled_short",
+                "use_film": True,
+                "epochs": 2,
+                "learning_rate": 1e-3,
+                "relative_learning_rate": 0.05,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertIn("model", res)
+        self.assertIsInstance(res["model"], ResNetScaledShort1D)
+
+    def test_sliding_window_training_and_inference(self) -> None:
+        """Verify sliding window patch training and inference work with
+        resnet_scaled_short.
+        """
+        x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
+        y_raw = (x_raw * 1.05).astype(np.float32)
+        meta_list = [
+            {
+                "spectrum_index": i,
+                "measurement_id": f"M_{i}",
+                "tool": "J4",
+                "die": 0,
+                "region": "Al2p",
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "die_flux_normalized": 0.1,
+                "time_normalized": -0.1,
+            }
+            for i in range(8)
+        ]
+        train_ds = SpectrumPairDataset(x_raw, y_raw, metadata=meta_list)
+        res = train_model_region(
+            train_ds,
+            train_ds,
+            config={
+                "model_type": "resnet_scaled_short",
+                "use_film": True,
+                "use_sliding_window": True,
+                "window_size": 15,
+                "stride": 5,
+                "epochs": 2,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
+        )
+        self.assertIn("model", res)
+        meta_df = pd.DataFrame(meta_list)
+        pred_int, pred_eng, pred_df = predict_spectra(
+            models={"Al2p": res["model"]},
+            data=(x_raw, np.ones_like(x_raw), meta_df),
+            config={"source_tool": "J4", "target_tool": "H1"},
+        )
+        self.assertEqual(pred_int.shape, (8, 40))
+        self.assertEqual(len(pred_df), 8)
 
 
 if __name__ == "__main__":
