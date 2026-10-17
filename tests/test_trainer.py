@@ -35,16 +35,11 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.x = np.random.uniform(0.1, 1.0, (self.n_samples, self.n_points)).astype(np.float32)
         self.y = self.x * 2.0  # Constant gap to keep loss positive
 
-        self.train_ds = SpectrumPairDataset(
-            self.x, self.y, config={"normalization_mode": "none"}
-        )
-        self.val_ds = SpectrumPairDataset(
-            self.x.copy(), self.y.copy(), config={"normalization_mode": "none"}
-        )
+        self.train_ds = SpectrumPairDataset(self.x, self.y)
+        self.val_ds = SpectrumPairDataset(self.x.copy(), self.y.copy())
         self.empty_val_ds = SpectrumPairDataset(
             np.empty((0, self.n_points), dtype=np.float32),
             np.empty((0, self.n_points), dtype=np.float32),
-            config={"normalization_mode": "none"},
         )
 
     def test_dynamic_lr_reduction_default_factor_0_9(self) -> None:

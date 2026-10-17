@@ -29,12 +29,8 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         x_raw = np.random.uniform(10.0, 100.0, size=(12, n_points)).astype(np.float32)
         y_raw = (x_raw * 1.05 + 1.0).astype(np.float32)
 
-        cls.train_ds = SpectrumPairDataset(
-            x_raw[:8], y_raw[:8], config={"normalization_mode": "none"}
-        )
-        cls.val_ds = SpectrumPairDataset(
-            x_raw[8:], y_raw[8:], config={"normalization_mode": "none"}
-        )
+        cls.train_ds = SpectrumPairDataset(x_raw[:8], y_raw[:8])
+        cls.val_ds = SpectrumPairDataset(x_raw[8:], y_raw[8:])
 
     def test_spectrum_patch_dataset(self) -> None:
         """Test patch dataset construction from full spectra."""

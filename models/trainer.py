@@ -122,13 +122,17 @@ def _batch_cond(
         return None
     num_samples = n if n is not None else len(batch["x"])
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
+    film_gen = getattr(model, "film_gen", None)
     return prepare_film_condition_tensor(
         batch.get("meta"),
-        scale_x=batch.get("scale_x"),
-        window_energy=batch.get("window_energy"),
+        config={
+            "num_samples": num_samples,
+            "energy_scale_ev": energy_scale_ev,
+            "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
+            "encode_time": bool(getattr(film_gen, "encode_time", True)),
+        },
         device=dev,
-        num_samples=num_samples,
-        config={"energy_scale_ev": energy_scale_ev},
+        window_energy=batch.get("window_energy"),
     )
 
 
@@ -247,7 +251,6 @@ def evaluate(
     )
 
 
-
 def evaluate_sliding_window(
     model: nn.Module,
     full_val_dataset: SpectrumPairDataset,
@@ -288,7 +291,6 @@ def evaluate_sliding_window(
         "device": device,
         "window_size": w_size,
         "stride": s_step,
-        "normalization_mode": "none",
         "clamp_non_negative": True,
     }
     total = 0.0

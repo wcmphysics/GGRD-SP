@@ -68,8 +68,8 @@ class TestSpectrumPairDataset(unittest.TestCase):
         """Test dataloader batch construction."""
         x = np.ones((8, 50), dtype=np.float32)
         y = np.ones((8, 50), dtype=np.float32)
-        train_ds = SpectrumPairDataset(x[:6], y[:6], config={"normalization_mode": "none"})
-        val_ds = SpectrumPairDataset(x[6:], y[6:], config={"normalization_mode": "none"})
+        train_ds = SpectrumPairDataset(x[:6], y[:6])
+        val_ds = SpectrumPairDataset(x[6:], y[6:])
         train_loader, val_loader = create_dataloaders(train_ds, val_ds, config={"batch_size": 4})
         batch = next(iter(train_loader))
         self.assertIn("x", batch)
@@ -88,12 +88,8 @@ class TestTrainingAndInference(unittest.TestCase):
         n_pts = 50
         x_raw = np.random.uniform(10.0, 100.0, size=(16, n_pts)).astype(np.float32)
         y_raw = (x_raw * 1.05 + 1.0).astype(np.float32)
-        cls.train_ds = SpectrumPairDataset(
-            x_raw[:10], y_raw[:10], config={"normalization_mode": "none"}
-        )
-        cls.val_ds = SpectrumPairDataset(
-            x_raw[10:], y_raw[10:], config={"normalization_mode": "none"}
-        )
+        cls.train_ds = SpectrumPairDataset(x_raw[:10], y_raw[:10])
+        cls.val_ds = SpectrumPairDataset(x_raw[10:], y_raw[10:])
 
         # Minimal metadata for predict_spectra testing
         cls.meta_df = pd.DataFrame([

@@ -13,7 +13,6 @@ import torch
 import torch.nn as nn
 
 from models.film import prepare_film_condition_tensor
-from utility.flux import compute_die_total_flux
 from utility.patching import extract_sliding_windows, reconstruct_from_patches
 
 
@@ -45,29 +44,15 @@ def predict_sliding_window_spectrum(
     cfg = config or {}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
-    norm_mode = str(
-        cfg.get("normalization_mode", "source_referenced")
-    ).lower()
     clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
-    eps = float(cfg.get("eps", 1e-4))
     device = torch.device(
         cfg.get("device") or next((p.device for p in model.parameters()), "cpu")
     )
     bs = int(cfg.get("batch_size", 64))
 
     spectrum_1d = np.asarray(spectrum).ravel()
-    default_scale = (
-        np.abs(spectrum_1d).max() if norm_mode == "source_referenced" else 1.0
-    )
-    s_val = cfg.get("scale_factor", default_scale)
-    scale_x = (
-        max(float(s_val), eps)
-        if (norm_mode != "none" or "scale_factor" in cfg)
-        else 1.0
-    )
-
     windows, start_indices = extract_sliding_windows(
-        spectrum_1d / scale_x, window_size=w_size, stride=s_step
+        spectrum_1d, window_size=w_size, stride=s_step
     )
     film_gen = getattr(model, "film_gen", None)
     encode_energy = bool(getattr(film_gen, "encode_window_energy", False))
@@ -76,9 +61,9 @@ def predict_sliding_window_spectrum(
     energy_np = None
     if energy is not None:
         energy_np = (
-            energy.cpu().numpy()
+            energy.cpu().numpy().ravel()
             if isinstance(energy, torch.Tensor)
-            else np.asarray(energy)
+            else np.asarray(energy).ravel()
         )
 
     model.eval()
@@ -120,8 +105,7 @@ def predict_sliding_window_spectrum(
         len(spectrum_1d),
         {"window_size": w_size},
     )
-    scaled_recon = recon * scale_x
-    return np.clip(scaled_recon, 0.0, None) if clamp_non_negative else scaled_recon
+    return np.clip(recon, 0.0, None) if clamp_non_negative else recon
 
 
 def format_predicted_measurement_id(
@@ -183,41 +167,20 @@ def assemble_prediction_metadata(
                 ),
                 "is_predicted": True,
                 **({"t7_code": r.t7_code} if hasattr(r, "t7_code") else {}),
+                **(
+                    {"die_flux_normalized": r.die_flux_normalized}
+                    if hasattr(r, "die_flux_normalized")
+                    else {}
+                ),
+                **(
+                    {"time_normalized": r.time_normalized}
+                    if hasattr(r, "time_normalized")
+                    else {}
+                ),
             }
             for idx, r in enumerate(source_df.itertuples())
         ]
     )
-
-
-def _compute_region_scales(
-    group: pd.DataFrame,
-    region_x: np.ndarray,
-    ary_intensity: np.ndarray,
-    scale_ctx: dict[str, Any],
-) -> np.ndarray:
-    """Compute per-sample normalization scale factors for a region."""
-    norm_mode: str = scale_ctx["norm_mode"]
-    flux_map: dict[tuple[str, int], float] = scale_ctx["flux_map"]
-    eps: float = scale_ctx["eps"]
-    if norm_mode == "die_total_flux" and flux_map:
-        scales = [
-            float(
-                flux_map.get(
-                    (str(r.measurement_id), int(r.die)),
-                    max(
-                        float(np.abs(ary_intensity[int(r.spectrum_index)]).max()),
-                        eps,
-                    ),
-                )
-            )
-            for r in group.itertuples()
-        ]
-        return np.array(scales, dtype=np.float32)[:, None]
-    if norm_mode == "source_referenced":
-        return np.maximum(
-            np.max(np.abs(region_x), axis=-1, keepdims=True), eps
-        )
-    return np.ones((len(region_x), 1), dtype=np.float32)
 
 
 def predict_spectra(
@@ -241,11 +204,7 @@ def predict_spectra(
     target_tool = cfg.get("target_tool", "H1")
     measurement_ids = cfg.get("measurement_ids")
     batch_size = int(cfg.get("batch_size", 64))
-    norm_mode = str(
-        cfg.get("normalization_mode", "source_referenced")
-    ).lower()
     clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
-    eps = float(cfg.get("eps", 1e-4))
     device = torch.device(
         cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
     )
@@ -253,20 +212,24 @@ def predict_spectra(
     def _film_cond(
         m: nn.Module,
         sub_df: pd.DataFrame,
-        scale: np.ndarray,
         dev: torch.device,
     ) -> dict[str, Any] | None:
         if not getattr(m, "use_film", False):
             return None
+        film_gen = getattr(m, "film_gen", None)
         meta = [
             {**r, "tool_target": target_tool}
             for r in sub_df.to_dict("records")
         ]
         return prepare_film_condition_tensor(
             metadata=meta,
-            scale_x=scale,
+            config={
+                "num_samples": len(sub_df),
+                "energy_scale_ev": float(getattr(m, "energy_scale_ev", 1000.0)),
+                "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
+                "encode_time": bool(getattr(film_gen, "encode_time", True)),
+            },
             device=dev,
-            num_samples=len(sub_df),
         )
 
     mask = df_meta["tool"] == source_tool
@@ -292,12 +255,6 @@ def predict_spectra(
         ary_energy[source_df["spectrum_index"].astype(int).to_numpy()],
         dtype=np.float32,
     )
-    flux_map = (
-        compute_die_total_flux(source_df, ary_intensity, ary_energy)
-        if norm_mode == "die_total_flux"
-        else {}
-    )
-    scale_ctx = {"norm_mode": norm_mode, "flux_map": flux_map, "eps": eps}
 
     for region, group in source_df.groupby("region"):
         group_new_indices = np.flatnonzero(
@@ -317,11 +274,6 @@ def predict_spectra(
 
         model_entry = models[str(region)]
         region_x = ary_intensity[orig_indices]
-        scales = _compute_region_scales(
-            group, region_x, ary_intensity, scale_ctx
-        )
-
-        region_x_in = region_x / scales
 
         is_seq = isinstance(model_entry, (tuple, list))
         is_sw = bool(cfg.get("use_sliding_window", False)) or is_seq
@@ -343,19 +295,16 @@ def predict_spectra(
                 "window_size": w_size,
                 "stride": s_step,
                 "device": m_dev,
-                "normalization_mode": norm_mode,
-                "eps": eps,
             }
             predicted_intensities[group_new_indices] = np.vstack(
                 [
                     predict_sliding_window_spectrum(
                         m_obj,
                         x_s,
-                        config={**sw_cfg, "scale_factor": float(scales[i, 0])},
+                        config=sw_cfg,
                         cond=_film_cond(
                             m_obj,
                             group.iloc[i : i + 1],
-                            scales[i : i + 1],
                             m_dev,
                         ),
                         energy=ary_energy[orig_indices[i]],
@@ -367,16 +316,15 @@ def predict_spectra(
 
         with torch.no_grad():
             preds = []
-            for i in range(0, len(region_x_in), batch_size):
+            for i in range(0, len(region_x), batch_size):
                 bx = torch.as_tensor(
-                    region_x_in[i : i + batch_size],
+                    region_x[i : i + batch_size],
                     dtype=torch.float32,
                     device=device,
                 ).unsqueeze(1)
                 cond = _film_cond(
                     model_entry,
                     group.iloc[i : i + batch_size],
-                    scales[i : i + batch_size],
                     device,
                 )
                 out = (
@@ -385,7 +333,7 @@ def predict_spectra(
                     else model_entry(bx)
                 )
                 preds.append(out.squeeze(1).cpu().numpy())
-        predicted_intensities[group_new_indices] = np.vstack(preds) * scales
+        predicted_intensities[group_new_indices] = np.vstack(preds)
 
     if clamp_non_negative:
         predicted_intensities = np.clip(predicted_intensities, 0.0, None)

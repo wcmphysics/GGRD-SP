@@ -12,26 +12,6 @@ from torch.utils.data import DataLoader, Dataset
 from utility.patching import calculate_window_points, extract_sliding_windows
 
 
-def _to_scale_tensor(val: Any, n: int, eps: float) -> torch.Tensor:
-    """Ensure normalization scale factor is formatted as a 3D float tensor
-    (n, 1, 1).
-    """
-    if val is None:
-        return torch.ones((n, 1, 1), dtype=torch.float32)
-    t = (
-        val.clone().detach()
-        if isinstance(val, torch.Tensor)
-        else torch.as_tensor(val, dtype=torch.float32)
-    )
-    if t.dim() == 0:
-        t = t.repeat(n, 1, 1)
-    elif t.dim() == 1:
-        t = t.view(n, 1, 1)
-    elif t.dim() == 2:
-        t = t.unsqueeze(-1)
-    return torch.clamp(t, min=eps)
-
-
 def _as_3d_tensor(arr: np.ndarray | torch.Tensor) -> torch.Tensor:
     """Convert a 2D or 3D array/tensor to a 3D float32 tensor (N, 1, L)."""
     t = torch.as_tensor(arr, dtype=torch.float32)
@@ -48,19 +28,11 @@ class SpectrumPairDataset(Dataset):
     y_data : np.ndarray | torch.Tensor
         Array of target intensities of shape (N_samples, N_points).
     config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'normalization_mode' (str): Normalization strategy:
-          'source_referenced' (default), 'die_total_flux', or 'none'.
-        - 'eps' (float): Epsilon floor to prevent division by zero
-          (default 1e-4).
+        Optional configuration dictionary containing 'energy' or 'metadata'.
     energy : np.ndarray | torch.Tensor | None, optional
         Array of binding energies of shape (N_samples, N_points).
     metadata : list[dict[str, Any]] | None, optional
         List of metadata dictionaries per sample.
-    scale_x : np.ndarray | torch.Tensor | None, optional
-        Precomputed source scale factors of shape (N_samples, 1).
-    scale_y : np.ndarray | torch.Tensor | None, optional
-        Precomputed target scale factors of shape (N_samples, 1).
     """
 
     def __init__(
@@ -71,8 +43,6 @@ class SpectrumPairDataset(Dataset):
         *,
         energy: np.ndarray | torch.Tensor | None = None,
         metadata: list[dict[str, Any]] | None = None,
-        scale_x: np.ndarray | torch.Tensor | None = None,
-        scale_y: np.ndarray | torch.Tensor | None = None,
     ) -> None:
         if len(x_data) != len(y_data):
             raise ValueError(f"Lengths differ: {len(x_data)} vs {len(y_data)}")
@@ -83,34 +53,6 @@ class SpectrumPairDataset(Dataset):
 
         energy = energy if energy is not None else cfg.get("energy")
         metadata = metadata if metadata is not None else cfg.get("metadata")
-        scale_x = scale_x if scale_x is not None else cfg.get("scale_x")
-        scale_y = scale_y if scale_y is not None else cfg.get("scale_y")
-
-        self.normalization_mode = str(
-            cfg.get("normalization_mode", "source_referenced")
-        ).lower()
-        eps = float(cfg.get("eps", 1e-4))
-        n_samples = len(self.x)
-
-        if self.normalization_mode == "die_total_flux":
-            if scale_x is None:
-                raise ValueError(
-                    f"normalization_mode='{self.normalization_mode}' "
-                    "requires 'scale_x' to be provided."
-                )
-            self.scale_x = _to_scale_tensor(scale_x, n_samples, eps)
-            self.scale_y = _to_scale_tensor(
-                scale_y if scale_y is not None else scale_x, n_samples, eps
-            )
-            self.x, self.y = self.x / self.scale_x, self.y / self.scale_y
-        elif self.normalization_mode == "source_referenced" and n_samples > 0:
-            max_abs = self.x.abs().amax(dim=-1, keepdim=True)
-            self.scale_x = self.scale_y = torch.clamp(max_abs, min=eps)
-            self.x, self.y = self.x / self.scale_x, self.y / self.scale_y
-        else:
-            self.scale_x = self.scale_y = torch.ones(
-                (n_samples, 1, 1), dtype=torch.float32
-            )
 
         self.energy = _as_3d_tensor(energy) if energy is not None else None
         self.metadata = metadata or []
@@ -122,8 +64,6 @@ class SpectrumPairDataset(Dataset):
         item: dict[str, Any] = {
             "x": self.x[idx],
             "y": self.y[idx],
-            "scale_x": self.scale_x[idx],
-            "scale_y": self.scale_y[idx],
         }
         if self.energy is not None:
             item["energy"] = self.energy[idx]
@@ -150,7 +90,7 @@ class SpectrumPatchDataset(Dataset):
     ) -> None:
         self.window_size, self.stride = window_size, stride
         x_patches_list, y_patches_list, max_vals_list = [], [], []
-        meta_list, scale_x_list, scale_y_list = [], [], []
+        meta_list: list[dict[str, Any]] = []
         energy_bounds_list: list[list[float]] = []
 
         for idx in range(len(full_dataset)):
@@ -168,13 +108,8 @@ class SpectrumPatchDataset(Dataset):
             max_vals_list.extend(
                 [max(float(np.max(np.abs(y_np))), 1e-4)] * n_win
             )
-            for key, lst in (
-                ("meta", meta_list),
-                ("scale_x", scale_x_list),
-                ("scale_y", scale_y_list),
-            ):
-                if key in item:
-                    lst.extend([item[key]] * n_win)
+            if "meta" in item:
+                meta_list.extend([item["meta"]] * n_win)
 
             e_tensor = item.get("energy")
             if e_tensor is not None:
@@ -204,8 +139,6 @@ class SpectrumPatchDataset(Dataset):
             max_vals_list, dtype=torch.float32
         ).view(-1, 1, 1)
         self.meta_list = meta_list
-        self.scale_x_list = scale_x_list
-        self.scale_y_list = scale_y_list
         self.window_energy = torch.tensor(
             energy_bounds_list, dtype=torch.float32
         )
@@ -220,13 +153,8 @@ class SpectrumPatchDataset(Dataset):
             "max_val": self.max_vals[idx],
             "window_energy": self.window_energy[idx],
         }
-        for key, lst in (
-            ("meta", self.meta_list),
-            ("scale_x", self.scale_x_list),
-            ("scale_y", self.scale_y_list),
-        ):
-            if lst and idx < len(lst):
-                ret[key] = lst[idx]
+        if self.meta_list and idx < len(self.meta_list):
+            ret["meta"] = self.meta_list[idx]
         return ret
 
 
@@ -394,7 +322,6 @@ def create_regional_datasets(
                 _slice_rows(ary_intensity, y_idx),
                 energy=_slice_rows(ary_energy, x_idx),
                 metadata=df_split.to_dict(orient="records"),
-                config={"normalization_mode": "none"},
             )
 
         dataset_train_full = _make_pair_ds("train")
