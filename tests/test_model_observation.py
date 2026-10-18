@@ -614,7 +614,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
         self.assertIsInstance(fig, plt.Figure)
         self.assertEqual(len(axes), 2)
 
-        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error"]
+        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error (%)"]
         self.assertEqual(len(twin_axes), 2)
 
         for ax, ax_err in zip(axes, twin_axes):
@@ -632,11 +632,20 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 mcolors.to_hex(tgt_line.get_color()), mcolors.to_hex("red")
             )
             self.assertEqual(tgt_line.get_linestyle(), "-")
+            # Target mean curve peaks near 100% due to per-die
+            # target max normalization.
+            self.assertAlmostEqual(
+                float(np.max(tgt_line.get_ydata())), 100.0, delta=5.0
+            )
 
             self.assertEqual(
                 mcolors.to_hex(pred_line.get_color()), mcolors.to_hex("blue")
             )
             self.assertEqual(pred_line.get_linestyle(), "--")
+
+            # Verify axis labels
+            self.assertEqual(ax.get_ylabel(), "Intensity (% of Target Max)")
+            self.assertEqual(ax_err.get_ylabel(), "Absolute Error (%)")
 
             # Verify x-axis inversion
             self.assertTrue(ax.xaxis_inverted())
@@ -651,19 +660,19 @@ class TestModelPerformanceObservation(unittest.TestCase):
             self.assertEqual(err_lines[0].get_linestyle(), "-")
             self.assertGreaterEqual(ax_err.get_ylim()[0], 0.0)
 
-            # Verify legend entries
-            legend = ax.get_legend()
-            self.assertIsNotNone(legend)
-            texts = [t.get_text() for t in legend.get_texts()]
-            self.assertEqual(
-                texts,
-                [
-                    "Source (Mean ± 1σ)",
-                    "Target (Mean ± 1σ)",
-                    "Predicted (Mean ± 1σ)",
-                    "Abs Error (Mean ± 1σ)",
-                ],
-            )
+        # Verify unified figure legend entries
+        legend = fig.legends[0] if fig.legends else axes[0].get_legend()
+        self.assertIsNotNone(legend)
+        texts = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(
+            texts,
+            [
+                "Source (Mean ± 1σ)",
+                "Target (Mean ± 1σ)",
+                "Predicted (Mean ± 1σ)",
+                "Abs Error (Mean ± 1σ)",
+            ],
+        )
 
         plt.close(fig)
 
@@ -755,7 +764,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 self.assertTrue(np.all(path.vertices[:, 1] >= 0.0))
 
         # Check twin axis shaded error band as well
-        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error"]
+        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error (%)"]
         for twin_ax in twin_axes:
             for coll in twin_ax.collections:
                 for path in coll.get_paths():
