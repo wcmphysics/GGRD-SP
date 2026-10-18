@@ -406,6 +406,11 @@ def main() -> None:
                 data_predicted,
                 config={"session_splits": session_splits, "die": 0},
             ),
+            lambda: visualization.plot_regional_spectrum_distribution(
+                data_original,
+                data_predicted,
+                config={"split": "test"},
+            ),
             lambda: visualization.plot_atomic_percentage_distributions(
                 df_atomic_percentage_samples
             ),
