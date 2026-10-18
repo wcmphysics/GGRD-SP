@@ -617,11 +617,14 @@ class TestModelPerformanceObservation(unittest.TestCase):
         twin_axes = [a for a in fig.axes if a not in axes]
         self.assertEqual(len(twin_axes), 2)
 
-        # Verify outer-columns-only axis labeling (Option B)
-        self.assertEqual(axes[0].get_ylabel(), "Intensity (% of Target Max)")
-        self.assertEqual(axes[1].get_ylabel(), "")
-        self.assertEqual(twin_axes[0].get_ylabel(), "")
-        self.assertEqual(twin_axes[1].get_ylabel(), "Absolute Error (%)")
+        # Verify both Y-axes are displayed and labeled on all rows in black
+        for ax, ax_err in zip(axes, twin_axes):
+            self.assertEqual(ax.get_ylabel(), "Intensity (% of Target Max)")
+            self.assertEqual(ax_err.get_ylabel(), "Absolute Error (%)")
+            self.assertEqual(
+                mcolors.to_hex(ax_err.yaxis.label.get_color()),
+                mcolors.to_hex("black"),
+            )
 
         for ax, ax_err in zip(axes, twin_axes):
             # Verify primary curves
