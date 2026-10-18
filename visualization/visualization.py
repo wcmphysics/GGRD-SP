@@ -788,6 +788,8 @@ def plot_regional_spectrum_distribution(
         - 'figsize' (tuple[float, float] | None): Figure size (default
           scaled to (10.0, 1.5 + 2.4 * n + 0.8 * (n - 1)) for n regions).
         - 'dpi' (int): Figure dots per inch resolution (default 300).
+        - 'save_path' (str | None): If given, save the figure to this image
+          file at the figure dpi (avoids GUI window rescaling artifacts).
         - 'title' (str | None): Figure super title.
         - 'show' (bool): Whether to invoke plt.show() (default False).
 
@@ -1058,6 +1060,8 @@ def plot_regional_spectrum_distribution(
         bottom=bottom_frac,
         hspace=row_gap_in / max(axes_h_in, 1e-6),
     )
+    if cfg.get("save_path"):
+        fig.savefig(str(cfg["save_path"]), dpi=dpi)
     if cfg.get("show"):
         plt.show()
     return fig, axes_col

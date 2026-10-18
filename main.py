@@ -409,7 +409,10 @@ def main() -> None:
             lambda: visualization.plot_regional_spectrum_distribution(
                 data_original,
                 data_predicted,
-                config={"split": "test"},
+                config={
+                    "split": "test",
+                    "save_path": "regional_spectrum_distribution.png",
+                },
             ),
             lambda: visualization.plot_atomic_percentage_distributions(
                 df_atomic_percentage_samples
