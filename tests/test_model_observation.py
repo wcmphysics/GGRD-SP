@@ -614,8 +614,14 @@ class TestModelPerformanceObservation(unittest.TestCase):
         self.assertIsInstance(fig, plt.Figure)
         self.assertEqual(len(axes), 2)
 
-        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error (%)"]
+        twin_axes = [a for a in fig.axes if a not in axes]
         self.assertEqual(len(twin_axes), 2)
+
+        # Verify outer-columns-only axis labeling (Option B)
+        self.assertEqual(axes[0].get_ylabel(), "Intensity (% of Target Max)")
+        self.assertEqual(axes[1].get_ylabel(), "")
+        self.assertEqual(twin_axes[0].get_ylabel(), "")
+        self.assertEqual(twin_axes[1].get_ylabel(), "Absolute Error (%)")
 
         for ax, ax_err in zip(axes, twin_axes):
             # Verify primary curves
@@ -643,10 +649,6 @@ class TestModelPerformanceObservation(unittest.TestCase):
             )
             self.assertEqual(pred_line.get_linestyle(), "--")
 
-            # Verify axis labels
-            self.assertEqual(ax.get_ylabel(), "Intensity (% of Target Max)")
-            self.assertEqual(ax_err.get_ylabel(), "Absolute Error (%)")
-
             # Verify x-axis inversion
             self.assertTrue(ax.xaxis_inverted())
 
@@ -655,7 +657,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
             self.assertEqual(len(err_lines), 1)
             self.assertEqual(
                 mcolors.to_hex(err_lines[0].get_color()),
-                mcolors.to_hex("#C59B27"),
+                mcolors.to_hex("#EFC934"),
             )
             self.assertEqual(err_lines[0].get_linestyle(), "-")
             self.assertGreaterEqual(ax_err.get_ylim()[0], 0.0)
@@ -764,7 +766,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 self.assertTrue(np.all(path.vertices[:, 1] >= 0.0))
 
         # Check twin axis shaded error band as well
-        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error (%)"]
+        twin_axes = [a for a in fig.axes if a not in axes]
         for twin_ax in twin_axes:
             for coll in twin_ax.collections:
                 for path in coll.get_paths():
