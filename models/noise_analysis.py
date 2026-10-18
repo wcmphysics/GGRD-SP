@@ -397,7 +397,7 @@ def create_mean_and_confidence_curves(
     device = gp_model.train_inputs[0].device
     x = torch.tensor(energy - gp_model.energy_center, device=device).unsqueeze(-1)
     gp_model.eval()
-    with torch.no_grad():
+    with torch.no_grad(), gpytorch.settings.debug(False):
         latent = gp_model(x)
         mean = latent.mean.cpu().numpy()
         variance = latent.variance.clamp_min(0.0).cpu().numpy()
@@ -511,7 +511,7 @@ def _fit_and_summarize_batch(
         optimizer.step()
 
     model.eval()
-    with torch.no_grad():
+    with torch.no_grad(), gpytorch.settings.debug(False):
         latent = model(train_x)
         mean = latent.mean.cpu().numpy()
         variance = latent.variance.clamp_min(0.0).cpu().numpy()

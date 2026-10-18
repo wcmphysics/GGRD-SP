@@ -372,7 +372,7 @@ def predict_gp_die_flux(
 
     model.eval()
     likelihood.eval()
-    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+    with torch.no_grad(), gpytorch.settings.fast_pred_var(), gpytorch.settings.debug(False):
         pred_dist = likelihood(model(eval_x))
         mean_norm = pred_dist.mean.cpu().numpy()
         lower_t, upper_t = pred_dist.confidence_region()
