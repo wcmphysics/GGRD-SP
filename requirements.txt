@@ -5,3 +5,5 @@ scikit-learn==1.9.0
 torch
 ax-platform
 PyQt6
+gpytorch
+tqdm

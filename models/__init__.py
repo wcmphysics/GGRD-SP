@@ -36,6 +36,13 @@ from models.inference import (
     predict_sliding_window_spectrum,
     predict_spectra,
 )
+from models.noise_analysis import (
+    SpectrumExactGPModel,
+    create_mean_and_confidence_curves,
+    fit_regional_spectrum_by_gp,
+    get_default_noise_analysis_config,
+    perform_spectral_noise_analysis,
+)
 from models.orchestration import (
     instantiate_model,
     perform_model_training_and_bayesian_optimization,
@@ -98,6 +105,12 @@ __all__ = [
     "evaluate_gp_die_flux_models",
     "get_default_gp_flux_config",
     "run_gp_flux_pipeline",
+    # Gaussian Process spectral noise analysis
+    "SpectrumExactGPModel",
+    "fit_regional_spectrum_by_gp",
+    "create_mean_and_confidence_curves",
+    "get_default_noise_analysis_config",
+    "perform_spectral_noise_analysis",
     # Orchestration pipelines
     "perform_model_training_and_bayesian_optimization",
 ]
