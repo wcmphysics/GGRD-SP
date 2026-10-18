@@ -122,7 +122,7 @@ def main() -> None:
     # Stage 6B: Gaussian Process spectral noise analysis configuration
     noise_analysis_config = {
         "splits": None,
-        "dies": None,
+        "dies": [0],
         "regions": None,
         "unpaired_split": "train",
         "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
@@ -337,17 +337,6 @@ def main() -> None:
         f"mean noise sigma={df_meta['gp_noise_sigma'].mean():.4g}, "
         f"mean SNR={df_meta['gp_snr'].mean():.4g}"
     )
-    if show_plots:
-        visualization.plot_spectral_noise_analysis(
-            (
-                ary_intensity,
-                ary_energy,
-                df_meta,
-                ary_spec_analysis_signal,
-                ary_spec_analysis_noise,
-            ),
-            noise_plot_config,
-        )
 
     # =========================================================================
     # STAGE 7: NEURAL NETWORK TRAINING AND BAYESIAN OPTIMIZATION
@@ -447,6 +436,16 @@ def main() -> None:
             #     df_meta,
             #     plot_config={"measurement_id": sample_measurement_id, "die": 0},
             # ),
+            lambda: visualization.plot_spectral_noise_analysis(
+                (
+                    ary_intensity,
+                    ary_energy,
+                    df_meta,
+                    ary_spec_analysis_signal,
+                    ary_spec_analysis_noise,
+                ),
+                noise_plot_config,
+            ),
             lambda: visualization.plot_training_history(training_results["histories"]),
             lambda: visualization.plot_prediction_comparison(
                 data_original,
