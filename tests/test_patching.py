@@ -31,6 +31,14 @@ class TestSpectralPatching(unittest.TestCase):
         self.assertEqual(w_pts, 21)
         self.assertEqual(s_pts, 10)
 
+    def test_calculate_window_points_defaults(self) -> None:
+        """Verify default window_size_ev (6.0 eV) and sliding_stride_ev (2.0 eV)."""
+        # 6.0 eV / 0.1 eV = 60 points -> forced odd = 61 points
+        # 2.0 eV / 0.1 eV = 20 points
+        w_pts, s_pts = calculate_window_points(self.energy)
+        self.assertEqual(w_pts, 61)
+        self.assertEqual(s_pts, 20)
+
     def test_calculate_window_points_explicit_points(self) -> None:
         """Verify explicit point override in configuration."""
         w_pts, s_pts = calculate_window_points(

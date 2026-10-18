@@ -49,8 +49,8 @@ def calculate_window_points(
         1D array of binding energies for the spectral region.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'window_size_ev' (float): Window width in eV (default 2.0).
-        - 'sliding_stride_ev' (float): Sliding stride in eV (default 1.0).
+        - 'window_size_ev' (float): Window width in eV (default 6.0).
+        - 'sliding_stride_ev' (float): Sliding stride in eV (default 2.0).
         - 'window_size_points' | 'window_size' (int | None): Explicit window
           size in points.
         - 'sliding_stride_points' | 'stride' (int | None): Explicit stride in
@@ -80,7 +80,7 @@ def calculate_window_points(
         cfg,
         delta_e,
         ("window_size_points", "window_size"),
-        ("window_size_ev", 2.0),
+        ("window_size_ev", 6.0),
     )
     force_odd = bool(cfg.get("force_odd_window", True))
     window_size = min(n_total, window_size)
@@ -94,7 +94,7 @@ def calculate_window_points(
         cfg,
         delta_e,
         ("sliding_stride_points", "stride"),
-        ("sliding_stride_ev", 1.0),
+        ("sliding_stride_ev", 2.0),
     )
     stride = max(1, min(window_size, stride))
 
