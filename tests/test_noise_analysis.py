@@ -119,6 +119,44 @@ class TestNoiseAnalysis(unittest.TestCase):
             fit_regional_spectrum_by_gp(np.ones(10), np.arange(10.0))
 
 
+class TestBatchedAnalysis(unittest.TestCase):
+    """Tests for the batched and multiprocess speed paths."""
+
+    def test_batched_matches_sequential(self) -> None:
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.02, "O1s": 0.2})
+        for noise_model in ("homoscedastic", "poisson_scaled"):
+            base = {**_FAST, "noise_model": noise_model, "unpaired_split": "train"}
+            seq = perform_spectral_noise_analysis(ary_i, ary_e, df_meta, {**base, "batch_size": 1})
+            bat = perform_spectral_noise_analysis(ary_i, ary_e, df_meta, {**base, "batch_size": 5})
+            np.testing.assert_allclose(bat[0], seq[0], rtol=1e-3, atol=1e-4)
+            np.testing.assert_allclose(bat[1], seq[1], rtol=1e-3, atol=1e-4)
+            for column in ("gp_noise_sigma", "gp_snr", "gp_lengthscale"):
+                np.testing.assert_allclose(bat[2][column], seq[2][column], rtol=1e-3, equal_nan=True)
+
+    def test_verify_rtol_and_workers(self) -> None:
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.1})
+        cfg = {**_FAST, "batch_size": 4, "batch_verify_rtol": 1e-3}
+        reference = perform_spectral_noise_analysis(ary_i, ary_e, df_meta, cfg)
+        parallel = perform_spectral_noise_analysis(ary_i, ary_e, df_meta, {**cfg, "num_workers": 2})
+        np.testing.assert_allclose(parallel[0], reference[0], rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(parallel[1], reference[1], rtol=1e-6, atol=1e-8)
+        sequential_parallel = perform_spectral_noise_analysis(
+            ary_i, ary_e, df_meta, {**_FAST, "batch_size": 1, "num_workers": 2}
+        )
+        np.testing.assert_allclose(sequential_parallel[2]["gp_noise_sigma"].dropna(),
+                                   reference[2]["gp_noise_sigma"].dropna(), rtol=1e-3)
+
+    def test_speed_config_validation_and_error_label(self) -> None:
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.1})
+        for bad in ({"batch_size": 0}, {"num_workers": -1}, {"batch_verify_rtol": 0}):
+            with self.assertRaisesRegex(ValueError, "must be"):
+                perform_spectral_noise_analysis(ary_i, ary_e, df_meta, {**_FAST, **bad})
+        bad_data = ary_i.copy()
+        bad_data[2, 3] = np.inf
+        with self.assertRaisesRegex(ValueError, "non-finite.*|spectrum meta"):
+            perform_spectral_noise_analysis(bad_data, ary_e, df_meta, {**_FAST, "batch_size": 8})
+
+
 class TestNoisePlots(unittest.TestCase):
     """Tests for the selectable noise analysis plots."""
 
