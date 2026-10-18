@@ -122,8 +122,9 @@ def main() -> None:
     # Stage 6B: Gaussian Process spectral noise analysis configuration
     noise_analysis_config = {
         "splits": None,
-        "dies": [0],
+        "dies": None,
         "regions": None,
+        'batch_size': 64,
         "unpaired_split": "train",
         "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
         "noise_model": "homoscedastic",
