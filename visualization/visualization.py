@@ -743,7 +743,13 @@ def plot_regional_spectrum_distribution(
     spectra across spectral regions.
 
     Displays a 1-row by N-column subplot layout, where each column corresponds
-    to one spectral region. Each subplot shows:
+    to one spectral region. For each die within each measurement session,
+    the regional spectra are normalized by the maximum intensity of the target
+    regional spectrum (multiplied by 100), expressing intensity as a
+    percentage of the target maximum. Mean, variation (standard deviation),
+    and absolute error are calculated based on these normalized spectra.
+
+    Each subplot shows:
     - Left y-axis:
       - Source spectrum: solid black line with +/- 1 std shaded band
       - Target spectrum: solid red line with +/- 1 std shaded band
@@ -754,7 +760,8 @@ def plot_regional_spectrum_distribution(
 
     Shaded bands display +/- 1 standard deviation around the mean curve, with
     the lower bound clamped to >= 0.0. The mean curves themselves are left raw
-    and unclamped.
+    and unclamped. A single unified 4-item legend is placed at the top of the
+    figure outside the subplots to prevent covering any curves.
 
     By default, aggregates across all measurement sessions and dies within the
     'test' split, unless configured otherwise.
@@ -777,7 +784,7 @@ def plot_regional_spectrum_distribution(
         - 'error_color' (str): Color for absolute error curve and band
           (default '#C59B27').
         - 'figsize' (tuple[float, float] | None): Figure size (default
-          scaled to (5.5 * n_regions, 4.5)).
+          scaled to (6.0 * n_regions, 4.8)).
         - 'title' (str | None): Figure super title.
         - 'show' (bool): Whether to invoke plt.show() (default False).
 
@@ -870,7 +877,7 @@ def plot_regional_spectrum_distribution(
         )
 
     n_cols = len(regions_to_plot)
-    figsize = cfg.get("figsize", (5.5 * n_cols, 4.5))
+    figsize = cfg.get("figsize", (6.0 * n_cols, 4.8))
     fig, axes = plt.subplots(1, n_cols, figsize=figsize, squeeze=False)
     axes_row = axes[0]
     error_color = str(cfg.get("error_color", "#C59B27"))
@@ -880,15 +887,25 @@ def plot_regional_spectrum_distribution(
         ax = axes_row[col_idx]
         triplets = matched_by_region[reg]
 
-        src_stack = np.array(
+        src_raw = np.array(
             [ary_i_orig[s] for s, _, _ in triplets], dtype=np.float64
         )
-        tgt_stack = np.array(
+        tgt_raw = np.array(
             [ary_i_orig[t] for _, t, _ in triplets], dtype=np.float64
         )
-        pred_stack = np.array(
+        pred_raw = np.array(
             [ary_i_pred[p] for _, _, p in triplets], dtype=np.float64
         )
+
+        # Normalize each die spectrum by its target maximum intensity (% scale)
+        tgt_max = np.max(tgt_raw, axis=1, keepdims=True)
+        tgt_max = np.where(
+            (tgt_max <= 0.0) | (~np.isfinite(tgt_max)), 1e-12, tgt_max
+        )
+
+        src_stack = (src_raw / tgt_max) * 100.0
+        tgt_stack = (tgt_raw / tgt_max) * 100.0
+        pred_stack = (pred_raw / tgt_max) * 100.0
         err_stack = np.abs(pred_stack - tgt_stack)
         energy_arr = ary_e_orig[triplets[0][1]]
 
@@ -945,7 +962,7 @@ def plot_regional_spectrum_distribution(
         )
 
         ax.set_xlabel("Binding Energy (eV)")
-        ax.set_ylabel("Intensity (counts)")
+        ax.set_ylabel("Intensity (% of Target Max)")
         if invert_x and not ax.xaxis_inverted():
             ax.invert_xaxis()
         ax.grid(True, linestyle="--", alpha=0.5)
@@ -963,50 +980,57 @@ def plot_regional_spectrum_distribution(
         ax_err.fill_between(
             energy_arr, err_low, err_high, color=error_color, alpha=0.20
         )
-        ax_err.set_ylabel("Absolute Error", color=error_color)
+        ax_err.set_ylabel("Absolute Error (%)", color=error_color)
         ax_err.tick_params(axis="y", labelcolor=error_color)
         ax_err.set_ylim(bottom=0.0)
 
-        # Unified 4-entry proxy legend
-        legend_handles = [
-            plt.Line2D(
-                [], [], color="black", ls="-", lw=1.6, label="Source (Mean ± 1σ)"
-            ),
-            plt.Line2D(
-                [], [], color="red", ls="-", lw=1.6, label="Target (Mean ± 1σ)"
-            ),
-            plt.Line2D(
-                [],
-                [],
-                color="blue",
-                ls="--",
-                lw=1.8,
-                label="Predicted (Mean ± 1σ)",
-            ),
-            plt.Line2D(
-                [],
-                [],
-                color=error_color,
-                ls="-",
-                lw=1.6,
-                label="Abs Error (Mean ± 1σ)",
-            ),
-        ]
-        ax.legend(
-            handles=legend_handles,
-            loc=cfg.get("legend_loc", "best"),
-            fontsize="x-small",
-        )
-
         die_desc = f"Die {die_filter}" if die_filter is not None else "All Dies"
         ax.set_title(f"Region: {reg} (N={len(src_stack)})\n{die_desc}", fontsize=11)
+
+    # Unified 4-entry proxy legend positioned outside at the top center
+    legend_handles = [
+        plt.Line2D(
+            [], [], color="black", ls="-", lw=1.6, label="Source (Mean ± 1σ)"
+        ),
+        plt.Line2D(
+            [], [], color="red", ls="-", lw=1.6, label="Target (Mean ± 1σ)"
+        ),
+        plt.Line2D(
+            [],
+            [],
+            color="blue",
+            ls="--",
+            lw=1.8,
+            label="Predicted (Mean ± 1σ)",
+        ),
+        plt.Line2D(
+            [],
+            [],
+            color=error_color,
+            ls="-",
+            lw=1.6,
+            label="Abs Error (Mean ± 1σ)",
+        ),
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.94),
+        ncol=4,
+        fontsize="small",
+        frameon=True,
+    )
 
     split_title = f"Split: {split}" if split else "All Splits"
     fig_title = cfg.get(
         "title",
         f"Regional Spectrum & Absolute Error Distributions ({split_title})",
     )
-    _finish_fig(fig, cfg, title=fig_title)
+    if fig_title:
+        fig.suptitle(fig_title, fontsize=12, fontweight="bold", y=0.99)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.88], w_pad=4.5)
+    if cfg.get("show"):
+        plt.show()
     return fig, axes_row
 
 
