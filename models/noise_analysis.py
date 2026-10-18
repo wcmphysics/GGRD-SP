@@ -13,6 +13,8 @@ Main entry point: ``perform_spectral_noise_analysis``. Building blocks:
 from __future__ import annotations
 
 import copy
+import math
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any
 
 import gpytorch
@@ -74,9 +76,10 @@ class SpectrumExactGPModel(gpytorch.models.ExactGP):
         train_y: torch.Tensor,
         likelihood: gpytorch.likelihoods.GaussianLikelihood,
         covar_module: gpytorch.kernels.Kernel,
+        batch_shape: torch.Size = torch.Size(),
     ) -> None:
         super().__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()
+        self.mean_module = gpytorch.means.ConstantMean(batch_shape=batch_shape)
         self.covar_module = covar_module
         self.energy_center: float = 0.0
         self.intensity_scale: float = 1.0
@@ -125,6 +128,17 @@ def get_default_noise_analysis_config() -> dict[str, Any]:
         Torch device for fitting.
     show_progress : bool
         Show a tqdm progress bar.
+    batch_size : int
+        Number of spectra fitted simultaneously by one batched GP (>= 1).
+        1 fits spectra one by one with ``fit_regional_spectrum_by_gp``.
+    num_workers : int
+        Worker processes for chunks of spectra; 0 or 1 disables
+        multiprocessing (default). Each worker uses a single torch thread.
+    batch_verify_rtol : float | None
+        If set (and ``batch_size`` > 1), the first spectrum of every chunk is
+        also fitted sequentially and its noise sigma must agree with the
+        batched one within this relative tolerance, else an error is raised.
+        None (default) disables the check.
     """
     return {
         "splits": None,
@@ -146,11 +160,20 @@ def get_default_noise_analysis_config() -> dict[str, Any]:
         "snr_definition": "range",
         "device": "cpu",
         "show_progress": True,
+        "batch_size": 64,
+        "num_workers": 0,
+        "batch_verify_rtol": None,
     }
 
 
 def _resolve_config(config: dict[str, Any] | None) -> dict[str, Any]:
-    """Merge a user config over the defaults and validate every value."""
+    """Merge a user config over the defaults and validate every value.
+
+    A config that was already resolved (marked internally) is returned as is,
+    so inner functions do not repeat the merge and validation per spectrum.
+    """
+    if config is not None and config.get("_resolved"):
+        return config
     cfg = get_default_noise_analysis_config()
     user = copy.deepcopy(config or {})
     for key in user:
@@ -188,34 +211,85 @@ def _resolve_config(config: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError(f"confidence_z must be > 0, got {cfg['confidence_z']}.")
     if cfg["training"]["num_iterations"] < 1 or cfg["training"]["learning_rate"] <= 0:
         raise ValueError(f"Invalid training config: {cfg['training']}.")
+    for key, minimum in (("batch_size", 1), ("num_workers", 0)):
+        value = cfg[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ValueError(f"{key} must be an integer >= {minimum}, got {value!r}.")
+    rtol = cfg["batch_verify_rtol"]
+    if rtol is not None and (not isinstance(rtol, (int, float)) or rtol <= 0):
+        raise ValueError(f"batch_verify_rtol must be None or > 0, got {rtol!r}.")
+    cfg["_resolved"] = True
     return cfg
 
 
 def _build_kernel(
-    kernel_cfg: dict[str, Any], spacing: float, energy_range: float
+    kernel_cfg: dict[str, Any],
+    spacing: float | np.ndarray,
+    energy_range: float | np.ndarray,
+    batch_size: int | None = None,
 ) -> gpytorch.kernels.Kernel:
-    """Build the scaled stationary kernel with bounded lengthscale (in eV)."""
+    """Build the scaled stationary kernel with bounded lengthscale (in eV).
+
+    With ``batch_size`` set, ``spacing`` and ``energy_range`` are arrays of
+    that length and the kernel carries one lengthscale per spectrum.
+    """
+    spacing, energy_range = np.asarray(spacing, float), np.asarray(energy_range, float)
     ls_min = kernel_cfg["min_lengthscale_ev"]
     if ls_min is None:
         ls_min = float(kernel_cfg["min_lengthscale_points"]) * spacing
+    ls_min = np.broadcast_to(np.asarray(ls_min, float), spacing.shape)
     ls_max = kernel_cfg["max_lengthscale_ev"]
-    ls_max = energy_range if ls_max is None else float(ls_max)
-    if not 0 < ls_min < ls_max:
+    ls_max = energy_range if ls_max is None else np.full(spacing.shape, float(ls_max))
+    if not np.all((0 < ls_min) & (ls_min < ls_max)):
         raise ValueError(
-            f"Invalid lengthscale bounds: min={ls_min:.4g} eV, max={ls_max:.4g} eV "
-            "(need 0 < min < max)."
+            f"Invalid lengthscale bounds: min={ls_min.min():.4g} eV, "
+            f"max={ls_max.min():.4g} eV (need 0 < min < max)."
         )
-    constraint = gpytorch.constraints.Interval(ls_min, ls_max)
+    initial = np.clip(kernel_cfg["initial_lengthscale_ev"], ls_min, ls_max)
+    if batch_size is None:
+        batch_shape = torch.Size()
+        lower, upper, initial = float(ls_min), float(ls_max), float(initial)
+    else:
+        batch_shape = torch.Size([batch_size])
+        lower, upper, initial = (
+            torch.tensor(np.asarray(v, float)).view(-1, 1, 1) for v in (ls_min, ls_max, initial)
+        )
+    constraint = gpytorch.constraints.Interval(lower, upper)
     kernel_type = kernel_cfg["type"]
     if kernel_type in _MATERN_NU:
         base = gpytorch.kernels.MaternKernel(
-            nu=_MATERN_NU[kernel_type], lengthscale_constraint=constraint
+            nu=_MATERN_NU[kernel_type], lengthscale_constraint=constraint, batch_shape=batch_shape
         )
     else:
-        base = gpytorch.kernels.RBFKernel(lengthscale_constraint=constraint)
-    initial = float(np.clip(kernel_cfg["initial_lengthscale_ev"], ls_min, ls_max))
+        base = gpytorch.kernels.RBFKernel(lengthscale_constraint=constraint, batch_shape=batch_shape)
     base.lengthscale = initial
-    return gpytorch.kernels.ScaleKernel(base)
+    return gpytorch.kernels.ScaleKernel(base, batch_shape=batch_shape)
+
+
+def _validate_spectrum(
+    energy: np.ndarray, intensity: np.ndarray, label: str
+) -> tuple[np.ndarray, np.ndarray, float, float, float]:
+    """Validate one spectrum; return ``(energy, intensity, spacing, range, scale)``."""
+    energy = np.asarray(energy, dtype=np.float64)
+    intensity = np.asarray(intensity, dtype=np.float64)
+    if energy.ndim != 1 or energy.shape != intensity.shape or energy.size < 5:
+        raise ValueError(
+            f"{label}: energy and intensity must be 1D arrays of equal length "
+            f">= 5, got shapes {energy.shape} and {intensity.shape}."
+        )
+    if not (np.isfinite(energy).all() and np.isfinite(intensity).all()):
+        raise ValueError(f"{label}: non-finite values in energy or intensity.")
+    if np.unique(energy).size != energy.size:
+        raise ValueError(f"{label}: duplicate energy values are not supported.")
+    spacing = float(np.median(np.abs(np.diff(np.sort(energy)))))
+    energy_range = float(energy.max() - energy.min())
+    intensity_scale = float(np.max(np.abs(intensity)))
+    if spacing <= 0 or energy_range <= 0 or intensity_scale <= 0:
+        raise ValueError(
+            f"{label}: degenerate spectrum (point spacing={spacing}, "
+            f"energy range={energy_range}, max |intensity|={intensity_scale})."
+        )
+    return energy, intensity, spacing, energy_range, intensity_scale
 
 
 def fit_regional_spectrum_by_gp(
@@ -242,25 +316,9 @@ def fit_regional_spectrum_by_gp(
     """
     cfg = _resolve_config(config)
     label = f"spectrum meta={dict(meta)}" if meta is not None else "spectrum"
-    energy = np.asarray(energy, dtype=np.float64)
-    intensity = np.asarray(intensity, dtype=np.float64)
-    if energy.ndim != 1 or energy.shape != intensity.shape or energy.size < 5:
-        raise ValueError(
-            f"{label}: energy and intensity must be 1D arrays of equal length "
-            f">= 5, got shapes {energy.shape} and {intensity.shape}."
-        )
-    if not (np.isfinite(energy).all() and np.isfinite(intensity).all()):
-        raise ValueError(f"{label}: non-finite values in energy or intensity.")
-    if np.unique(energy).size != energy.size:
-        raise ValueError(f"{label}: duplicate energy values are not supported.")
-    spacing = float(np.median(np.abs(np.diff(np.sort(energy)))))
-    energy_range = float(energy.max() - energy.min())
-    intensity_scale = float(np.max(np.abs(intensity)))
-    if spacing <= 0 or energy_range <= 0 or intensity_scale <= 0:
-        raise ValueError(
-            f"{label}: degenerate spectrum (point spacing={spacing}, "
-            f"energy range={energy_range}, max |intensity|={intensity_scale})."
-        )
+    energy, intensity, spacing, energy_range, intensity_scale = _validate_spectrum(
+        energy, intensity, label
+    )
 
     energy_center = float(energy.mean())
     device = torch.device(cfg["device"])
@@ -381,6 +439,160 @@ def _summarize_gp_fit(
     return noise_sigma, signal_strength / noise_sigma, lengthscale
 
 
+def _fit_and_summarize_batch(
+    energies: np.ndarray,
+    intensities: np.ndarray,
+    metas: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Fit B spectra simultaneously with one batched exact GP.
+
+    Every spectrum keeps its own hyperparameters and noise, so the result
+    equals fitting them one by one; only the Python overhead is shared.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Mean curves (B, N), confidence half-width curves (B, N) and a (B, 3)
+        summary of ``(noise_sigma, snr, lengthscale_ev)``.
+    """
+    batch_size = len(metas)
+    labels = [f"spectrum meta={meta}" for meta in metas]
+    prepared = [_validate_spectrum(e, i, l) for e, i, l in zip(energies, intensities, labels)]
+    energies = np.stack([p[0] for p in prepared])
+    intensities = np.stack([p[1] for p in prepared])
+    spacing, energy_range, scales = (np.array([p[k] for p in prepared]) for k in (2, 3, 4))
+    device = torch.device(cfg["device"])
+    train_x = torch.tensor(
+        energies - energies.mean(axis=1, keepdims=True), device=device
+    ).unsqueeze(-1)
+    scaled = intensities / scales[:, None]
+    train_y = torch.tensor(scaled, device=device)
+    weights = np.ones_like(scaled)
+    batch_shape = torch.Size([batch_size])
+    noise_constraint = gpytorch.constraints.GreaterThan(1e-8)
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(
+        noise_constraint=noise_constraint, batch_shape=batch_shape
+    )
+    if cfg["noise_model"] == "poisson_scaled":
+        weights = np.clip(scaled, cfg["poisson_weight_floor"], None)
+        likelihood.noise_covar = _ScaledHomoskedasticNoise(
+            torch.tensor(weights, device=device),
+            noise_constraint=noise_constraint,
+            batch_shape=batch_shape,
+        )
+    likelihood.noise = 1e-3
+    covar = _build_kernel(cfg["kernel"], spacing, energy_range, batch_size=batch_size)
+    model = SpectrumExactGPModel(train_x, train_y, likelihood, covar, batch_shape)
+    model.to(device).double()
+    constant = model.mean_module.constant
+    initial_mean = torch.tensor(scaled.mean(axis=1), device=device).reshape(constant.shape)
+    constant.data.copy_(initial_mean)
+
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
+    for iteration in range(cfg["training"]["num_iterations"]):
+        optimizer.zero_grad()
+        try:
+            loss = -mll(model(train_x), train_y)
+        except Exception as exc:  # re-raised; caller locates the spectrum
+            raise RuntimeError(
+                f"Batched GP marginal likelihood failed for {batch_size} spectra "
+                f"at iteration {iteration}: {exc}"
+            ) from exc
+        bad = ~torch.isfinite(loss)
+        if bad.any():
+            first = int(bad.nonzero()[0])
+            raise RuntimeError(
+                f"{labels[first]}: non-finite GP loss at iteration {iteration}."
+            )
+        loss.sum().backward()
+        optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        latent = model(train_x)
+        mean = latent.mean.cpu().numpy()
+        variance = latent.variance.clamp_min(0.0).cpu().numpy()
+        noise_variance = likelihood.noise.detach().cpu().numpy().reshape(batch_size)
+        lengthscale = model.covar_module.base_kernel.lengthscale.detach().cpu().numpy()
+    if cfg["confidence_type"] == "observation":
+        variance = variance + noise_variance[:, None] * weights
+    mean_curves = mean * scales[:, None]
+    confidence_curves = cfg["confidence_z"] * np.sqrt(variance) * scales[:, None]
+    noise_sigma = np.sqrt(noise_variance * weights.mean(axis=1)) * scales
+    for i in range(batch_size):
+        if not (np.isfinite(mean_curves[i]).all() and np.isfinite(confidence_curves[i]).all()):
+            raise RuntimeError(f"{labels[i]}: GP prediction produced non-finite values.")
+        if not np.isfinite(noise_sigma[i]) or noise_variance[i] <= 1.5e-8:
+            raise RuntimeError(
+                f"{labels[i]}: GP fit gave an invalid noise level (variance="
+                f"{noise_variance[i]:.3g}, sigma={noise_sigma[i]:.3g}); the noise "
+                "hit its lower bound, so the spectrum may be noise-free or the "
+                "kernel too flexible. Consider raising kernel 'min_lengthscale_points'."
+            )
+    if cfg["snr_definition"] == "range":
+        strength = mean_curves.max(axis=1) - mean_curves.min(axis=1)
+    else:
+        strength = mean_curves.std(axis=1)
+    summary = np.stack([noise_sigma, strength / noise_sigma, lengthscale.reshape(batch_size)], axis=1)
+    return mean_curves, confidence_curves, summary
+
+
+def _analyse_sequential(
+    energies: np.ndarray,
+    intensities: np.ndarray,
+    metas: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Analyse spectra one by one with the single-spectrum building blocks."""
+    signal = np.empty(energies.shape, dtype=np.float64)
+    noise = np.empty(energies.shape, dtype=np.float64)
+    summary = np.empty((len(metas), 3), dtype=np.float64)
+    for i, meta in enumerate(metas):
+        gp_model = fit_regional_spectrum_by_gp(energies[i], intensities[i], cfg, meta=meta)
+        signal[i], noise[i] = create_mean_and_confidence_curves(gp_model, energies[i], cfg)
+        summary[i] = _summarize_gp_fit(gp_model, signal[i], cfg["snr_definition"])
+    return signal, noise, summary
+
+
+def _analyse_chunk(
+    energies: np.ndarray,
+    intensities: np.ndarray,
+    metas: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Analyse one chunk of spectra (batched, or sequential if batch_size is 1)."""
+    if cfg["batch_size"] == 1:
+        return _analyse_sequential(energies, intensities, metas, cfg)
+    try:
+        result = _fit_and_summarize_batch(energies, intensities, metas, cfg)
+    except RuntimeError as exc:
+        # Fit individually: raises an error naming the failing spectrum.
+        _analyse_sequential(energies, intensities, metas, cfg)
+        raise RuntimeError(
+            f"Batched GP fit failed for a chunk of {len(metas)} spectra although "
+            f"each fits individually: {exc}"
+        ) from exc
+    rtol = cfg["batch_verify_rtol"]
+    if rtol is not None:
+        reference = _analyse_sequential(energies[:1], intensities[:1], metas[:1], cfg)[2]
+        batched_sigma, reference_sigma = result[2][0, 0], reference[0, 0]
+        if abs(batched_sigma - reference_sigma) > rtol * abs(reference_sigma):
+            raise RuntimeError(
+                f"Batched noise sigma {batched_sigma:.6g} differs from the sequential "
+                f"{reference_sigma:.6g} by more than rtol={rtol} for spectrum "
+                f"meta={metas[0]}."
+            )
+    return result
+
+
+def _init_worker() -> None:
+    """Limit torch to one thread in worker processes."""
+    torch.set_num_threads(1)
+
+
 def _select_spectra(df_meta: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     """Select the meta rows to analyse by split, die and region."""
     required = {"spectrum_index", "die", "region"}
@@ -492,17 +704,37 @@ def perform_spectral_noise_analysis(
     ary_signal = np.empty((n_rows, n_points), dtype=np.float64)
     ary_noise = np.empty((n_rows, n_points), dtype=np.float64)
     summary = np.empty((n_rows, 3), dtype=np.float64)
-    rows = zip(spectrum_indices, selected.to_dict("records"))
-    for position, (spec_idx, meta) in enumerate(
-        tqdm(rows, total=n_rows, desc="GP noise analysis", disable=not cfg["show_progress"])
-    ):
-        energy, intensity = ary_energy[spec_idx], ary_intensity[spec_idx]
-        gp_model = fit_regional_spectrum_by_gp(energy, intensity, cfg, meta=meta)
-        mean_curve, confidence_curve = create_mean_and_confidence_curves(
-            gp_model, energy, cfg
-        )
-        ary_signal[position], ary_noise[position] = mean_curve, confidence_curve
-        summary[position] = _summarize_gp_fit(gp_model, mean_curve, cfg["snr_definition"])
+    metas = selected.to_dict("records")
+    workers = cfg["num_workers"]
+    if cfg["batch_size"] > 1:
+        chunk_size = cfg["batch_size"]
+    elif workers > 1:
+        chunk_size = math.ceil(n_rows / (workers * 4))
+    else:
+        chunk_size = 1
+    chunks = [(start, min(start + chunk_size, n_rows)) for start in range(0, n_rows, chunk_size)]
+
+    def chunk_args(start: int, stop: int) -> tuple[Any, ...]:
+        rows = spectrum_indices[start:stop]
+        return ary_energy[rows], ary_intensity[rows], metas[start:stop], cfg
+
+    with tqdm(total=n_rows, desc="GP noise analysis", disable=not cfg["show_progress"]) as bar:
+        if workers > 1:
+            with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as pool:
+                futures = {pool.submit(_analyse_chunk, *chunk_args(*c)): c for c in chunks}
+                try:
+                    for future in as_completed(futures):
+                        start, stop = futures[future]
+                        ary_signal[start:stop], ary_noise[start:stop], summary[start:stop] = future.result()
+                        bar.update(stop - start)
+                except BaseException:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+        else:
+            for start, stop in chunks:
+                result = _analyse_chunk(*chunk_args(start, stop))
+                ary_signal[start:stop], ary_noise[start:stop], summary[start:stop] = result
+                bar.update(stop - start)
 
     df_out = df_meta.copy()
     df_out["noise_analysis_index"] = pd.array([pd.NA] * len(df_out), dtype="Int64")
