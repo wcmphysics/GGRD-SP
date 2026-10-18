@@ -786,7 +786,7 @@ def plot_regional_spectrum_distribution(
         - 'error_color' (str): Color for absolute error curve and band
           (default '#EFC934').
         - 'figsize' (tuple[float, float] | None): Figure size (default
-          scaled to (10.0, 3.2 * n_regions)).
+          scaled to (10.0, 1.5 + 2.4 * n + 0.8 * (n - 1)) for n regions).
         - 'dpi' (int): Figure dots per inch resolution (default 300).
         - 'title' (str | None): Figure super title.
         - 'show' (bool): Whether to invoke plt.show() (default False).
@@ -880,7 +880,7 @@ def plot_regional_spectrum_distribution(
         )
 
     n_rows = len(regions_to_plot)
-    figsize = cfg.get("figsize", (10.0, 3.2 * n_rows))
+    figsize = cfg.get("figsize", (10.0, 1.5 + 2.4 * n_rows + 0.8 * (n_rows - 1)))
     dpi = int(cfg.get("dpi", 300))
     fig, axes = plt.subplots(
         n_rows, 1, figsize=figsize, dpi=dpi, squeeze=False
@@ -967,8 +967,8 @@ def plot_regional_spectrum_distribution(
             energy_arr, pred_low, pred_high, color="blue", alpha=0.15
         )
 
-        ax.set_xlabel("Binding Energy (eV)")
-        ax.set_ylabel("Intensity (% of Target Max)", color="black")
+        ax.set_xlabel("Binding Energy (eV)", fontsize=8)
+        ax.set_ylabel("Intensity (% of Target Max)", color="black", fontsize=8)
         if invert_x and not ax.xaxis_inverted():
             ax.invert_xaxis()
         ax.grid(True, linestyle="--", alpha=0.5)
@@ -986,13 +986,14 @@ def plot_regional_spectrum_distribution(
         ax_err.fill_between(
             energy_arr, err_low, err_high, color=error_color, alpha=0.20
         )
-        ax_err.set_ylabel("Absolute Error (%)", color="black")
-        ax_err.tick_params(axis="y", labelcolor="black")
+        ax_err.set_ylabel("Absolute Error (%)", color="black", fontsize=8)
+        ax_err.tick_params(axis="y", labelcolor="black", labelsize=7.5)
         ax_err.set_ylim(bottom=0.0)
+        ax.tick_params(axis="both", labelsize=7.5)
 
         die_desc = f"Die {die_filter}" if die_filter is not None else "All Dies"
         ax.set_title(
-            f"Region: {reg} (N={len(src_stack)}) | {die_desc}", fontsize=11
+            f"Region: {reg} (N={len(src_stack)}) | {die_desc}", fontsize=9
         )
 
     # Unified 4-entry proxy legend positioned outside at the top center
@@ -1021,27 +1022,42 @@ def plot_regional_spectrum_distribution(
         ),
     ]
 
-    top_rect = 0.88 if n_rows == 1 else (0.965 if n_rows >= 4 else 0.93)
-    leg_y = 0.93 if n_rows == 1 else (0.982 if n_rows >= 4 else 0.96)
-    title_y = 0.99 if n_rows == 1 else 0.995
-
-    fig.legend(
-        handles=legend_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, leg_y),
-        ncol=4,
-        fontsize="small",
-        frameon=True,
-    )
-
+    # Header (suptitle + legend) is sized in absolute inches so it never
+    # collides with the first subplot regardless of the number of rows.
+    fig_h = float(fig.get_size_inches()[1])
+    title_in, legend_in, gap_in = 0.30, 0.38, 0.25
+    header_in = title_in + legend_in + gap_in
     split_title = f"Split: {split}" if split else "All Splits"
     fig_title = cfg.get(
         "title",
         f"Regional Spectrum & Absolute Error Distributions ({split_title})",
     )
+    if not fig_title:
+        header_in -= title_in
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.0 - (header_in - gap_in - legend_in) / fig_h),
+        ncol=4,
+        fontsize=7.5,
+        frameon=True,
+    )
     if fig_title:
-        fig.suptitle(fig_title, fontsize=12, fontweight="bold", y=title_y)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, top_rect], h_pad=2.5)
+        fig.suptitle(fig_title, fontsize=10, fontweight="bold", y=1.0 - 0.05 / fig_h)
+    # Explicit margins (inches); tight_layout would also count the figure
+    # legend/suptitle and waste space, so spacing is set manually.
+    fig_w = float(fig.get_size_inches()[0])
+    bottom_in, side_in, row_gap_in = 0.55, 0.85, 0.80
+    top_frac = 1.0 - header_in / fig_h
+    bottom_frac = bottom_in / fig_h
+    axes_h_in = (fig_h - header_in - bottom_in - row_gap_in * (n_rows - 1)) / n_rows
+    fig.subplots_adjust(
+        left=side_in / fig_w,
+        right=1.0 - side_in / fig_w,
+        top=top_frac,
+        bottom=bottom_frac,
+        hspace=row_gap_in / max(axes_h_in, 1e-6),
+    )
     if cfg.get("show"):
         plt.show()
     return fig, axes_col
