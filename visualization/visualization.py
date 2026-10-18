@@ -754,9 +754,13 @@ def plot_regional_spectrum_distribution(
       - Source spectrum: solid black line with +/- 1 std shaded band
       - Target spectrum: solid red line with +/- 1 std shaded band
       - Predicted spectrum: dashed blue line with +/- 1 std shaded band
+      - Y-axis label "Intensity (% of Target Max)" on leftmost column only;
+        tick values remain visible on all columns.
     - Right y-axis:
-      - Absolute error (|predicted - target|): yellow / dark goldenrod line
+      - Absolute error (|predicted - target|): yellow line (#EFC934)
         with +/- 1 std shaded band, lower y-limit pinned to 0.0.
+      - Y-axis label "Absolute Error (%)" on rightmost column only;
+        tick values remain visible on all columns.
 
     Shaded bands display +/- 1 standard deviation around the mean curve, with
     the lower bound clamped to >= 0.0. The mean curves themselves are left raw
@@ -782,7 +786,7 @@ def plot_regional_spectrum_distribution(
           available in split).
         - 'invert_x' (bool): Invert binding energy axis (default True).
         - 'error_color' (str): Color for absolute error curve and band
-          (default '#C59B27').
+          (default '#EFC934').
         - 'figsize' (tuple[float, float] | None): Figure size (default
           scaled to (6.0 * n_regions, 4.8)).
         - 'title' (str | None): Figure super title.
@@ -880,7 +884,7 @@ def plot_regional_spectrum_distribution(
     figsize = cfg.get("figsize", (6.0 * n_cols, 4.8))
     fig, axes = plt.subplots(1, n_cols, figsize=figsize, squeeze=False)
     axes_row = axes[0]
-    error_color = str(cfg.get("error_color", "#C59B27"))
+    error_color = str(cfg.get("error_color", "#EFC934"))
     invert_x = bool(cfg.get("invert_x", True))
 
     for col_idx, reg in enumerate(regions_to_plot):
@@ -962,12 +966,15 @@ def plot_regional_spectrum_distribution(
         )
 
         ax.set_xlabel("Binding Energy (eV)")
-        ax.set_ylabel("Intensity (% of Target Max)")
+        if col_idx == 0:
+            ax.set_ylabel("Intensity (% of Target Max)")
+        else:
+            ax.set_ylabel("")
         if invert_x and not ax.xaxis_inverted():
             ax.invert_xaxis()
         ax.grid(True, linestyle="--", alpha=0.5)
 
-        # Right y-axis: Absolute error (yellow / dark goldenrod)
+        # Right y-axis: Absolute error (yellow)
         ax_err = ax.twinx()
         ax_err.plot(
             energy_arr,
@@ -980,7 +987,10 @@ def plot_regional_spectrum_distribution(
         ax_err.fill_between(
             energy_arr, err_low, err_high, color=error_color, alpha=0.20
         )
-        ax_err.set_ylabel("Absolute Error (%)", color=error_color)
+        if col_idx == n_cols - 1:
+            ax_err.set_ylabel("Absolute Error (%)", color=error_color)
+        else:
+            ax_err.set_ylabel("")
         ax_err.tick_params(axis="y", labelcolor=error_color)
         ax_err.set_ylim(bottom=0.0)
 
