@@ -126,7 +126,7 @@ The codes will be composed of the following key stages
 - Scikit-learn, PyTorch, Pandas, NumPy, SciPy, Ax (for Bayesian optimization)
 - Jupyter Notebooks for exploration, Python scripts for utilities.
 
-## Agent Instructions (Rules for Gemini)
+## Agent Instructions
 1. **Virtual Environment:** Always execute Python commands using the local environment at `\.venv\Scripts\python.exe`.
 2. **File Structure:** 
    - Main python body: `main.py`
@@ -166,3 +166,16 @@ The codes will be composed of the following key stages
       7. Comment lines and docstring should still be complete and comprehensive. No need to remove them unless explicitly requested.
    - Ask me anything if there is something unclear to you
    - Always Propose your plans first for me to review. Only implement the plan if I approve
+
+# Code Modification Rules (CRITICAL - Strictly Enforced)
+1. **Surgical Edits Only (Minimal Diff)**:
+   - NEVER rewrite entire files or entire functions without explicit permission.
+   - Modify ONLY the minimal lines of code directly required to fulfill the user's request.
+
+2. **No Unsolicited Refactoring**:
+   - Do NOT alter unrelated variable names, indentation, formatting, comments, or import orders.
+   - Preserve all existing defensive checks, edge-case logic, error handling, and comments—even if you think they could be written more concisely.
+
+3. **Strict Tool Usage & No Lazy Placeholders**:
+   - When modifying existing files, you MUST prioritize targeted patch/diff tools (Search and Replace) over full-file overwrite tools.
+   - NEVER output lazy truncation placeholders (e.g., `// ... rest of code ...` or `// ... existing implementation ...`) when writing to files.
