@@ -119,6 +119,27 @@ def main() -> None:
         "normalized_by_target_max": True,
     }
 
+    # Stage 6B: Gaussian Process spectral noise analysis configuration
+    noise_analysis_config = {
+        "splits": None,
+        "dies": None,
+        "regions": None,
+        "unpaired_split": "train",
+        "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
+        "noise_model": "homoscedastic",
+        "confidence_type": "observation",
+        "training": {"num_iterations": 100, "learning_rate": 0.1},
+    }
+    noise_plot_config = {
+        "plots": [
+            "noise_vs_time",
+            "snr_by_region",
+            "noise_heatmap",
+            "example_spectrum",
+        ],
+        "example": {"measurement_id": sample_measurement_id, "region": example_region},
+    }
+
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
         "use_film": False,
@@ -301,6 +322,32 @@ def main() -> None:
     print("\n=== Stage 6: Cost Function Preparation ===")
     criterion = models.SpectralLoss(config=cost_config)
     print(f"Initialized criterion: {criterion.__class__.__name__}")
+
+    # =========================================================================
+    # STAGE 6B: GAUSSIAN PROCESS SPECTRAL NOISE ANALYSIS
+    # =========================================================================
+    print("\n=== Stage 6B: Gaussian Process Noise Analysis ===")
+    ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
+        models.perform_spectral_noise_analysis(
+            ary_intensity, ary_energy, df_meta, noise_analysis_config
+        )
+    )
+    print(
+        f"Analysed {ary_spec_analysis_signal.shape[0]} regional spectra; "
+        f"mean noise sigma={df_meta['gp_noise_sigma'].mean():.4g}, "
+        f"mean SNR={df_meta['gp_snr'].mean():.4g}"
+    )
+    if show_plots:
+        visualization.plot_spectral_noise_analysis(
+            (
+                ary_intensity,
+                ary_energy,
+                df_meta,
+                ary_spec_analysis_signal,
+                ary_spec_analysis_noise,
+            ),
+            noise_plot_config,
+        )
 
     # =========================================================================
     # STAGE 7: NEURAL NETWORK TRAINING AND BAYESIAN OPTIMIZATION
