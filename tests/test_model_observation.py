@@ -25,6 +25,7 @@ from visualization import (
     plot_max_intensity_vs_time,
     plot_normalized_max_intensity_vs_time,
     plot_prediction_comparison,
+    plot_regional_spectrum_distribution,
     plot_sliding_window_slices,
     plot_training_history,
 )
@@ -597,6 +598,170 @@ class TestModelPerformanceObservation(unittest.TestCase):
                 data_predicted=data_pred_broken,
                 config={"die": 0, "show": False},
             )
+
+    def test_plot_regional_spectrum_distribution_defaults(self) -> None:
+        """Test default regional distribution plotting across all regions."""
+        import matplotlib.colors as mcolors
+
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        fig, axes = plot_regional_spectrum_distribution(
+            data_original=data_orig,
+            data_predicted=data_pred,
+            config={"show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertEqual(len(axes), 2)
+
+        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error"]
+        self.assertEqual(len(twin_axes), 2)
+
+        for ax, ax_err in zip(axes, twin_axes):
+            # Verify primary curves
+            lines = ax.get_lines()
+            self.assertEqual(len(lines), 3)
+            src_line, tgt_line, pred_line = lines[0], lines[1], lines[2]
+
+            self.assertEqual(
+                mcolors.to_hex(src_line.get_color()), mcolors.to_hex("black")
+            )
+            self.assertEqual(src_line.get_linestyle(), "-")
+
+            self.assertEqual(
+                mcolors.to_hex(tgt_line.get_color()), mcolors.to_hex("red")
+            )
+            self.assertEqual(tgt_line.get_linestyle(), "-")
+
+            self.assertEqual(
+                mcolors.to_hex(pred_line.get_color()), mcolors.to_hex("blue")
+            )
+            self.assertEqual(pred_line.get_linestyle(), "--")
+
+            # Verify x-axis inversion
+            self.assertTrue(ax.xaxis_inverted())
+
+            # Verify twinx error axis
+            err_lines = ax_err.get_lines()
+            self.assertEqual(len(err_lines), 1)
+            self.assertEqual(
+                mcolors.to_hex(err_lines[0].get_color()),
+                mcolors.to_hex("#C59B27"),
+            )
+            self.assertEqual(err_lines[0].get_linestyle(), "-")
+            self.assertGreaterEqual(ax_err.get_ylim()[0], 0.0)
+
+            # Verify legend entries
+            legend = ax.get_legend()
+            self.assertIsNotNone(legend)
+            texts = [t.get_text() for t in legend.get_texts()]
+            self.assertEqual(
+                texts,
+                [
+                    "Source (Mean ± 1σ)",
+                    "Target (Mean ± 1σ)",
+                    "Predicted (Mean ± 1σ)",
+                    "Abs Error (Mean ± 1σ)",
+                ],
+            )
+
+        plt.close(fig)
+
+    def test_plot_regional_spectrum_distribution_die_and_regions_filter(self) -> None:
+        """Test regional distribution plotting with die and region filters."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        fig, axes = plot_regional_spectrum_distribution(
+            data_original=data_orig,
+            data_predicted=data_pred,
+            config={"die": 0, "regions": ["Al2p"], "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertEqual(len(axes), 1)
+        self.assertIn("Al2p", axes[0].get_title())
+        self.assertIn("Die 0", axes[0].get_title())
+        plt.close(fig)
+
+    def test_plot_regional_spectrum_distribution_splits(self) -> None:
+        """Test regional distribution plotting on train split."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        fig, axes = plot_regional_spectrum_distribution(
+            data_original=data_orig,
+            data_predicted=data_pred,
+            config={"split": "train", "show": False},
+        )
+        self.assertIsInstance(fig, plt.Figure)
+        self.assertEqual(len(axes), 2)
+        plt.close(fig)
+
+    def test_plot_regional_spectrum_distribution_empty_raises(self) -> None:
+        """Test that invalid split, die, or missing matches raise ValueError."""
+        data_orig = (self.ary_intensity, self.ary_energy, self.meta_df)
+        data_pred = self.pipeline_res["predictions"]
+
+        with self.assertRaises(ValueError):
+            plot_regional_spectrum_distribution(
+                data_original=data_orig,
+                data_predicted=data_pred,
+                config={"split": "non_existent_split", "show": False},
+            )
+
+        with self.assertRaises(ValueError):
+            plot_regional_spectrum_distribution(
+                data_original=data_orig,
+                data_predicted=data_pred,
+                config={"die": 9999, "show": False},
+            )
+
+        ary_p, ary_e, meta_p = data_pred
+        broken_meta = meta_p.copy()
+        broken_meta["source_measurement_id"] = "UNKNOWN_ID"
+        broken_meta["source_spectrum_index"] = np.nan
+        with self.assertRaises(ValueError):
+            plot_regional_spectrum_distribution(
+                data_original=data_orig,
+                data_predicted=(ary_p, ary_e, broken_meta),
+                config={"show": False},
+            )
+
+    def test_plot_regional_spectrum_distribution_clamping_behavior(self) -> None:
+        """Verify mean curves remain unclamped while shaded bands clamp lower
+        bound to >= 0.
+        """
+        ary_i_orig = self.ary_intensity.copy()
+        ary_i_pred, ary_e_pred, meta_pred = self.pipeline_res["predictions"]
+        ary_i_pred_copy = ary_i_pred.copy()
+
+        # Artificially subtract intensity to make some values negative
+        ary_i_orig -= 500.0
+        ary_i_pred_copy -= 500.0
+
+        fig, axes = plot_regional_spectrum_distribution(
+            data_original=(ary_i_orig, self.ary_energy, self.meta_df),
+            data_predicted=(ary_i_pred_copy, ary_e_pred, meta_pred),
+            config={"die": 0, "regions": ["Al2p"], "show": False},
+        )
+        ax = axes[0]
+        # Mean curves should contain negative values (unclamped)
+        lines = ax.get_lines()
+        self.assertTrue(any(np.any(line.get_ydata() < 0.0) for line in lines))
+
+        # Shaded bands (collections) must have all y vertices >= 0.0
+        for coll in ax.collections:
+            for path in coll.get_paths():
+                self.assertTrue(np.all(path.vertices[:, 1] >= 0.0))
+
+        # Check twin axis shaded error band as well
+        twin_axes = [a for a in fig.axes if a.get_ylabel() == "Absolute Error"]
+        for twin_ax in twin_axes:
+            for coll in twin_ax.collections:
+                for path in coll.get_paths():
+                    self.assertTrue(np.all(path.vertices[:, 1] >= 0.0))
+
+        plt.close(fig)
 
 
 if __name__ == "__main__":
