@@ -22,6 +22,7 @@ from utility.patching import (
 )
 from utility.pseudo_measurement import (
     generate_pseudo_measurements,
+    generate_tool_timeline,
     get_default_measurement_config,
 )
 from utility.quantification import (
@@ -35,6 +36,7 @@ from utility.quantification import (
 )
 __all__ = [
     "generate_pseudo_measurements",
+    "generate_tool_timeline",
     "get_default_measurement_config",
     "calculate_flux",
     "calculate_normalized_time",

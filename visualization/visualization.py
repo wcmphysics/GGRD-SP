@@ -803,7 +803,7 @@ def plot_regional_spectrum_distribution(
     ValueError
         If no paired samples match the split/die filters or spectra are missing.
     """
-    (ary_i_orig, ary_e_orig, meta_orig), (ary_i_pred, ary_e_pred, meta_pred) = (
+    (ary_i_orig, ary_e_orig, meta_orig), (ary_i_pred, _, meta_pred) = (
         data_original,
         data_predicted,
     )

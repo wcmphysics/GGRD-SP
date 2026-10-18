@@ -122,6 +122,14 @@ class TestNoiseAnalysis(unittest.TestCase):
 class TestBatchedAnalysis(unittest.TestCase):
     """Tests for the batched and multiprocess speed paths."""
 
+    def setUp(self) -> None:
+        import gc
+        gc.collect()
+
+    def tearDown(self) -> None:
+        import gc
+        gc.collect()
+
     def test_batched_matches_sequential(self) -> None:
         ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.02, "O1s": 0.2})
         for noise_model in ("homoscedastic", "poisson_scaled"):
