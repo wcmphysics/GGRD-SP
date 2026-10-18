@@ -469,9 +469,15 @@ def generate_pseudo_measurements(
             int(k): float(v) for k, v in die_base_factors_cfg.items()
         }
 
-    die_repeatability_std = float(
-        merged_config.get("die_repeatability_std", die_variation_std)
-    )
+    cfg_in = config or {}
+    if "die_repeatability_std" in cfg_in:
+        die_repeatability_std = float(cfg_in["die_repeatability_std"])
+    elif "die_variation_std" in cfg_in:
+        die_repeatability_std = float(cfg_in["die_variation_std"])
+    else:
+        die_repeatability_std = float(
+            merged_config.get("die_repeatability_std", die_variation_std)
+        )
 
     tool_maint_caches: dict[str, dict[int, float]] = {t: {} for t in tools}
     n_total = sum(meas_per_tool.values()) * n_die * len(regions)

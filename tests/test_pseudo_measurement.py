@@ -373,6 +373,18 @@ class TestVisualization(unittest.TestCase):
         self.assertGreater(factor, 0.0)
         self.assertLessEqual(factor, 2.0)
 
+    def test_die_variation_std_config_override(self) -> None:
+        """Verify die_variation_std sets die_repeatability_std when not explicitly provided."""
+        config = {
+            "measurements_per_tool": {"J4": 20},
+            "die_variation_std": 0.08,
+            "seed": 42,
+        }
+        _, _, df_meta = generate_pseudo_measurements(config)
+        # Check scale_die variance across sessions for die 0
+        die_0_scales = df_meta[df_meta["die"] == 0]["scale_die"].unique()
+        self.assertGreater(float(np.std(die_0_scales)), 0.03)
+
 
 if __name__ == "__main__":
     unittest.main()

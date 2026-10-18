@@ -279,6 +279,19 @@ def compute_die_total_flux(
     """
     if "die_flux" in df_meta.columns and not df_meta["die_flux"].isna().all():
         sub = df_meta.drop_duplicates(subset=["measurement_id", "die"])
+        invalid_rows = [
+            (str(r.measurement_id), int(r.die))
+            for r in sub.itertuples()
+            if pd.isna(r.die_flux) or not np.isfinite(float(r.die_flux))
+        ]
+        if invalid_rows:
+            sample_invalid = invalid_rows[:5]
+            raise ValueError(
+                f"df_meta contains invalid or NaN 'die_flux' values for "
+                f"{len(invalid_rows)} (measurement_id, die) pairs: "
+                f"{sample_invalid}. All rows must have valid numerical "
+                "die_flux if the column is present."
+            )
         return {
             (str(r.measurement_id), int(r.die)): max(float(r.die_flux), 1e-4)
             for r in sub.itertuples()

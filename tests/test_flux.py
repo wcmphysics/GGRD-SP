@@ -10,6 +10,7 @@ import pandas as pd
 from utility.flux import (
     calculate_flux,
     calculate_normalized_time,
+    compute_die_total_flux,
     integrate_spectral_flux,
     trapezoid_integral,
 )
@@ -323,6 +324,23 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             calculate_normalized_time(
                 pd.DataFrame({"measurement_id": ["m1"], "time": ["not-a-date"]})
             )
+
+
+class TestComputeDieTotalFlux(unittest.TestCase):
+    """Test suite for compute_die_total_flux in utility.flux."""
+
+    def test_nan_die_flux_raises_value_error(self) -> None:
+        """Verify ValueError is raised if any row has NaN die_flux when column exists."""
+        df_meta = pd.DataFrame({
+            "measurement_id": ["m1", "m1", "m2"],
+            "die": [0, 1, 0],
+            "spectrum_index": [0, 1, 2],
+            "die_flux": [100.0, np.nan, 80.0],
+        })
+        ary_intensity = np.ones((3, 10))
+        with self.assertRaises(ValueError) as ctx:
+            compute_die_total_flux(df_meta, ary_intensity)
+        self.assertIn("invalid or NaN 'die_flux'", str(ctx.exception))
 
 
 if __name__ == "__main__":
