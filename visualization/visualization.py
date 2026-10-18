@@ -24,6 +24,7 @@ __all__ = [
     "plot_shirley_background",
     "plot_training_history",
     "plot_prediction_comparison",
+    "plot_regional_spectrum_distribution",
     "plot_sliding_window_slices",
     "plot_atomic_percentage_distributions",
     "plot_atomic_percentage_mae",
@@ -731,6 +732,282 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
         fig.suptitle(cfg.get("title", f"Spectral Transfer Comparison | Session: {meas_id} (Die {die})"), fontsize=13)
     _finish_fig(fig, cfg)
     return fig, axes
+
+
+def plot_regional_spectrum_distribution(
+    data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, Any]:
+    """Plot distribution of Source, Target, Predicted, and Absolute Error
+    spectra across spectral regions.
+
+    Displays a 1-row by N-column subplot layout, where each column corresponds
+    to one spectral region. Each subplot shows:
+    - Left y-axis:
+      - Source spectrum: solid black line with +/- 1 std shaded band
+      - Target spectrum: solid red line with +/- 1 std shaded band
+      - Predicted spectrum: dashed blue line with +/- 1 std shaded band
+    - Right y-axis:
+      - Absolute error (|predicted - target|): yellow / dark goldenrod line
+        with +/- 1 std shaded band, lower y-limit pinned to 0.0.
+
+    Shaded bands display +/- 1 standard deviation around the mean curve, with
+    the lower bound clamped to >= 0.0. The mean curves themselves are left raw
+    and unclamped.
+
+    By default, aggregates across all measurement sessions and dies within the
+    'test' split, unless configured otherwise.
+
+    Parameters
+    ----------
+    data_original : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity_orig, ary_energy_orig, df_meta_orig).
+    data_predicted : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity_pred, ary_energy_pred, df_meta_pred).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'split' (str): Dataset split to visualize (default 'test'). If None
+          or 'all', aggregates across all available paired samples.
+        - 'die' (int | None): Specific die to filter by (default None, which
+          aggregates across all dies).
+        - 'regions' (list[str] | None): Specific regions to plot (default all
+          available in split).
+        - 'invert_x' (bool): Invert binding energy axis (default True).
+        - 'error_color' (str): Color for absolute error curve and band
+          (default '#C59B27').
+        - 'figsize' (tuple[float, float] | None): Figure size (default
+          scaled to (5.5 * n_regions, 4.5)).
+        - 'title' (str | None): Figure super title.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[plt.Figure, Any]
+        The Matplotlib Figure and array of Axes (one per region).
+
+    Raises
+    ------
+    ValueError
+        If no paired samples match the split/die filters or spectra are missing.
+    """
+    (ary_i_orig, ary_e_orig, meta_orig), (ary_i_pred, ary_e_pred, meta_pred) = (
+        data_original,
+        data_predicted,
+    )
+    cfg = config or {}
+    split = cfg.get("split", "test")
+    die_filter = cfg.get("die")
+
+    p_df = meta_pred.copy()
+    if split and str(split).lower() != "all" and "split" in p_df.columns:
+        p_df = p_df[p_df["split"].astype(str).str.lower() == str(split).lower()]
+    if die_filter is not None:
+        p_df = p_df[p_df["die"] == int(die_filter)]
+    if p_df.empty:
+        raise ValueError(
+            f"No predicted spectra found for split='{split}'"
+            + (f", die={die_filter}" if die_filter is not None else "")
+            + "."
+        )
+
+    # Build index lookups for fast retrieval of source and target spectra
+    orig_by_key: dict[tuple[str, int, str], int] = {
+        (str(r.measurement_id), int(r.die), str(r.region)): int(r.spectrum_index)
+        for r in meta_orig.itertuples()
+    }
+    src_target_map: dict[int, str] = {
+        int(r.spectrum_index): str(r.measurement_id_target)
+        for r in meta_orig.itertuples()
+        if hasattr(r, "measurement_id_target") and pd.notna(r.measurement_id_target)
+    }
+    src_by_meas_die_reg: dict[tuple[str, int, str], str] = {
+        (str(r.measurement_id), int(r.die), str(r.region)): str(
+            r.measurement_id_target
+        )
+        for r in meta_orig.itertuples()
+        if hasattr(r, "measurement_id_target") and pd.notna(r.measurement_id_target)
+    }
+
+    # Group matched triplets (src_idx, tgt_idx, pred_idx) by region
+    matched_by_region: dict[str, list[tuple[int, int, int]]] = {}
+    for p_row in p_df.itertuples():
+        reg = str(p_row.region)
+        die_val = int(p_row.die)
+        pred_idx = int(p_row.spectrum_index)
+
+        src_idx: int | None = None
+        tgt_meas: str | None = None
+        if hasattr(p_row, "source_spectrum_index") and pd.notna(
+            p_row.source_spectrum_index
+        ):
+            src_idx = int(p_row.source_spectrum_index)
+            tgt_meas = src_target_map.get(src_idx)
+        if src_idx is None or tgt_meas is None:
+            s_meas = str(getattr(p_row, "source_measurement_id", ""))
+            src_idx = orig_by_key.get((s_meas, die_val, reg))
+            tgt_meas = src_by_meas_die_reg.get((s_meas, die_val, reg))
+
+        if src_idx is not None and tgt_meas is not None:
+            tgt_idx = orig_by_key.get((tgt_meas, die_val, reg))
+            if tgt_idx is not None:
+                matched_by_region.setdefault(reg, []).append(
+                    (src_idx, tgt_idx, pred_idx)
+                )
+
+    # Determine regions to plot
+    specified_regions = cfg.get("regions")
+    if specified_regions is not None:
+        regions_to_plot = [r for r in specified_regions if r in matched_by_region]
+    else:
+        regions_to_plot = sorted(matched_by_region.keys())
+
+    if not regions_to_plot:
+        raise ValueError(
+            f"No paired source, target, and predicted spectra found for split='{split}'"
+            + (f", die={die_filter}" if die_filter is not None else "")
+            + "."
+        )
+
+    n_cols = len(regions_to_plot)
+    figsize = cfg.get("figsize", (5.5 * n_cols, 4.5))
+    fig, axes = plt.subplots(1, n_cols, figsize=figsize, squeeze=False)
+    axes_row = axes[0]
+    error_color = str(cfg.get("error_color", "#C59B27"))
+    invert_x = bool(cfg.get("invert_x", True))
+
+    for col_idx, reg in enumerate(regions_to_plot):
+        ax = axes_row[col_idx]
+        triplets = matched_by_region[reg]
+
+        src_stack = np.array(
+            [ary_i_orig[s] for s, _, _ in triplets], dtype=np.float64
+        )
+        tgt_stack = np.array(
+            [ary_i_orig[t] for _, t, _ in triplets], dtype=np.float64
+        )
+        pred_stack = np.array(
+            [ary_i_pred[p] for _, _, p in triplets], dtype=np.float64
+        )
+        err_stack = np.abs(pred_stack - tgt_stack)
+        energy_arr = ary_e_orig[triplets[0][1]]
+
+        # Compute mean curves (unclamped)
+        src_mean = np.mean(src_stack, axis=0)
+        tgt_mean = np.mean(tgt_stack, axis=0)
+        pred_mean = np.mean(pred_stack, axis=0)
+        err_mean = np.mean(err_stack, axis=0)
+
+        # Compute standard deviations
+        src_std = np.std(src_stack, axis=0)
+        tgt_std = np.std(tgt_stack, axis=0)
+        pred_std = np.std(pred_stack, axis=0)
+        err_std = np.std(err_stack, axis=0)
+
+        # Lower bound clamped to >= 0.0 for shaded bands
+        src_low = np.maximum(src_mean - src_std, 0.0)
+        src_high = np.maximum(src_mean + src_std, src_low)
+
+        tgt_low = np.maximum(tgt_mean - tgt_std, 0.0)
+        tgt_high = np.maximum(tgt_mean + tgt_std, tgt_low)
+
+        pred_low = np.maximum(pred_mean - pred_std, 0.0)
+        pred_high = np.maximum(pred_mean + pred_std, pred_low)
+
+        err_low = np.maximum(err_mean - err_std, 0.0)
+        err_high = np.maximum(err_mean + err_std, err_low)
+
+        # Left y-axis: Source (black), Target (red), Predicted (blue dashed)
+        ax.plot(
+            energy_arr, src_mean, color="black", ls="-", lw=1.6, label="Source"
+        )
+        ax.fill_between(
+            energy_arr, src_low, src_high, color="black", alpha=0.15
+        )
+
+        ax.plot(
+            energy_arr, tgt_mean, color="red", ls="-", lw=1.6, label="Target"
+        )
+        ax.fill_between(
+            energy_arr, tgt_low, tgt_high, color="red", alpha=0.15
+        )
+
+        ax.plot(
+            energy_arr,
+            pred_mean,
+            color="blue",
+            ls="--",
+            lw=1.8,
+            label="Predicted",
+        )
+        ax.fill_between(
+            energy_arr, pred_low, pred_high, color="blue", alpha=0.15
+        )
+
+        ax.set_xlabel("Binding Energy (eV)")
+        ax.set_ylabel("Intensity (counts)")
+        if invert_x and not ax.xaxis_inverted():
+            ax.invert_xaxis()
+        ax.grid(True, linestyle="--", alpha=0.5)
+
+        # Right y-axis: Absolute error (yellow / dark goldenrod)
+        ax_err = ax.twinx()
+        ax_err.plot(
+            energy_arr,
+            err_mean,
+            color=error_color,
+            ls="-",
+            lw=1.6,
+            label="Abs Error",
+        )
+        ax_err.fill_between(
+            energy_arr, err_low, err_high, color=error_color, alpha=0.20
+        )
+        ax_err.set_ylabel("Absolute Error", color=error_color)
+        ax_err.tick_params(axis="y", labelcolor=error_color)
+        ax_err.set_ylim(bottom=0.0)
+
+        # Unified 4-entry proxy legend
+        legend_handles = [
+            plt.Line2D(
+                [], [], color="black", ls="-", lw=1.6, label="Source (Mean ± 1σ)"
+            ),
+            plt.Line2D(
+                [], [], color="red", ls="-", lw=1.6, label="Target (Mean ± 1σ)"
+            ),
+            plt.Line2D(
+                [],
+                [],
+                color="blue",
+                ls="--",
+                lw=1.8,
+                label="Predicted (Mean ± 1σ)",
+            ),
+            plt.Line2D(
+                [],
+                [],
+                color=error_color,
+                ls="-",
+                lw=1.6,
+                label="Abs Error (Mean ± 1σ)",
+            ),
+        ]
+        ax.legend(
+            handles=legend_handles,
+            loc=cfg.get("legend_loc", "best"),
+            fontsize="x-small",
+        )
+
+        die_desc = f"Die {die_filter}" if die_filter is not None else "All Dies"
+        ax.set_title(f"Region: {reg} (N={len(src_stack)})\n{die_desc}", fontsize=11)
+
+    split_title = f"Split: {split}" if split else "All Splits"
+    fig_title = cfg.get(
+        "title",
+        f"Regional Spectrum & Absolute Error Distributions ({split_title})",
+    )
+    _finish_fig(fig, cfg, title=fig_title)
+    return fig, axes_row
 
 
 def plot_sliding_window_slices(spectrum: np.ndarray, energy: np.ndarray | None = None,
