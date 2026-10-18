@@ -742,7 +742,7 @@ def plot_regional_spectrum_distribution(
     """Plot distribution of Source, Target, Predicted, and Absolute Error
     spectra across spectral regions.
 
-    Displays a 1-row by N-column subplot layout, where each column corresponds
+    Displays a single-column by N-row subplot layout, where each row corresponds
     to one spectral region. For each die within each measurement session,
     the regional spectra are normalized by the maximum intensity of the target
     regional spectrum (multiplied by 100), expressing intensity as a
@@ -754,13 +754,11 @@ def plot_regional_spectrum_distribution(
       - Source spectrum: solid black line with +/- 1 std shaded band
       - Target spectrum: solid red line with +/- 1 std shaded band
       - Predicted spectrum: dashed blue line with +/- 1 std shaded band
-      - Y-axis label "Intensity (% of Target Max)" on leftmost column only;
-        tick values remain visible on all columns.
+      - Y-axis label "Intensity (% of Target Max)" in black on all rows.
     - Right y-axis:
       - Absolute error (|predicted - target|): yellow line (#EFC934)
         with +/- 1 std shaded band, lower y-limit pinned to 0.0.
-      - Y-axis label "Absolute Error (%)" on rightmost column only;
-        tick values remain visible on all columns.
+      - Y-axis label "Absolute Error (%)" in black on all rows.
 
     Shaded bands display +/- 1 standard deviation around the mean curve, with
     the lower bound clamped to >= 0.0. The mean curves themselves are left raw
@@ -788,7 +786,8 @@ def plot_regional_spectrum_distribution(
         - 'error_color' (str): Color for absolute error curve and band
           (default '#EFC934').
         - 'figsize' (tuple[float, float] | None): Figure size (default
-          scaled to (6.0 * n_regions, 4.8)).
+          scaled to (10.0, 3.2 * n_regions)).
+        - 'dpi' (int): Figure dots per inch resolution (default 300).
         - 'title' (str | None): Figure super title.
         - 'show' (bool): Whether to invoke plt.show() (default False).
 
@@ -880,15 +879,18 @@ def plot_regional_spectrum_distribution(
             + "."
         )
 
-    n_cols = len(regions_to_plot)
-    figsize = cfg.get("figsize", (6.0 * n_cols, 4.8))
-    fig, axes = plt.subplots(1, n_cols, figsize=figsize, squeeze=False)
-    axes_row = axes[0]
+    n_rows = len(regions_to_plot)
+    figsize = cfg.get("figsize", (10.0, 3.2 * n_rows))
+    dpi = int(cfg.get("dpi", 300))
+    fig, axes = plt.subplots(
+        n_rows, 1, figsize=figsize, dpi=dpi, squeeze=False
+    )
+    axes_col = axes[:, 0]
     error_color = str(cfg.get("error_color", "#EFC934"))
     invert_x = bool(cfg.get("invert_x", True))
 
-    for col_idx, reg in enumerate(regions_to_plot):
-        ax = axes_row[col_idx]
+    for row_idx, reg in enumerate(regions_to_plot):
+        ax = axes_col[row_idx]
         triplets = matched_by_region[reg]
 
         src_raw = np.array(
@@ -966,15 +968,12 @@ def plot_regional_spectrum_distribution(
         )
 
         ax.set_xlabel("Binding Energy (eV)")
-        if col_idx == 0:
-            ax.set_ylabel("Intensity (% of Target Max)")
-        else:
-            ax.set_ylabel("")
+        ax.set_ylabel("Intensity (% of Target Max)", color="black")
         if invert_x and not ax.xaxis_inverted():
             ax.invert_xaxis()
         ax.grid(True, linestyle="--", alpha=0.5)
 
-        # Right y-axis: Absolute error (yellow)
+        # Right y-axis: Absolute error (yellow curve, black label)
         ax_err = ax.twinx()
         ax_err.plot(
             energy_arr,
@@ -987,15 +986,14 @@ def plot_regional_spectrum_distribution(
         ax_err.fill_between(
             energy_arr, err_low, err_high, color=error_color, alpha=0.20
         )
-        if col_idx == n_cols - 1:
-            ax_err.set_ylabel("Absolute Error (%)", color=error_color)
-        else:
-            ax_err.set_ylabel("")
-        ax_err.tick_params(axis="y", labelcolor=error_color)
+        ax_err.set_ylabel("Absolute Error (%)", color="black")
+        ax_err.tick_params(axis="y", labelcolor="black")
         ax_err.set_ylim(bottom=0.0)
 
         die_desc = f"Die {die_filter}" if die_filter is not None else "All Dies"
-        ax.set_title(f"Region: {reg} (N={len(src_stack)})\n{die_desc}", fontsize=11)
+        ax.set_title(
+            f"Region: {reg} (N={len(src_stack)}) | {die_desc}", fontsize=11
+        )
 
     # Unified 4-entry proxy legend positioned outside at the top center
     legend_handles = [
@@ -1022,10 +1020,15 @@ def plot_regional_spectrum_distribution(
             label="Abs Error (Mean ± 1σ)",
         ),
     ]
+
+    top_rect = 0.88 if n_rows == 1 else (0.965 if n_rows >= 4 else 0.93)
+    leg_y = 0.93 if n_rows == 1 else (0.982 if n_rows >= 4 else 0.96)
+    title_y = 0.99 if n_rows == 1 else 0.995
+
     fig.legend(
         handles=legend_handles,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.94),
+        bbox_to_anchor=(0.5, leg_y),
         ncol=4,
         fontsize="small",
         frameon=True,
@@ -1037,11 +1040,11 @@ def plot_regional_spectrum_distribution(
         f"Regional Spectrum & Absolute Error Distributions ({split_title})",
     )
     if fig_title:
-        fig.suptitle(fig_title, fontsize=12, fontweight="bold", y=0.99)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.88], w_pad=4.5)
+        fig.suptitle(fig_title, fontsize=12, fontweight="bold", y=title_y)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, top_rect], h_pad=2.5)
     if cfg.get("show"):
         plt.show()
-    return fig, axes_row
+    return fig, axes_col
 
 
 def plot_sliding_window_slices(spectrum: np.ndarray, energy: np.ndarray | None = None,
