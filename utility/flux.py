@@ -95,9 +95,8 @@ def calculate_flux(
     config : dict[str, Any] | None, optional
         Optional configuration dictionary:
         - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
-          and std of die_flux for z-score standardization. If None or 'split'
-          column is not in df_meta, computes across all unique dies. Default is
-          'train'.
+          and std of die_flux for z-score standardization. If specified,
+          df_meta must contain 'split'. Default is None.
 
     Returns
     -------
@@ -106,9 +105,11 @@ def calculate_flux(
 
     Raises
     ------
+    KeyError
+        If fit_split is specified but 'split' column is missing from df_meta.
     ValueError
-        If inputs have mismatched lengths, out-of-bounds indices, or missing
-        required columns.
+        If inputs have mismatched lengths, out-of-bounds indices, missing
+        required columns, or specified fit_split is not found.
     """
     if len(ary_intensity) != len(ary_energy):
         raise ValueError(
@@ -168,29 +169,52 @@ def calculate_flux(
         df_res["measurement_id"].map(meas_total_die).astype(np.float32)
     )
 
-    die_flux_vals = die_summary["die_flux"].to_numpy(dtype=np.float64)
     cfg = config or {}
-    fit_split = cfg.get("fit_split", "train")
-    if (
-        fit_split
-        and "split" in die_summary.columns
-        and (die_summary["split"] == fit_split).any()
-    ):
+    fit_split = cfg.get("fit_split")
+    if fit_split is not None:
+        if "split" not in df_res.columns:
+            raise KeyError(
+                "df_meta must contain 'split' column to compute 'die_flux_normalized'. "
+                "Please run split_measurement_sessions before standardizing die flux."
+            )
+        if not (df_res["split"] == fit_split).any():
+            raise ValueError(
+                f"Specified fit_split '{fit_split}' was not found in df_meta['split']. "
+                f"Available splits: {list(df_res['split'].dropna().unique())}."
+            )
         die_fit = die_summary[die_summary["split"] == fit_split]
         die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
-
-    flux_mean = float(np.mean(die_flux_vals))
-    flux_std = float(np.std(die_flux_vals))
-    if flux_std == 0.0:
-        warnings.warn(
-            "Standard deviation of die_flux across unique dies is 0.0; "
-            "setting die_flux_normalized to 0.0."
-        )
-        df_res["die_flux_normalized"] = np.float32(0.0)
+        flux_mean = float(np.mean(die_flux_vals))
+        flux_std = float(np.std(die_flux_vals))
+        if flux_std == 0.0:
+            warnings.warn(
+                f"Standard deviation of die_flux across '{fit_split}' dies is 0.0; "
+                "setting die_flux_normalized to 0.0."
+            )
+            df_res["die_flux_normalized"] = np.float32(0.0)
+        else:
+            df_res["die_flux_normalized"] = (
+                (df_res["die_flux"] - flux_mean) / flux_std
+            ).astype(np.float32)
+    elif "split" in df_res.columns and (df_res["split"] == "train").any():
+        die_fit = die_summary[die_summary["split"] == "train"]
+        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+        flux_mean = float(np.mean(die_flux_vals))
+        flux_std = float(np.std(die_flux_vals))
+        if flux_std == 0.0:
+            warnings.warn(
+                "Standard deviation of die_flux across 'train' dies is 0.0; "
+                "setting die_flux_normalized to 0.0."
+            )
+            df_res["die_flux_normalized"] = np.float32(0.0)
+        else:
+            df_res["die_flux_normalized"] = (
+                (df_res["die_flux"] - flux_mean) / flux_std
+            ).astype(np.float32)
     else:
-        df_res["die_flux_normalized"] = (
-            (df_res["die_flux"] - flux_mean) / flux_std
-        ).astype(np.float32)
+        df_res["die_flux_normalized"] = pd.Series(
+            np.nan, index=df_res.index, dtype=np.float32
+        )
 
     return df_res
 
@@ -211,9 +235,8 @@ def calculate_normalized_time(
         Metadata DataFrame containing 'measurement_id' and 'time'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
-          and std on. If None or 'split' column is not in df_meta, computes
-          across all sessions. Default is 'train'.
+        - 'fit_split' (str): Split name (e.g. 'train') to compute mean
+          and std on. Default is 'train'.
 
     Returns
     -------
@@ -222,8 +245,11 @@ def calculate_normalized_time(
 
     Raises
     ------
+    KeyError
+        If 'split' column is missing from df_meta.
     ValueError
-        If required columns are missing or timestamps are null/invalid.
+        If required columns are missing, fit_split is not found, or timestamps
+        are null/invalid.
     """
     missing_cols = [
         c for c in ("measurement_id", "time") if c not in df_meta.columns
@@ -238,6 +264,20 @@ def calculate_normalized_time(
         df_res["time_normalized"] = pd.Series(dtype=np.float32)
         return df_res
 
+    if "split" not in df_res.columns:
+        raise KeyError(
+            "df_meta must contain 'split' column to compute 'time_normalized'. "
+            "Please run split_measurement_sessions before standardizing measurement time."
+        )
+
+    cfg = config or {}
+    fit_split = cfg.get("fit_split", "train")
+    if not (df_res["split"] == fit_split).any():
+        raise ValueError(
+            f"Specified fit_split '{fit_split}' was not found in df_meta['split']. "
+            f"Available splits: {list(df_res['split'].dropna().unique())}."
+        )
+
     if df_res["measurement_id"].isna().any() or df_res["time"].isna().any():
         raise ValueError(
             "Columns 'measurement_id' and 'time' in df_meta must not contain "
@@ -251,17 +291,8 @@ def calculate_normalized_time(
             f"Failed to parse timestamps in df_meta['time']: {err}"
         ) from err
 
-    cfg = config or {}
-    fit_split = cfg.get("fit_split", "train")
-
     meas_summary = df_res.drop_duplicates(subset=["measurement_id"])
-    meas_fit = meas_summary
-    if (
-        fit_split
-        and "split" in meas_summary.columns
-        and (meas_summary["split"] == fit_split).any()
-    ):
-        meas_fit = meas_summary[meas_summary["split"] == fit_split]
+    meas_fit = meas_summary[meas_summary["split"] == fit_split]
 
     meas_ts = pd.to_datetime(meas_fit["time"])
     mean_ts = meas_ts.mean()
@@ -272,8 +303,8 @@ def calculate_normalized_time(
 
     if std_sec == 0.0:
         warnings.warn(
-            "Standard deviation of measurement time differences is 0.0; "
-            "setting time_normalized to 0.0."
+            f"Standard deviation of measurement time differences across '{fit_split}' "
+            "sessions is 0.0; setting time_normalized to 0.0."
         )
         df_res["time_normalized"] = np.float32(0.0)
     else:
@@ -296,7 +327,7 @@ def standardize_metadata_features(
         'time', 'die_flux', and 'split'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
+        - 'fit_split' (str): Split name (e.g. 'train') to compute mean
           and std on. Default is 'train'.
 
     Returns
@@ -304,13 +335,31 @@ def standardize_metadata_features(
     pd.DataFrame
         New copy of df_meta with standardized 'time_normalized' and
         'die_flux_normalized' columns.
+
+    Raises
+    ------
+    KeyError
+        If 'split' column is missing from df_meta.
+    ValueError
+        If fit_split is not found in df_meta['split'].
     """
     df_res = df_meta.copy()
     if df_res.empty:
         return df_res
 
+    if "split" not in df_res.columns:
+        raise KeyError(
+            "df_meta must contain 'split' column to standardize metadata features. "
+            "Please run split_measurement_sessions before standardizing metadata features."
+        )
+
     cfg = config or {}
     fit_split = cfg.get("fit_split", "train")
+    if not (df_res["split"] == fit_split).any():
+        raise ValueError(
+            f"Specified fit_split '{fit_split}' was not found in df_meta['split']. "
+            f"Available splits: {list(df_res['split'].dropna().unique())}."
+        )
 
     if "time" in df_res.columns:
         df_res = calculate_normalized_time(df_res, config={"fit_split": fit_split})
@@ -321,20 +370,13 @@ def standardize_metadata_features(
         and "measurement_id" in df_res.columns
     ):
         die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
-        die_fit = die_summary
-        if (
-            fit_split
-            and "split" in die_summary.columns
-            and (die_summary["split"] == fit_split).any()
-        ):
-            die_fit = die_summary[die_summary["split"] == fit_split]
-
+        die_fit = die_summary[die_summary["split"] == fit_split]
         die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
         flux_mean = float(np.mean(die_flux_vals))
         flux_std = float(np.std(die_flux_vals))
         if flux_std == 0.0:
             warnings.warn(
-                "Standard deviation of die_flux across training dies is 0.0; "
+                f"Standard deviation of die_flux across '{fit_split}' dies is 0.0; "
                 "setting die_flux_normalized to 0.0."
             )
             df_res["die_flux_normalized"] = np.float32(0.0)
