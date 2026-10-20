@@ -12,6 +12,7 @@ from utility.flux import (
     calculate_normalized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
+    standardize_metadata_features,
     trapezoid_integral,
 )
 from utility.pseudo_measurement import (
@@ -341,6 +342,67 @@ class TestComputeDieTotalFlux(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             compute_die_total_flux(df_meta, ary_intensity)
         self.assertIn("invalid or NaN 'die_flux'", str(ctx.exception))
+
+
+class TestStandardizeMetadataFeatures(unittest.TestCase):
+    """Test suite for split-aware metadata standardization without data leakage."""
+
+    def setUp(self) -> None:
+        self.df_meta = pd.DataFrame({
+            "measurement_id": ["m1", "m1", "m2", "m2", "m3", "m3"],
+            "die": [0, 1, 0, 1, 0, 1],
+            "split": ["train", "train", "val", "val", "test", "test"],
+            "time": [
+                "2026-01-01 00:00:00",
+                "2026-01-01 00:00:00",
+                "2026-01-02 00:00:00",
+                "2026-01-02 00:00:00",
+                "2026-01-03 00:00:00",
+                "2026-01-03 00:00:00",
+            ],
+            "die_flux": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+        })
+
+    def test_standardize_on_train_split_only(self) -> None:
+        """Verify mean and std are fit on train split only."""
+        res = standardize_metadata_features(
+            self.df_meta, config={"fit_split": "train"}
+        )
+        self.assertIn("time_normalized", res.columns)
+        self.assertIn("die_flux_normalized", res.columns)
+
+        # Train dies are 10.0 and 20.0 -> mean 15.0, std 5.0
+        train_flux = res[res["split"] == "train"]["die_flux_normalized"].to_numpy()
+        np.testing.assert_allclose(train_flux, [-1.0, 1.0], atol=1e-5)
+
+        # Val dies (30.0, 40.0) -> (30-15)/5 = 3.0, (40-15)/5 = 5.0
+        val_flux = res[res["split"] == "val"]["die_flux_normalized"].to_numpy()
+        np.testing.assert_allclose(val_flux, [3.0, 5.0], atol=1e-5)
+
+        # Test dies (50.0, 60.0) -> (50-15)/5 = 7.0, (60-15)/5 = 9.0
+        test_flux = res[res["split"] == "test"]["die_flux_normalized"].to_numpy()
+        np.testing.assert_allclose(test_flux, [7.0, 9.0], atol=1e-5)
+
+    def test_calculate_normalized_time_with_fit_split(self) -> None:
+        """Verify calculate_normalized_time fits timestamps on train sessions."""
+        df = pd.DataFrame({
+            "measurement_id": ["m1", "m2", "m3"],
+            "split": ["train", "train", "test"],
+            "time": [
+                "2026-01-01 00:00:00",
+                "2026-01-03 00:00:00",
+                "2026-01-05 00:00:00",
+            ],
+        })
+        res = calculate_normalized_time(df, config={"fit_split": "train"})
+        # Train timestamps: day 0 and day 2 -> mean day 1.
+        # Diffs are -1 day and +1 day; std across train is 1 day (86400s).
+        train_t = res[res["split"] == "train"]["time_normalized"].to_numpy()
+        np.testing.assert_allclose(train_t, [-1.0, 1.0], atol=1e-5)
+
+        # Test timestamp day 4 -> (4 - 1)/1 = 3.0
+        test_t = res[res["split"] == "test"]["time_normalized"].to_numpy()
+        np.testing.assert_allclose(test_t, [3.0], atol=1e-5)
 
 
 if __name__ == "__main__":
