@@ -102,6 +102,7 @@ class TestCalculateFlux(unittest.TestCase):
             "measurement_id": ["m1", "m1", "m1", "m1"],
             "die": [1, 1, 2, 2],
             "region": ["C1s", "O1s", "C1s", "O1s"],
+            "split": ["train", "train", "train", "train"],
         })
 
     def test_hierarchical_flux_metrics(self) -> None:
@@ -156,12 +157,46 @@ class TestCalculateFlux(unittest.TestCase):
             "measurement_id": ["m1", "m1"],
             "die": [1, 2],
             "region": ["C1s", "C1s"],
+            "split": ["train", "train"],
         })
         with self.assertWarns(UserWarning):
             res = calculate_flux(identical_intensity, self.ary_energy[:2], meta)
         np.testing.assert_allclose(
             res["die_flux_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
         )
+
+    def test_calculate_flux_missing_split_raises_key_error(self) -> None:
+        """Verify KeyError raised when fit_split is specified but
+        'split' column is missing.
+        """
+        bad_meta = self.df_meta.drop(columns=["split"])
+        with self.assertRaises(KeyError):
+            calculate_flux(
+                self.ary_intensity,
+                self.ary_energy,
+                bad_meta,
+                config={"fit_split": "train"},
+            )
+
+    def test_calculate_flux_invalid_fit_split_raises_value_error(self) -> None:
+        """Verify ValueError raised when fit_split is not found in
+        df_meta['split'].
+        """
+        with self.assertRaises(ValueError):
+            calculate_flux(
+                self.ary_intensity,
+                self.ary_energy,
+                self.df_meta,
+                config={"fit_split": "nonexistent"},
+            )
+
+    def test_calculate_flux_unsplit_leaves_die_flux_normalized_nan(self) -> None:
+        """Verify die_flux_normalized is NaN when df_meta has no 'split'
+        column.
+        """
+        bad_meta = self.df_meta.drop(columns=["split"])
+        res = calculate_flux(self.ary_intensity, self.ary_energy, bad_meta)
+        self.assertTrue(res["die_flux_normalized"].isna().all())
 
     def test_df_meta_immutability(self) -> None:
         """Verify original df_meta DataFrame is not mutated in-place."""
@@ -247,6 +282,7 @@ class TestCalculateFlux(unittest.TestCase):
         config["N_measurement"] = 2
         config["N_die"] = 2
         i_arr, e_arr, meta = generate_pseudo_measurements(config)
+        meta["split"] = "train"
         meta_with_flux = calculate_flux(i_arr, e_arr, meta)
 
         self.assertEqual(len(meta_with_flux), len(meta))
@@ -273,6 +309,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         # mean = 01:00, diff = [-3600s, +3600s], std = 3600s -> [-1.0, +1.0]
         meta = pd.DataFrame({
             "measurement_id": ["m1", "m1", "m2"],
+            "split": ["train", "train", "train"],
             "time": [
                 "2026-01-01 00:00:00",
                 "2026-01-01 00:00:00",
@@ -291,6 +328,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         """Verify warning and 0.0 output when measurements share timestamp."""
         meta = pd.DataFrame({
             "measurement_id": ["m1", "m2"],
+            "split": ["train", "train"],
             "time": ["2026-01-01 00:00:00", "2026-01-01 00:00:00"],
         })
         with self.assertWarns(UserWarning):
@@ -298,6 +336,27 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         np.testing.assert_allclose(
             res["time_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
         )
+
+    def test_missing_split_raises_key_error(self) -> None:
+        """Verify KeyError is raised when df_meta lacks 'split' column."""
+        meta = pd.DataFrame({
+            "measurement_id": ["m1", "m2"],
+            "time": ["2026-01-01 00:00:00", "2026-01-02 00:00:00"],
+        })
+        with self.assertRaises(KeyError):
+            calculate_normalized_time(meta)
+
+    def test_invalid_fit_split_raises_value_error(self) -> None:
+        """Verify ValueError is raised when fit_split is absent from
+        df_meta['split'].
+        """
+        meta = pd.DataFrame({
+            "measurement_id": ["m1", "m2"],
+            "split": ["val", "val"],
+            "time": ["2026-01-01 00:00:00", "2026-01-02 00:00:00"],
+        })
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(meta, config={"fit_split": "train"})
 
     def test_empty_and_invalid_time_inputs(self) -> None:
         """Verify empty DataFrame handling and ValueError on invalid inputs."""
@@ -307,23 +366,35 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         self.assertEqual(len(res), 0)
 
         with self.assertRaises(ValueError):
-            calculate_normalized_time(pd.DataFrame({"measurement_id": ["m1"]}))
-
-        with self.assertRaises(ValueError):
             calculate_normalized_time(
-                pd.DataFrame({"measurement_id": ["m1"], "time": [None]})
+                pd.DataFrame({"measurement_id": ["m1"], "split": ["train"]})
             )
 
         with self.assertRaises(ValueError):
             calculate_normalized_time(
-                pd.DataFrame(
-                    {"measurement_id": [None], "time": ["2026-01-01 00:00:00"]}
-                )
+                pd.DataFrame({
+                    "measurement_id": ["m1"],
+                    "split": ["train"],
+                    "time": [None],
+                })
             )
 
         with self.assertRaises(ValueError):
             calculate_normalized_time(
-                pd.DataFrame({"measurement_id": ["m1"], "time": ["not-a-date"]})
+                pd.DataFrame({
+                    "measurement_id": [None],
+                    "split": ["train"],
+                    "time": ["2026-01-01 00:00:00"],
+                })
+            )
+
+        with self.assertRaises(ValueError):
+            calculate_normalized_time(
+                pd.DataFrame({
+                    "measurement_id": ["m1"],
+                    "split": ["train"],
+                    "time": ["not-a-date"],
+                })
             )
 
 
@@ -345,7 +416,9 @@ class TestComputeDieTotalFlux(unittest.TestCase):
 
 
 class TestStandardizeMetadataFeatures(unittest.TestCase):
-    """Test suite for split-aware metadata standardization without data leakage."""
+    """Test suite for split-aware metadata standardization without data
+    leakage.
+    """
 
     def setUp(self) -> None:
         self.df_meta = pd.DataFrame({
@@ -384,7 +457,9 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
         np.testing.assert_allclose(test_flux, [7.0, 9.0], atol=1e-5)
 
     def test_calculate_normalized_time_with_fit_split(self) -> None:
-        """Verify calculate_normalized_time fits timestamps on train sessions."""
+        """Verify calculate_normalized_time fits timestamps strictly on
+        train sessions.
+        """
         df = pd.DataFrame({
             "measurement_id": ["m1", "m2", "m3"],
             "split": ["train", "train", "test"],
@@ -403,6 +478,21 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
         # Test timestamp day 4 -> (4 - 1)/1 = 3.0
         test_t = res[res["split"] == "test"]["time_normalized"].to_numpy()
         np.testing.assert_allclose(test_t, [3.0], atol=1e-5)
+
+    def test_missing_split_raises_key_error(self) -> None:
+        """Verify KeyError raised when df_meta lacks 'split' column."""
+        bad_meta = self.df_meta.drop(columns=["split"])
+        with self.assertRaises(KeyError):
+            standardize_metadata_features(bad_meta)
+
+    def test_invalid_fit_split_raises_value_error(self) -> None:
+        """Verify ValueError raised when fit_split does not exist in
+        df_meta['split'].
+        """
+        with self.assertRaises(ValueError):
+            standardize_metadata_features(
+                self.df_meta, config={"fit_split": "nonexistent"}
+            )
 
 
 if __name__ == "__main__":
