@@ -232,9 +232,8 @@ def main() -> None:
         f"{ary_intensity.shape[1]} points"
     )
 
-    # Calculate hierarchical flux metrics and standardized measurement time
+    # Calculate hierarchical physical flux metrics
     df_meta = utility.calculate_flux(ary_intensity, ary_energy, df_meta)
-    df_meta = utility.calculate_normalized_time(df_meta)
     print(
         f"Calculated spectral fluxes: mean regional={df_meta['regional_flux'].mean():.2f}, "
         f"mean die={df_meta['die_flux'].mean():.2f}, "
