@@ -7,6 +7,7 @@ from utility.flux import (
     calculate_normalized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
+    standardize_metadata_features,
     trapezoid_integral,
 )
 from utility.normalization import normalize_spectral_data
@@ -40,6 +41,7 @@ __all__ = [
     "get_default_measurement_config",
     "calculate_flux",
     "calculate_normalized_time",
+    "standardize_metadata_features",
     "integrate_spectral_flux",
     "trapezoid_integral",
     "normalize_spectral_data",

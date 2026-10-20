@@ -288,6 +288,11 @@ def main() -> None:
         f"val={len(session_splits['val'])}, test={len(session_splits['test'])}"
     )
 
+    # Standardize time and die flux metadata strictly on the training split
+    df_meta = utility.standardize_metadata_features(
+        df_meta, config={"fit_split": "train"}
+    )
+
     # =========================================================================
     # STAGE 4B: GAUSSIAN PROCESS DIE FLUX PREDICTION
     # =========================================================================

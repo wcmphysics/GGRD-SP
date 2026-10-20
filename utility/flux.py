@@ -93,7 +93,11 @@ def calculate_flux(
         Metadata DataFrame containing 'spectrum_index', 'measurement_id',
         'die', and 'region'.
     config : dict[str, Any] | None, optional
-        Optional configuration dictionary (reserved for future extensions).
+        Optional configuration dictionary:
+        - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
+          and std of die_flux for z-score standardization. If None or 'split'
+          column is not in df_meta, computes across all unique dies. Default is
+          'train'.
 
     Returns
     -------
@@ -106,7 +110,6 @@ def calculate_flux(
         If inputs have mismatched lengths, out-of-bounds indices, or missing
         required columns.
     """
-    del config  # Reserved for future options
     if len(ary_intensity) != len(ary_energy):
         raise ValueError(
             f"ary_intensity and ary_energy must have same row count, "
@@ -166,6 +169,16 @@ def calculate_flux(
     )
 
     die_flux_vals = die_summary["die_flux"].to_numpy(dtype=np.float64)
+    cfg = config or {}
+    fit_split = cfg.get("fit_split", "train")
+    if (
+        fit_split
+        and "split" in die_summary.columns
+        and (die_summary["split"] == fit_split).any()
+    ):
+        die_fit = die_summary[die_summary["split"] == fit_split]
+        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+
     flux_mean = float(np.mean(die_flux_vals))
     flux_std = float(np.std(die_flux_vals))
     if flux_std == 0.0:
@@ -182,17 +195,25 @@ def calculate_flux(
     return df_res
 
 
-def calculate_normalized_time(df_meta: pd.DataFrame) -> pd.DataFrame:
-    """Standardize measurement time across all unique measurement sessions.
+def calculate_normalized_time(
+    df_meta: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Standardize measurement time across unique measurement sessions.
 
     Computes the time difference between each measurement timestamp and the
-    mean timestamp across all unique measurements (spanning all tools and
-    materials), normalized by the standard deviation of those time differences.
+    mean timestamp across unique measurements (optionally fitting mean and std
+    strictly on the training split defined by config['fit_split']).
 
     Parameters
     ----------
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'measurement_id' and 'time'.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
+          and std on. If None or 'split' column is not in df_meta, computes
+          across all sessions. Default is 'train'.
 
     Returns
     -------
@@ -230,8 +251,19 @@ def calculate_normalized_time(df_meta: pd.DataFrame) -> pd.DataFrame:
             f"Failed to parse timestamps in df_meta['time']: {err}"
         ) from err
 
+    cfg = config or {}
+    fit_split = cfg.get("fit_split", "train")
+
     meas_summary = df_res.drop_duplicates(subset=["measurement_id"])
-    meas_ts = pd.to_datetime(meas_summary["time"])
+    meas_fit = meas_summary
+    if (
+        fit_split
+        and "split" in meas_summary.columns
+        and (meas_summary["split"] == fit_split).any()
+    ):
+        meas_fit = meas_summary[meas_summary["split"] == fit_split]
+
+    meas_ts = pd.to_datetime(meas_fit["time"])
     mean_ts = meas_ts.mean()
 
     meas_diff_sec = (meas_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
@@ -246,6 +278,70 @@ def calculate_normalized_time(df_meta: pd.DataFrame) -> pd.DataFrame:
         df_res["time_normalized"] = np.float32(0.0)
     else:
         df_res["time_normalized"] = (all_diff_sec / std_sec).astype(np.float32)
+
+    return df_res
+
+
+def standardize_metadata_features(
+    df_meta: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Standardize metadata features ('time_normalized', 'die_flux_normalized')
+    strictly on the training split to prevent data leakage.
+
+    Parameters
+    ----------
+    df_meta : pd.DataFrame
+        Metadata DataFrame containing 'measurement_id', 'die', and optionally
+        'time', 'die_flux', and 'split'.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
+          and std on. Default is 'train'.
+
+    Returns
+    -------
+    pd.DataFrame
+        New copy of df_meta with standardized 'time_normalized' and
+        'die_flux_normalized' columns.
+    """
+    df_res = df_meta.copy()
+    if df_res.empty:
+        return df_res
+
+    cfg = config or {}
+    fit_split = cfg.get("fit_split", "train")
+
+    if "time" in df_res.columns:
+        df_res = calculate_normalized_time(df_res, config={"fit_split": fit_split})
+
+    if (
+        "die_flux" in df_res.columns
+        and "die" in df_res.columns
+        and "measurement_id" in df_res.columns
+    ):
+        die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
+        die_fit = die_summary
+        if (
+            fit_split
+            and "split" in die_summary.columns
+            and (die_summary["split"] == fit_split).any()
+        ):
+            die_fit = die_summary[die_summary["split"] == fit_split]
+
+        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+        flux_mean = float(np.mean(die_flux_vals))
+        flux_std = float(np.std(die_flux_vals))
+        if flux_std == 0.0:
+            warnings.warn(
+                "Standard deviation of die_flux across training dies is 0.0; "
+                "setting die_flux_normalized to 0.0."
+            )
+            df_res["die_flux_normalized"] = np.float32(0.0)
+        else:
+            df_res["die_flux_normalized"] = (
+                (df_res["die_flux"] - flux_mean) / flux_std
+            ).astype(np.float32)
 
     return df_res
 
