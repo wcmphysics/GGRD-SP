@@ -224,6 +224,13 @@ def get_default_measurement_config() -> dict[str, Any]:
     return {
         "material": "NMG",
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+        "region_relative_strengths": {
+            "Al2p": 5.0,
+            "Ti2p": 7.0,
+            "O1s": 10.0,
+            "C1s": 8.0,
+            "Cl2p": 1.0,
+        },
         "n_die": 9,
         "n_points": 100,
         "measurements_per_tool": {"J4": 10, "J5": 10},
@@ -270,6 +277,40 @@ def _validate_config(config: dict[str, Any]) -> None:
 
     if not config.get("regions"):
         raise ValueError("regions list cannot be empty")
+
+    if (
+        "region_relative_strengths" not in config
+        or config["region_relative_strengths"] is None
+    ):
+        raise ValueError(
+            "Missing required config: 'region_relative_strengths' must be provided as a dictionary."
+        )
+
+    region_strengths = config["region_relative_strengths"]
+    if not isinstance(region_strengths, dict):
+        raise ValueError(
+            f"'region_relative_strengths' must be a dictionary, got {type(region_strengths).__name__}."
+        )
+
+    regions = config["regions"]
+    missing_regions = set(regions) - set(region_strengths.keys())
+    if missing_regions:
+        raise ValueError(
+            f"The following regions in 'regions' are missing from 'region_relative_strengths': "
+            f"{sorted(missing_regions)}."
+        )
+
+    for r in regions:
+        val = region_strengths[r]
+        if (
+            not isinstance(val, (int, float))
+            or isinstance(val, bool)
+            or not np.isfinite(val)
+            or val <= 0
+        ):
+            raise ValueError(
+                f"Relative strength for region '{r}' must be a positive finite number, got {val}."
+            )
 
     measurements_per_tool = config.get("measurements_per_tool", {})
     if not measurements_per_tool or all(
@@ -441,6 +482,30 @@ def generate_pseudo_measurements(
             e_min, e_max, n_points, dtype=np.float64
         )
 
+    # Precompute relative strength normalization factor for each region
+    region_strengths: dict[str, float] = merged_config["region_relative_strengths"]
+    region_norm_factors: dict[str, float] = {}
+    for region_name in regions:
+        profile = region_profiles[region_name]
+        e_grid = region_energy_grids[region_name]
+        base_intensity = np.zeros_like(e_grid)
+        for peak in profile["peaks"]:
+            base_intensity += pseudo_voigt(
+                energy=e_grid,
+                peak_params={
+                    "center": peak["center"],
+                    "amplitude": peak["amplitude"],
+                    "fwhm": peak["fwhm"],
+                    "eta": peak.get("eta", 0.3),
+                },
+            )
+        base_intensity += profile.get("baseline", 10.0)
+        base_max = float(np.max(base_intensity))
+        if base_max <= 0.0:
+            base_max = 1.0
+        w_r = float(region_strengths[region_name])
+        region_norm_factors[region_name] = w_r / base_max
+
     # Generate timeline per tool
     tools = list(meas_per_tool.keys())
     timelines = generate_tool_timeline(
@@ -516,14 +581,14 @@ def generate_pseudo_measurements(
                     die_scale = base_die
 
                 total_scale = float(tool_scale * time_scale * die_scale)
-                synth_params = {
-                    "tool_shift": tool_shift,
-                    "total_scale": total_scale,
-                    "noise_relative_std": noise_relative_std,
-                }
-
                 for region_name in regions:
                     e_grid = region_energy_grids[region_name]
+                    reg_factor = region_norm_factors[region_name]
+                    synth_params = {
+                        "tool_shift": tool_shift,
+                        "total_scale": total_scale * reg_factor,
+                        "noise_relative_std": noise_relative_std,
+                    }
                     ary_intensity[spectrum_idx] = _synthesize_regional_spectrum(
                         e_grid=e_grid,
                         profile=region_profiles[region_name],
@@ -543,6 +608,7 @@ def generate_pseudo_measurements(
                             "die": die_idx,
                             "region": region_name,
                             "n_points": n_points,
+                            "relative_strength": float(region_strengths[region_name]),
                             "scale_tool": tool_scale,
                             "scale_time": time_scale,
                             "scale_die": die_scale,
