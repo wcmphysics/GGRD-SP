@@ -29,6 +29,13 @@ def main() -> None:
     data_generation_config = {
         "material": "NMG",
         "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+        "region_relative_strengths": {
+            "Al2p": 5.0,
+            "Ti2p": 7.0,
+            "O1s": 10.0,
+            "C1s": 8.0,
+            "Cl2p": 1.0,
+        },
         "n_points": 100,
         "measurements_per_tool": {source_tool: 25, target_tool: 30},
         "measurements_per_t7_code": 10,
