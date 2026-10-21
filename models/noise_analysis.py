@@ -367,6 +367,108 @@ def fit_regional_spectrum_by_gp(
     return model
 
 
+def trace_gp_hyperparameter_convergence(
+    energy: np.ndarray,
+    intensity: np.ndarray,
+    config: dict[str, Any] | None = None,
+    meta: dict[str, Any] | pd.Series | None = None,
+) -> dict[str, list[float]]:
+    """Trace GP hyperparameter values across Adam optimization iterations.
+
+    Fits an exact GP to one spectrum while tracking Negative Marginal
+    Log-Likelihood (loss), noise standard deviation in physical units,
+    kernel lengthscale (eV), and signal outputscale across all iterations.
+
+    Parameters
+    ----------
+    energy, intensity : np.ndarray
+        1D binding energy (eV) and intensity arrays of the spectrum.
+    config : dict[str, Any] | None, optional
+        Noise analysis configuration dictionary.
+    meta : dict | pd.Series | None, optional
+        Optional metadata of the spectrum for error messages.
+
+    Returns
+    -------
+    dict[str, list[float]]
+        Dictionary containing convergence trajectories:
+        - 'loss': list of negative MLL values per iteration.
+        - 'noise_sigma': list of noise std in physical intensity units.
+        - 'lengthscale': list of kernel lengthscales in eV.
+        - 'outputscale': list of signal variances in physical intensity units.
+    """
+    cfg = _resolve_config(config)
+    label = f"spectrum meta={dict(meta)}" if meta is not None else "spectrum"
+    energy, intensity, spacing, energy_range, intensity_scale = _validate_spectrum(
+        energy, intensity, label
+    )
+
+    energy_center = float(energy.mean())
+    device = torch.device(cfg["device"])
+    train_x = torch.tensor(energy - energy_center, device=device).unsqueeze(-1)
+    scaled_intensity = intensity / intensity_scale
+    train_y = torch.tensor(scaled_intensity, device=device)
+    weights = np.ones_like(scaled_intensity)
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(
+        noise_constraint=gpytorch.constraints.GreaterThan(1e-8)
+    )
+    if cfg["noise_model"] == "poisson_scaled":
+        weights = np.clip(scaled_intensity, cfg["poisson_weight_floor"], None)
+        likelihood.noise_covar = _ScaledHomoskedasticNoise(
+            torch.tensor(weights, device=device),
+            noise_constraint=gpytorch.constraints.GreaterThan(1e-8),
+        )
+    likelihood.noise = 1e-3
+    covar = _build_kernel(cfg["kernel"], spacing, energy_range)
+    model = SpectrumExactGPModel(train_x, train_y, likelihood, covar)
+    model.to(device).double()
+    model.mean_module.constant.data.fill_(float(scaled_intensity.mean()))
+
+    model.train()
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=cfg["training"]["learning_rate"]
+    )
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
+
+    history: dict[str, list[float]] = {
+        "loss": [],
+        "noise_sigma": [],
+        "lengthscale": [],
+        "outputscale": [],
+    }
+
+    mean_weight = float(np.mean(weights))
+    scale_sq = float(intensity_scale**2)
+
+    for iteration in range(cfg["training"]["num_iterations"]):
+        optimizer.zero_grad()
+        try:
+            loss = -mll(model(train_x), train_y)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{label}: GP marginal likelihood failed at iteration "
+                f"{iteration}: {exc}"
+            ) from exc
+        if not torch.isfinite(loss):
+            raise RuntimeError(
+                f"{label}: non-finite GP loss ({loss.item()}) at iteration {iteration}."
+            )
+        loss.backward()
+        optimizer.step()
+
+        noise_var = float(likelihood.noise.item())
+        noise_sigma = float(np.sqrt(noise_var * mean_weight) * intensity_scale)
+        ls = float(model.covar_module.base_kernel.lengthscale.item())
+        out_scale = float(model.covar_module.outputscale.item() * scale_sq)
+
+        history["loss"].append(float(loss.item()))
+        history["noise_sigma"].append(noise_sigma)
+        history["lengthscale"].append(ls)
+        history["outputscale"].append(out_scale)
+
+    return history
+
+
 def create_mean_and_confidence_curves(
     gp_model: SpectrumExactGPModel,
     energy: np.ndarray,

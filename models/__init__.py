@@ -42,6 +42,7 @@ from models.noise_analysis import (
     fit_regional_spectrum_by_gp,
     get_default_noise_analysis_config,
     perform_spectral_noise_analysis,
+    trace_gp_hyperparameter_convergence,
 )
 from models.orchestration import (
     instantiate_model,
@@ -111,6 +112,7 @@ __all__ = [
     "create_mean_and_confidence_curves",
     "get_default_noise_analysis_config",
     "perform_spectral_noise_analysis",
+    "trace_gp_hyperparameter_convergence",
     # Orchestration pipelines
     "perform_model_training_and_bayesian_optimization",
 ]
