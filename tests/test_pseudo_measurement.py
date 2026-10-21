@@ -386,5 +386,123 @@ class TestVisualization(unittest.TestCase):
         self.assertGreater(float(np.std(die_0_scales)), 0.03)
 
 
+class TestRegionRelativeStrengths(unittest.TestCase):
+    """Test suite for user-configurable regional relative strength feature."""
+
+    def test_region_relative_strengths_proportions(self) -> None:
+        """Verify regional maximum intensities strictly match relative strength
+        ratios without noise.
+        """
+        strengths = {
+            "Al2p": 5.0,
+            "Ti2p": 7.0,
+            "O1s": 10.0,
+            "C1s": 8.0,
+            "Cl2p": 1.0,
+        }
+        cfg = {
+            "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+            "region_relative_strengths": strengths,
+            "measurements_per_tool": {"J4": 1},
+            "die_variation_std": 0.0,
+            "noise_relative_std": 0.0,
+            "seed": 42,
+        }
+        ary_i, _, df_meta = generate_pseudo_measurements(cfg)
+
+        # Check for die 0 in the first measurement
+        df_die0 = df_meta[
+            (df_meta["measurement_id"] == "NMG_M_J4_00000")
+            & (df_meta["die"] == 0)
+        ]
+        max_intensities: dict[str, float] = {}
+        for _, row in df_die0.iterrows():
+            idx = int(row["spectrum_index"])
+            reg = str(row["region"])
+            max_intensities[reg] = float(np.max(ary_i[idx]))
+
+        cl_max = max_intensities["Cl2p"]
+        self.assertAlmostEqual(max_intensities["Ti2p"] / cl_max, 7.0, places=4)
+        self.assertAlmostEqual(max_intensities["O1s"] / cl_max, 10.0, places=4)
+        self.assertAlmostEqual(max_intensities["Al2p"] / cl_max, 5.0, places=4)
+        self.assertAlmostEqual(max_intensities["C1s"] / cl_max, 8.0, places=4)
+
+    def test_region_relative_strengths_metadata_column(self) -> None:
+        """Verify 'relative_strength' column is populated in df_meta."""
+        strengths = {"Ti2p": 7.0, "O1s": 10.0, "Cl2p": 1.0}
+        cfg = {
+            "regions": ["Ti2p", "O1s", "Cl2p"],
+            "region_relative_strengths": strengths,
+            "measurements_per_tool": {"J4": 1},
+        }
+        _, _, df_meta = generate_pseudo_measurements(cfg)
+        self.assertIn("relative_strength", df_meta.columns)
+        for reg, val in strengths.items():
+            reg_strengths = df_meta[df_meta["region"] == reg][
+                "relative_strength"
+            ].unique()
+            self.assertEqual(len(reg_strengths), 1)
+            self.assertEqual(float(reg_strengths[0]), val)
+
+    def test_missing_region_relative_strengths_raises_error(self) -> None:
+        """Verify error is raised if region_relative_strengths is missing
+        or None.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            generate_pseudo_measurements({"region_relative_strengths": None})
+        self.assertIn("region_relative_strengths", str(ctx.exception))
+
+    def test_missing_region_in_relative_strengths_raises_error(self) -> None:
+        """Verify error is raised if any region in 'regions' is missing from
+        'region_relative_strengths'.
+        """
+        cfg = {
+            "regions": ["Ti2p", "O1s", "Cl2p"],
+            "region_relative_strengths": {"Ti2p": 7.0, "O1s": 10.0},
+        }
+        with self.assertRaises(ValueError) as ctx:
+            generate_pseudo_measurements(cfg)
+        self.assertIn("Cl2p", str(ctx.exception))
+
+    def test_non_positive_or_non_numeric_strength_raises_error(self) -> None:
+        """Verify error is raised for non-positive, non-finite, or non-numeric
+        strength values.
+        """
+        cfg_zero = {
+            "regions": ["Ti2p"],
+            "region_relative_strengths": {"Ti2p": 0.0},
+        }
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements(cfg_zero)
+
+        cfg_negative = {
+            "regions": ["Ti2p"],
+            "region_relative_strengths": {"Ti2p": -2.5},
+        }
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements(cfg_negative)
+
+        cfg_bool = {
+            "regions": ["Ti2p"],
+            "region_relative_strengths": {"Ti2p": True},
+        }
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements(cfg_bool)
+
+        cfg_nan = {
+            "regions": ["Ti2p"],
+            "region_relative_strengths": {"Ti2p": float("nan")},
+        }
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements(cfg_nan)
+
+        cfg_inf = {
+            "regions": ["Ti2p"],
+            "region_relative_strengths": {"Ti2p": float("inf")},
+        }
+        with self.assertRaises(ValueError):
+            generate_pseudo_measurements(cfg_inf)
+
+
 if __name__ == "__main__":
     unittest.main()
