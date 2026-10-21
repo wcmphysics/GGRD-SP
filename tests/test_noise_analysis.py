@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 
@@ -15,8 +16,12 @@ from models.noise_analysis import (
     create_mean_and_confidence_curves,
     fit_regional_spectrum_by_gp,
     perform_spectral_noise_analysis,
+    trace_gp_hyperparameter_convergence,
 )
-from visualization.plot_noise_analysis import plot_spectral_noise_analysis
+from visualization.plot_noise_analysis import (
+    plot_gp_hyperparameter_convergence,
+    plot_spectral_noise_analysis,
+)
 
 _FAST = {"training": {"num_iterations": 60, "learning_rate": 0.1}, "show_progress": False}
 
@@ -179,6 +184,57 @@ class TestNoisePlots(unittest.TestCase):
             self.assertEqual(list(figures), ["snr_by_region"])
         with self.assertRaisesRegex(ValueError, "Unknown plots"):
             plot_spectral_noise_analysis(data, {"plots": ["nope"]})
+
+    def test_trace_gp_hyperparameter_convergence(self) -> None:
+        """Verify trace_gp_hyperparameter_convergence records histories."""
+        ary_i, ary_e, _ = _make_data({"Ti2p": 0.05, "O1s": 0.1})
+        cfg = {"training": {"num_iterations": 10, "learning_rate": 0.1}}
+        h = trace_gp_hyperparameter_convergence(ary_e[0], ary_i[0], cfg)
+        for key in ("loss", "noise_sigma", "lengthscale", "outputscale"):
+            self.assertIn(key, h)
+            self.assertEqual(len(h[key]), 10)
+            self.assertTrue(all(np.isfinite(val) for val in h[key]))
+
+    def test_plot_gp_hyperparameter_convergence_success_and_save(self) -> None:
+        """Verify plot_gp_hyperparameter_convergence creates figure and file."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.1})
+        with tempfile.TemporaryDirectory() as tmp:
+            save_file = os.path.join(tmp, "sub", "test_convergence.png")
+            cfg = {
+                "measurement_id": "M0",
+                "die": 0,
+                "num_iterations": 10,
+                "save_path": save_file,
+            }
+            fig = plot_gp_hyperparameter_convergence(
+                (ary_i, ary_e, df_meta), cfg
+            )
+            self.assertIsInstance(fig, matplotlib.figure.Figure)
+            self.assertTrue(os.path.exists(save_file))
+            self.assertGreater(os.path.getsize(save_file), 1000)
+
+    def test_plot_gp_hyperparameter_convergence_defensive_errors(self) -> None:
+        """Verify defensive error checking in plot_gp_hyperparameter_convergence."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.1})
+        with self.assertRaises(ValueError):
+            plot_gp_hyperparameter_convergence("not a tuple")  # type: ignore
+
+        with self.assertRaises(ValueError):
+            plot_gp_hyperparameter_convergence(
+                (ary_i, ary_e, pd.DataFrame()), {}
+            )
+
+        with self.assertRaises(ValueError):
+            plot_gp_hyperparameter_convergence(
+                (ary_i, ary_e, df_meta),
+                {"measurement_id": "nonexistent_id", "die": 0},
+            )
+
+        with self.assertRaises(ValueError):
+            plot_gp_hyperparameter_convergence(
+                (ary_i, ary_e, df_meta),
+                {"regions": ["nonexistent_region"]},
+            )
 
 
 if __name__ == "__main__":
