@@ -129,14 +129,14 @@ def main() -> None:
     # Stage 6B: Gaussian Process spectral noise analysis configuration
     noise_analysis_config = {
         "splits": None,
-        "dies": None,
-        "regions": None,
+        "dies": [0],
+        "regions": ['Al2p'],
         'batch_size': 64,
         "unpaired_split": "train",
         "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
         "noise_model": "homoscedastic",
         "confidence_type": "observation",
-        "training": {"num_iterations": 100, "learning_rate": 0.1},
+        "training": {"num_iterations": 50, "learning_rate": 0.2},
     }
     noise_plot_config = {
         "plots": [
@@ -457,6 +457,14 @@ def main() -> None:
                     ary_spec_analysis_noise,
                 ),
                 noise_plot_config,
+            ),
+            lambda: visualization.plot_gp_hyperparameter_convergence(
+                data_original,
+                plot_config={
+                    "measurement_id": sample_measurement_id,
+                    "die": 0,
+                    "save_path": "gp_hyperparameter_convergence.png",
+                },
             ),
             lambda: visualization.plot_training_history(training_results["histories"]),
             lambda: visualization.plot_prediction_comparison(
