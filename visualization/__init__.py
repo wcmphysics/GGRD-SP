@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from visualization.plot_noise_analysis import plot_spectral_noise_analysis
+from visualization.plot_noise_analysis import (
+    plot_gp_hyperparameter_convergence,
+    plot_spectral_noise_analysis,
+)
 from visualization.visualization import (
     plot_atomic_percentage_distributions,
     plot_atomic_percentage_mae,
@@ -21,6 +24,7 @@ from visualization.visualization import (
 )
 
 __all__ = [
+    "plot_gp_hyperparameter_convergence",
     "plot_spectral_noise_analysis",
     "plot_atomic_percentage_distributions",
     "plot_atomic_percentage_mae",

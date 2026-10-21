@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
+from models.noise_analysis import trace_gp_hyperparameter_convergence
+
 AVAILABLE_NOISE_PLOTS: tuple[str, ...] = (
     "noise_vs_time",
     "snr_by_region",
@@ -169,3 +171,218 @@ def plot_spectral_noise_analysis(
         for name, fig in figures.items():
             fig.savefig(os.path.join(cfg["save_dir"], f"{name}.png"), dpi=150)
     return figures
+
+
+def plot_gp_hyperparameter_convergence(
+    data: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    plot_config: dict[str, Any] | None = None,
+) -> Figure:
+    """Plot the optimization convergence of GP hyperparameters over iterations.
+
+    Generates a 4-panel figure showing:
+      (a) Negative Marginal Log-Likelihood (-MLL)
+      (b) Learned Noise Sigma (physical intensity units)
+      (c) Learned Kernel Lengthscale (eV)
+      (d) Relative Error of Noise Sigma vs. Final Iteration (%)
+
+    Parameters
+    ----------
+    data : tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        Tuple of (ary_intensity, ary_energy, df_meta).
+    plot_config : dict[str, Any] | None, optional
+        Configuration dictionary:
+        - 'measurement_id' (str | None): Measurement session to sample
+          (default: first available session).
+        - 'die' (int): Die index to sample (default: 0).
+        - 'tool' (str | None): Optional tool filter.
+        - 'regions' (list[str] | None): Regions to plot (default: all
+          available in the session).
+        - 'num_iterations' (int): Number of Adam iterations to track
+          (default: 100).
+        - 'learning_rate' (float): Adam learning rate (default: 0.1).
+        - 'kernel' (dict[str, Any] | None): GP kernel configuration.
+        - 'noise_model' (str): Noise model (default: 'homoscedastic').
+        - 'save_path' (str | None): Path to save the PNG file (default:
+          'gp_hyperparameter_convergence.png').
+        - 'show' (bool): Whether to display the plot with plt.show()
+          (default: False).
+
+    Returns
+    -------
+    Figure
+        The created 4-panel matplotlib Figure.
+    """
+    if not (isinstance(data, tuple) and len(data) == 3):
+        raise ValueError(
+            "data must be a 3-tuple (ary_intensity, ary_energy, df_meta)."
+        )
+
+    ary_intensity, ary_energy, df_meta = data
+    if df_meta.empty:
+        raise ValueError("df_meta is empty.")
+
+    cfg = plot_config or {}
+    die = int(cfg.get("die", 0))
+    meas_id = cfg.get("measurement_id")
+    tool = cfg.get("tool")
+    num_iterations = int(cfg.get("num_iterations", 100))
+    learning_rate = float(cfg.get("learning_rate", 0.1))
+    noise_model = str(cfg.get("noise_model", "homoscedastic"))
+    save_path = cfg.get("save_path", "gp_hyperparameter_convergence.png")
+    show = bool(cfg.get("show", False))
+
+    cond = df_meta["die"] == die
+    if meas_id is not None:
+        cond = cond & (df_meta["measurement_id"] == str(meas_id))
+    if tool is not None:
+        cond = cond & (df_meta["tool"] == str(tool))
+
+    matching_df = df_meta[cond]
+    if matching_df.empty:
+        raise ValueError(
+            f"No matching spectra found for measurement_id={meas_id!r}, "
+            f"die={die}, tool={tool!r}."
+        )
+
+    if meas_id is None:
+        meas_id = str(matching_df["measurement_id"].iloc[0])
+        matching_df = matching_df[matching_df["measurement_id"] == meas_id]
+
+    available_regions = list(matching_df["region"].unique())
+    requested_regions = cfg.get("regions")
+    if requested_regions is not None:
+        missing = set(requested_regions) - set(available_regions)
+        if missing:
+            raise ValueError(
+                f"Requested regions {sorted(missing)} not found in session "
+                f"'{meas_id}' die {die}; available: {sorted(available_regions)}."
+            )
+        regions = list(requested_regions)
+    else:
+        regions = available_regions
+
+    trace_cfg: dict[str, Any] = {
+        "noise_model": noise_model,
+        "training": {
+            "num_iterations": num_iterations,
+            "learning_rate": learning_rate,
+        },
+        "device": "cpu",
+    }
+    if "kernel" in cfg:
+        trace_cfg["kernel"] = cfg["kernel"]
+
+    history_data: dict[str, dict[str, list[float]]] = {}
+    for reg in regions:
+        row = matching_df[matching_df["region"] == reg].iloc[0]
+        idx = int(row["spectrum_index"])
+        h = trace_gp_hyperparameter_convergence(
+            energy=ary_energy[idx],
+            intensity=ary_intensity[idx],
+            config=trace_cfg,
+            meta=row.to_dict(),
+        )
+        history_data[reg] = h
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    iters = np.arange(1, num_iterations + 1)
+    cmap = plt.get_cmap("tab10")
+    colors = {reg: cmap(i % 10) for i, reg in enumerate(regions)}
+
+    # Subplot (a): Marginal Log-Likelihood Loss
+    ax1 = axes[0, 0]
+    for reg in regions:
+        ax1.plot(
+            iters,
+            history_data[reg]["loss"],
+            label=reg,
+            color=colors[reg],
+            lw=2,
+        )
+    ax1.set_title(
+        "(a) Negative Marginal Log-Likelihood (-MLL)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax1.set_xlabel("Adam Iterations")
+    ax1.set_ylabel("Loss (-MLL)")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper right")
+
+    # Subplot (b): Noise Sigma
+    ax2 = axes[0, 1]
+    for reg in regions:
+        ax2.plot(
+            iters,
+            history_data[reg]["noise_sigma"],
+            label=reg,
+            color=colors[reg],
+            lw=2,
+        )
+    ax2.set_title(
+        "(b) Learned Noise Sigma (Physical Intensity Units)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax2.set_xlabel("Adam Iterations")
+    ax2.set_ylabel("Noise Sigma (counts)")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper right")
+
+    # Subplot (c): Kernel Lengthscale (eV)
+    ax3 = axes[1, 0]
+    for reg in regions:
+        ax3.plot(
+            iters,
+            history_data[reg]["lengthscale"],
+            label=reg,
+            color=colors[reg],
+            lw=2,
+        )
+    ax3.set_title(
+        "(c) Learned Kernel Lengthscale (eV)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax3.set_xlabel("Adam Iterations")
+    ax3.set_ylabel("Lengthscale (eV)")
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(loc="upper right")
+
+    # Subplot (d): Relative Error vs Final (%)
+    ax4 = axes[1, 1]
+    for reg in regions:
+        final_s = history_data[reg]["noise_sigma"][-1]
+        denom = final_s if abs(final_s) > 1e-12 else 1.0
+        rel_err = np.array(
+            [
+                abs(s - final_s) / denom * 100.0
+                for s in history_data[reg]["noise_sigma"]
+            ]
+        )
+        ax4.plot(iters, rel_err, label=reg, color=colors[reg], lw=2)
+    ax4.axhline(5.0, color="gray", linestyle="--", label="5% Error Threshold")
+    ax4.axhline(1.0, color="black", linestyle=":", label="1% Error Threshold")
+    ax4.set_title(
+        f"(d) Relative Error of Noise Sigma vs Iteration {num_iterations} (%)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax4.set_xlabel("Adam Iterations")
+    ax4.set_ylabel("Relative Error (%)")
+    ax4.set_ylim(-1, 50)
+    ax4.grid(True, alpha=0.3)
+    ax4.legend(loc="upper right")
+
+    fig.tight_layout()
+
+    if save_path is not None:
+        dir_name = os.path.dirname(os.path.abspath(save_path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+
+    if show:
+        plt.show()
+
+    return fig
