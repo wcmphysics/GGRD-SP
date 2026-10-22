@@ -397,11 +397,12 @@ def create_unified_dataset(
     ary_energy: np.ndarray,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a unified multi-region dataset partitioned by train, val, and test splits.
+    """Create a unified multi-region dataset partitioned by train, val,
+    and test splits.
 
-    Combines paired regional spectra across all regions into single unified PyTorch
-    datasets. Each sample preserves 'region' and 'region_index' metadata for FiLM
-    conditioning and regional error weighting.
+    Combines paired regional spectra across all regions into single unified
+    PyTorch datasets. Each sample preserves 'region' and 'region_index' metadata
+    for FiLM conditioning and regional error weighting.
 
     Parameters
     ----------
@@ -414,7 +415,8 @@ def create_unified_dataset(
         2D array of binding energies of shape (N_total, N_points).
     config : dict[str, Any] | None, optional
         Configuration dictionary:
-        - 'regions': list of spectral region names (default: all unique in paired df_meta).
+        - 'regions': list of spectral region names (default: all unique in
+          paired df_meta).
         - 'source_tool': optional source tool filter string.
         - 'target_tool': optional target tool filter string.
         - 'use_sliding_window': bool (default False).
@@ -422,12 +424,14 @@ def create_unified_dataset(
         - 'sliding_stride_ev': sliding stride in eV (default 2.0).
         - 'window_size': window size in data points.
         - 'stride': sliding stride in data points.
+        - 'region_index_mapping': optional mapping from region to integer ID.
 
     Returns
     -------
     dict[str, Any]
         Dictionary containing:
-        - 'dataset_train': training Dataset (SpectrumPatchDataset if sliding window on).
+        - 'dataset_train': training Dataset (SpectrumPatchDataset if sliding
+          window on).
         - 'dataset_val': validation full-spectrum Dataset.
         - 'dataset_test': held-out test full-spectrum Dataset.
         - 'dataset_train_full': unpatched training full-spectrum Dataset.
@@ -458,7 +462,9 @@ def create_unified_dataset(
             f"No valid spectral regions found in df_meta for {source_tool=}, {target_tool=}."
         )
 
-    region_index_mapping = {r: i for i, r in enumerate(regions)}
+    region_index_mapping = cfg.get("region_index_mapping") or {
+        r: i for i, r in enumerate(regions)
+    }
     df_paired = df_meta[paired_mask & df_meta["region"].isin(regions)].copy()
     if "region_index" not in df_paired.columns:
         df_paired["region_index"] = df_paired["region"].map(region_index_mapping)

@@ -1,4 +1,5 @@
-"""Unit tests for unified multi-region spectral model training and inference."""
+"""Unit tests for unified multi-region spectral model training and inference.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
         m_id = f"NMG_M_{tool}_{m_idx:05d}"
         for d in range(n_dies):
             for r_idx, reg in enumerate(regions):
+                is_train = m_idx in (0, 3)
+                split_val = "train" if is_train else ("val" if m_idx in (1, 4) else "test")
                 rows.append({
                     "spectrum_index": idx,
                     "measurement_id": m_id,
@@ -33,36 +36,49 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
                     "die": d,
                     "region": reg,
                     "region_index": r_idx,
-                    "split": "train" if m_idx in (0, 3) else ("val" if m_idx in (1, 4) else "test"),
+                    "split": split_val,
                 })
                 idx += 1
 
     df_meta = pd.DataFrame(rows)
     total_spectra = len(df_meta)
     rng = np.random.RandomState(42)
-    ary_intensity = rng.uniform(10.0, 100.0, size=(total_spectra, n_pts)).astype(np.float32)
-    ary_energy = np.tile(np.linspace(70.0, 80.0, n_pts, dtype=np.float32), (total_spectra, 1))
+    ary_intensity = rng.uniform(
+        10.0, 100.0, size=(total_spectra, n_pts)
+    ).astype(np.float32)
+    ary_energy = np.tile(
+        np.linspace(70.0, 80.0, n_pts, dtype=np.float32), (total_spectra, 1)
+    )
 
     # Add 1-to-1 pairing mapping
-    tgt_map = {"NMG_M_J4_00000": "NMG_M_J5_00003", "NMG_M_J4_00001": "NMG_M_J5_00004", "NMG_M_J4_00002": "NMG_M_J5_00005"}
+    tgt_map = {
+        "NMG_M_J4_00000": "NMG_M_J5_00003",
+        "NMG_M_J4_00001": "NMG_M_J5_00004",
+        "NMG_M_J4_00002": "NMG_M_J5_00005",
+    }
     tgt_tool_map = {m: "J5" for m in tgt_map}
 
     df_meta["measurement_id_target"] = df_meta["measurement_id"].map(tgt_map)
     df_meta["tool_target"] = df_meta["measurement_id"].map(tgt_tool_map)
     df_meta["tool_index"] = df_meta["tool"].map({"J4": 0, "J5": 1})
-    df_meta["tool_target_index"] = df_meta["tool_target"].map({"J4": 0, "J5": 1})
+    df_meta["tool_target_index"] = df_meta["tool_target"].map(
+        {"J4": 0, "J5": 1}
+    )
 
     # Fill target spectrum indices
-    src_mask = df_meta["tool"] == "J4"
     tgt_lookup: dict[tuple[str, int, str], int] = {
-        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): int(r["spectrum_index"])
+        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): int(
+            r["spectrum_index"]
+        )
         for _, r in df_meta[df_meta["tool"] == "J5"].iterrows()
     }
     tgt_indices = []
     for _, r in df_meta.iterrows():
         tgt_mid = r["measurement_id_target"]
         if pd.notna(tgt_mid):
-            tgt_indices.append(tgt_lookup.get((str(tgt_mid), int(r["die"]), str(r["region"]))))
+            tgt_indices.append(
+                tgt_lookup.get((str(tgt_mid), int(r["die"]), str(r["region"])))
+            )
         else:
             tgt_indices.append(None)
     df_meta["spectrum_index_target"] = tgt_indices
@@ -73,10 +89,13 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
 
 
 class TestUnifiedModel(unittest.TestCase):
-    """Test suite verifying unified multi-region model dataset, training, and inference."""
+    """Test suite verifying unified multi-region model dataset, training,
+    and inference.
+    """
 
     def setUp(self) -> None:
-        self.ary_intensity, self.ary_energy, self.df_meta = _create_mock_spectral_data()
+        mock_data = _create_mock_spectral_data()
+        self.ary_intensity, self.ary_energy, self.df_meta = mock_data
 
     def test_create_unified_dataset_full_spectrum(self) -> None:
         """Test unified dataset creation in full spectrum mode."""
@@ -132,7 +151,11 @@ class TestUnifiedModel(unittest.TestCase):
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
@@ -185,7 +208,11 @@ class TestUnifiedModel(unittest.TestCase):
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
@@ -214,7 +241,11 @@ class TestUnifiedModel(unittest.TestCase):
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
@@ -238,12 +269,18 @@ class TestUnifiedModel(unittest.TestCase):
         self.assertIs(results["models"]["Al2p"], results["models"]["all"])
 
     def test_dual_mode_per_region_preservation(self) -> None:
-        """Test that setting unified_model=False preserves independent regional models."""
+        """Test that setting unified_model=False preserves independent
+        regional models.
+        """
         regional_datasets = models.create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
@@ -262,7 +299,7 @@ class TestUnifiedModel(unittest.TestCase):
                 },
             },
         )
-        # In per-region mode, "all" is NOT created and models are independent objects
+        # In per-region mode, "all" is NOT created and models are independent
         self.assertNotIn("all", results["models"])
         self.assertIn("Al2p", results["models"])
         self.assertIn("Ti2p", results["models"])
@@ -275,7 +312,11 @@ class TestUnifiedModel(unittest.TestCase):
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
@@ -298,12 +339,16 @@ class TestUnifiedModel(unittest.TestCase):
         self.assertIn("all", results["models"])
 
     def test_unified_model_bayesian_optimization(self) -> None:
-        """Test single global Bayesian optimization on unified multi-region data."""
+        """Test single global Bayesian optimization on unified data."""
         regional_datasets = models.create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "use_sliding_window": False,
+            },
         )
         criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(

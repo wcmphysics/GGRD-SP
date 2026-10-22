@@ -118,6 +118,8 @@ def _combine_regional_bundles(
     regional_datasets: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Merge multiple regional dataset bundles into a single unified bundle."""
+    if not regional_datasets:
+        raise ValueError("regional_datasets dictionary cannot be empty.")
     if "all" in regional_datasets:
         return regional_datasets["all"]
 
@@ -137,10 +139,10 @@ def _combine_regional_bundles(
     ) -> SpectrumPairDataset:
         merged_x = torch.cat([d.x for d in ds_list], dim=0)
         merged_y = torch.cat([d.y for d in ds_list], dim=0)
-        has_energy = any(d.energy is not None for d in ds_list)
+        has_all_energy = all(d.energy is not None for d in ds_list)
         merged_energy = (
             torch.cat([d.energy for d in ds_list], dim=0)
-            if has_energy
+            if has_all_energy
             else None
         )
         merged_meta: list[dict[str, Any]] = []
@@ -264,7 +266,14 @@ def perform_model_training_and_bayesian_optimization(
     if is_unified:
         film_cfg = dict(film_cfg)
         film_cfg.setdefault("encode_region", True)
-        film_cfg.setdefault("num_regions", max(16, len(regional_datasets)))
+        if "all" in regional_datasets:
+            actual_num = len(regional_datasets["all"].get("regions", []))
+        else:
+            actual_num = len(regional_datasets)
+        target_num_regions = max(
+            16, actual_num, int(film_cfg.get("num_regions", 16))
+        )
+        film_cfg["num_regions"] = target_num_regions
         pipeline_config["film_config"] = film_cfg
         target_datasets = {"all": _combine_regional_bundles(regional_datasets)}
     else:

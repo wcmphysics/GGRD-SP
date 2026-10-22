@@ -44,13 +44,27 @@ def _parse_region_index(
     if val is None or pd.isna(val):
         return 0
     if isinstance(val, (int, np.integer)):
-        return max(0, int(val))
+        if int(val) < 0:
+            warnings.warn(
+                f"Negative region index {int(val)} in '{field_name}'; clamping to 0."
+            )
+            return 0
+        return int(val)
     if isinstance(val, str):
         if region_mapping and val in region_mapping:
             return max(0, int(region_mapping[val]))
         try:
-            return max(0, int(val))
+            parsed = int(val)
+            if parsed < 0:
+                warnings.warn(
+                    f"Negative region index {parsed} in '{field_name}'; clamping to 0."
+                )
+                return 0
+            return parsed
         except (ValueError, TypeError):
+            warnings.warn(
+                f"Unmapped region string '{val}' in '{field_name}'; defaulting to index 0."
+            )
             return 0
     try:
         raw_val = val.item() if hasattr(val, "item") else val
@@ -62,6 +76,9 @@ def _parse_region_index(
             return 0
         return idx
     except (ValueError, TypeError):
+        warnings.warn(
+            f"Invalid region value '{val}' in '{field_name}'; defaulting to 0."
+        )
         return 0
 
 
@@ -390,6 +407,14 @@ class FiLMGenerator(nn.Module):
                 reg_t = torch.zeros(
                     b_size, dtype=torch.long, device=target_device
                 )
+            else:
+                max_allowed = self.region_embedding.num_embeddings - 1
+                if (reg_t > max_allowed).any() or (reg_t < 0).any():
+                    warnings.warn(
+                        f"Region index outside expected [0, {max_allowed}]; "
+                        f"clamping indices to [0, {max_allowed}]."
+                    )
+                    reg_t = torch.clamp(reg_t, 0, max_allowed)
             feat_list.append(self.region_embedding(reg_t))
         if self.encode_flux:
             flux_t = cond_dev.get("die_flux_normalized")
