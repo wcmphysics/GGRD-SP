@@ -15,6 +15,7 @@ from models.dataset import (
     SpectrumPatchDataset,
     create_dataloaders,
     create_regional_datasets,
+    create_unified_dataset,
 )
 from models.deeplabv3 import DeepLabV3
 from models.film import FiLMGenerator, prepare_film_condition_tensor
@@ -83,6 +84,7 @@ __all__ = [
     "SpectrumPatchDataset",
     "create_dataloaders",
     "create_regional_datasets",
+    "create_unified_dataset",
     # Training & Evaluation
     "train_one_epoch",
     "evaluate",
