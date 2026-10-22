@@ -20,6 +20,7 @@ def main() -> None:
     # =========================================================================
     model_type = "resnet"
     use_sliding_window = False
+    unified_model = False  # Set to True to train 1 single model across all regions
     source_tool, target_tool = "J4", "J5"
     example_region = "Ti2p"
     sample_measurement_id = "NMG_M_J4_00000"
@@ -154,6 +155,9 @@ def main() -> None:
         "encode_flux": True,
         "encode_time": True,
         "encode_window_energy": True,
+        "encode_region": True,
+        "num_regions": len(data_generation_config["regions"]),
+        "region_embed_dim": 4,
         "energy_scale_ev": 1000.0,
         "die_embed_dim": 4,
         "tool_embed_dim": 4,
@@ -183,6 +187,7 @@ def main() -> None:
     # Stage 7B: Neural network training configuration (singular keys)
     training_config = {
         "model_type": model_type,
+        "unified_model": unified_model,
         "use_film": film_config["use_film"],
         "film_config": film_config,
         "train_config": {
@@ -269,6 +274,16 @@ def main() -> None:
     df_meta["tool_index"] = df_meta["tool"].map(tool_index_mapping)
     df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_index_mapping)
     training_config["num_tools"] = len(tool_index_mapping)
+
+    # Establish fixed region mapping indices
+    unique_regions = sorted(df_meta["region"].dropna().astype(str).unique())
+    region_index_mapping = {
+        region_name: region_index
+        for region_index, region_name in enumerate(unique_regions)
+    }
+    df_meta["region_index"] = df_meta["region"].map(region_index_mapping)
+    training_config["region_index_mapping"] = region_index_mapping
+    prediction_config["region_index_mapping"] = region_index_mapping
 
     # =========================================================================
     # STAGE 3: NORMALIZATION OF SPECTRAL DATA
