@@ -20,7 +20,8 @@ def main() -> None:
     # =========================================================================
     model_type = "resnet"
     use_sliding_window = False
-    unified_model = False  # Set to True to train 1 single model across all regions
+    use_film = False
+    unified_model = True  # Set to True to train 1 single model across all regions
     source_tool, target_tool = "J4", "J5"
     example_region = "Ti2p"
     sample_measurement_id = "NMG_M_J4_00000"
@@ -131,7 +132,7 @@ def main() -> None:
     noise_analysis_config = {
         "splits": None,
         "dies": [0],
-        "regions": ['Al2p'],
+        "regions":  [example_region],
         'batch_size': 64,
         "unpaired_split": "train",
         "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
@@ -151,7 +152,7 @@ def main() -> None:
 
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
-        "use_film": False,
+        "use_film": use_film,
         "encode_flux": True,
         "encode_time": True,
         "encode_window_energy": True,
