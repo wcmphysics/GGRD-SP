@@ -10,7 +10,7 @@ import utility
 import visualization
 
 
-def main() -> None:
+def main(config_override: dict[str, Any] | None = None) -> None:
     """Execute sequential key stages: generation, normalization, pairing,
     splitting, dataset construction, cost preparation, training, prediction,
     quantification, and plotting.
@@ -18,13 +18,18 @@ def main() -> None:
     # =========================================================================
     # GLOBAL SETUP & CONFIGURATIONS
     # =========================================================================
-    model_type = "resnet"
-    use_sliding_window = False
-    unified_model = False  # Set to True to train 1 single model across all regions
+    override = config_override or {}
+    model_type = override.get("model_type", "resnet")
+    use_sliding_window = override.get("use_sliding_window", False)
+    unified_model = override.get("unified_model", False)
+    use_film = override.get("use_film", False)
     source_tool, target_tool = "J4", "J5"
     example_region = "Ti2p"
     sample_measurement_id = "NMG_M_J4_00000"
-    show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
+    show_plots = override.get(
+        "show_plots",
+        "--no-plots" not in sys.argv and "--headless" not in sys.argv,
+    )
 
     # Stage 1: Data generation configuration
     data_generation_config = {
@@ -151,7 +156,7 @@ def main() -> None:
 
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
-        "use_film": False,
+        "use_film": use_film,
         "encode_flux": True,
         "encode_time": True,
         "encode_window_energy": True,
@@ -220,6 +225,29 @@ def main() -> None:
         "clamp_non_negative": True,
         "film_config": film_config,
     }
+
+    # Apply optional parameter overrides for testing/verification
+    if "epochs" in override:
+        training_config["train_config"]["epochs"] = int(override["epochs"])
+    if "measurements_per_tool" in override:
+        data_generation_config["measurements_per_tool"] = override[
+            "measurements_per_tool"
+        ]
+    if "kernel_size" in override:
+        training_config["train_config"]["kernel_size"] = int(
+            override["kernel_size"]
+        )
+    if "depth" in override:
+        training_config["train_config"]["depth"] = int(override["depth"])
+    if "verbose" in override:
+        training_config["train_config"]["verbose"] = bool(override["verbose"])
+    if "gp_num_iterations" in override:
+        gp_flux_config["training"]["num_iterations"] = int(
+            override["gp_num_iterations"]
+        )
+        noise_analysis_config["training"]["num_iterations"] = int(
+            override["gp_num_iterations"]
+        )
 
     mse_metric_name = (
         "MSE_normalized_by_target"
