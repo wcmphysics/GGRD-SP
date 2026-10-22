@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 import torch.nn as nn
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.dataset import SpectrumPatchDataset
+from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
 from models.trainer import instantiate_model, train_model_region
 
 _CONTAINER_KEYS = {
@@ -113,6 +114,77 @@ def _resolve_region_config(
     return sliding_window_config, resolved_train_config, resolved_bo_config
 
 
+def _combine_regional_bundles(
+    regional_datasets: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge multiple regional dataset bundles into a single unified bundle."""
+    if "all" in regional_datasets:
+        return regional_datasets["all"]
+
+    train_full_items = [
+        b.get("dataset_train_full", b["dataset_train"])
+        for b in regional_datasets.values()
+    ]
+    val_items = [b["dataset_val"] for b in regional_datasets.values()]
+    test_items = [
+        b.get("dataset_test")
+        for b in regional_datasets.values()
+        if b.get("dataset_test") is not None
+    ]
+
+    def _merge_pair_datasets(
+        ds_list: list[SpectrumPairDataset],
+    ) -> SpectrumPairDataset:
+        merged_x = torch.cat([d.x for d in ds_list], dim=0)
+        merged_y = torch.cat([d.y for d in ds_list], dim=0)
+        has_energy = any(d.energy is not None for d in ds_list)
+        merged_energy = (
+            torch.cat([d.energy for d in ds_list], dim=0)
+            if has_energy
+            else None
+        )
+        merged_meta: list[dict[str, Any]] = []
+        for d in ds_list:
+            merged_meta.extend(d.metadata)
+        return SpectrumPairDataset(
+            merged_x, merged_y, energy=merged_energy, metadata=merged_meta
+        )
+
+    train_full = _merge_pair_datasets(train_full_items)
+    val_full = _merge_pair_datasets(val_items)
+    test_full = _merge_pair_datasets(test_items) if test_items else None
+
+    first_bundle = next(iter(regional_datasets.values()))
+    w_pts = int(
+        first_bundle.get(
+            "window_size_points", first_bundle.get("full_spectrum_length", 100)
+        )
+    )
+    s_pts = int(first_bundle.get("sliding_stride_points", w_pts))
+    seq_len = int(first_bundle.get("full_spectrum_length", w_pts))
+
+    is_sw = any(
+        isinstance(b["dataset_train"], SpectrumPatchDataset)
+        for b in regional_datasets.values()
+    )
+    if is_sw:
+        train_ds: SpectrumPairDataset | SpectrumPatchDataset = SpectrumPatchDataset(
+            train_full, window_size=w_pts, stride=s_pts
+        )
+    else:
+        train_ds = train_full
+
+    return {
+        "dataset_train": train_ds,
+        "dataset_val": val_full,
+        "dataset_test": test_full,
+        "dataset_train_full": train_full,
+        "window_size_points": w_pts,
+        "sliding_stride_points": s_pts,
+        "full_spectrum_length": seq_len,
+    }
+
+
 def perform_model_training_and_bayesian_optimization(
     regional_datasets: dict[str, dict[str, Any]],
     criterion: nn.Module,
@@ -188,7 +260,17 @@ def perform_model_training_and_bayesian_optimization(
     training_histories: dict[str, dict[str, list[float]]] = {}
     bayesian_opt_results: dict[str, dict[str, Any]] = {}
 
-    for region, bundle in regional_datasets.items():
+    is_unified = bool(pipeline_config.get("unified_model", False))
+    if is_unified:
+        film_cfg = dict(film_cfg)
+        film_cfg.setdefault("encode_region", True)
+        film_cfg.setdefault("num_regions", max(16, len(regional_datasets)))
+        pipeline_config["film_config"] = film_cfg
+        target_datasets = {"all": _combine_regional_bundles(regional_datasets)}
+    else:
+        target_datasets = regional_datasets
+
+    for region, bundle in target_datasets.items():
         dataset_train = bundle["dataset_train"]
         dataset_val = bundle["dataset_val"]
         dataset_train_full = bundle.get("dataset_train_full", dataset_train)
@@ -304,6 +386,19 @@ def perform_model_training_and_bayesian_optimization(
         )
         val_evaluation_results[region] = float(training_result["best_val_loss"])
         training_histories[region] = training_result["history"]
+
+    if is_unified:
+        single_entry = trained_models.get("all")
+        single_loss = val_evaluation_results.get("all", 0.0)
+        single_hist = training_histories.get("all", {})
+        single_bo = bayesian_opt_results.get("all", {})
+        for region in regional_datasets.keys():
+            if region != "all":
+                trained_models[region] = single_entry
+                val_evaluation_results[region] = single_loss
+                training_histories[region] = single_hist
+                if single_bo:
+                    bayesian_opt_results[region] = single_bo
 
     return {
         "models": trained_models,

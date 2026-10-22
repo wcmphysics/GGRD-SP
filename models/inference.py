@@ -230,6 +230,8 @@ def predict_spectra(
                 "energy_scale_ev": float(getattr(m, "energy_scale_ev", 1000.0)),
                 "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
                 "encode_time": bool(getattr(film_gen, "encode_time", True)),
+                "encode_region": bool(getattr(film_gen, "encode_region", False)),
+                "region_index_mapping": cfg.get("region_index_mapping"),
             },
             device=dev,
         )
@@ -245,7 +247,20 @@ def predict_spectra(
             f"No source spectra found for {source_tool=} in train/val/test splits"
         )
 
-    for m in models.values():
+    if "region_index" not in source_df.columns and "region" in source_df.columns:
+        unique_regs = sorted(source_df["region"].dropna().astype(str).unique())
+        reg_map = cfg.get("region_index_mapping") or {
+            r: i for i, r in enumerate(unique_regs)
+        }
+        source_df["region_index"] = source_df["region"].map(reg_map)
+
+    models_dict = (
+        {"all": models}
+        if isinstance(models, (nn.Module, tuple, list))
+        else dict(models)
+    )
+
+    for m in models_dict.values():
         mod = m[0] if isinstance(m, (tuple, list)) else m
         if isinstance(mod, nn.Module):
             mod.eval().to(device)
@@ -264,17 +279,20 @@ def predict_spectra(
         )
         orig_indices = group["spectrum_index"].astype(int).to_numpy()
 
-        if region not in models:
-            warnings.warn(
-                f"Region '{region}' not in models dictionary; "
-                "falling back to identity pass-through."
-            )
-            predicted_intensities[group_new_indices] = ary_intensity[
-                orig_indices
-            ]
-            continue
-
-        model_entry = models[str(region)]
+        if region not in models_dict:
+            if "all" in models_dict:
+                model_entry = models_dict["all"]
+            else:
+                warnings.warn(
+                    f"Region '{region}' not in models dictionary; "
+                    "falling back to identity pass-through."
+                )
+                predicted_intensities[group_new_indices] = ary_intensity[
+                    orig_indices
+                ]
+                continue
+        else:
+            model_entry = models_dict[str(region)]
         region_x = ary_intensity[orig_indices]
 
         is_seq = isinstance(model_entry, (tuple, list))
