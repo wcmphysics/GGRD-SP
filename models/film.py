@@ -35,6 +35,36 @@ def _parse_die(value: Any) -> int:
         return 0
 
 
+def _parse_region_index(
+    val: Any,
+    field_name: str = "region_index",
+    region_mapping: dict[str, int] | None = None,
+) -> int:
+    """Extract integer region index or default gracefully to 0."""
+    if val is None or pd.isna(val):
+        return 0
+    if isinstance(val, (int, np.integer)):
+        return max(0, int(val))
+    if isinstance(val, str):
+        if region_mapping and val in region_mapping:
+            return max(0, int(region_mapping[val]))
+        try:
+            return max(0, int(val))
+        except (ValueError, TypeError):
+            return 0
+    try:
+        raw_val = val.item() if hasattr(val, "item") else val
+        idx = int(raw_val)
+        if idx < 0:
+            warnings.warn(
+                f"Negative region index {idx} in '{field_name}'; clamping to 0."
+            )
+            return 0
+        return idx
+    except (ValueError, TypeError):
+        return 0
+
+
 def _parse_tool_index(val: Any, field_name: str) -> int:
     """Extract integer tool index or raise informative ValueError."""
     if val is None or pd.isna(val):
@@ -129,6 +159,7 @@ def prepare_film_condition_tensor(
         - 'die': LongTensor (B,)
         - 'tool_src': LongTensor (B,)
         - 'tool_tgt': LongTensor (B,)
+        - 'region': LongTensor (B,) (if encode_region=True or metadata present)
         - 'die_flux_normalized': FloatTensor (B, 1) (if encode_flux=True)
         - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
         - 'window_energy': FloatTensor (B, 2) (if provided)
@@ -138,6 +169,7 @@ def prepare_film_condition_tensor(
     energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
     encode_flux = bool(cfg.get("encode_flux", cfg.get("use_flux", True)))
     encode_time = bool(cfg.get("encode_time", cfg.get("use_time", True)))
+    encode_region = bool(cfg.get("encode_region", cfg.get("use_region", False)))
 
     meta = (
         metadata.to_dict(orient="records")
@@ -193,6 +225,22 @@ def prepare_film_condition_tensor(
             time_vals, dtype=torch.float32, device=device
         ).unsqueeze(-1)
 
+    reg_mapping = cfg.get("region_index_mapping") or cfg.get("region_mapping")
+    reg_vals = _extract_meta_column(meta, "region_index", n)
+    if all(x is None for x in reg_vals):
+        reg_vals = _extract_meta_column(meta, "region", n)
+    if encode_region or any(x is not None for x in reg_vals):
+        ret["region"] = torch.tensor(
+            [
+                _parse_region_index(
+                    x, "region_index", region_mapping=reg_mapping
+                )
+                for x in reg_vals
+            ],
+            dtype=torch.long,
+            device=device,
+        )
+
     we_data = window_energy
     if we_data is None:
         we_from_meta = _extract_meta_column(meta, "window_energy", n)
@@ -230,6 +278,9 @@ class FiLMGenerator(nn.Module):
         - 'die_embed_dim' (int): Die embedding dim (default 4).
         - 'num_tools' (int): Maximum tools count (default 8).
         - 'tool_embed_dim' (int): Tool embedding dim (default 4).
+        - 'num_regions' (int): Maximum regions count (default 16).
+        - 'region_embed_dim' (int): Region embedding dim (default 4).
+        - 'encode_region' (bool): Encode region identity (default False).
         - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
         - 'encode_flux' (bool): Encode 'die_flux_normalized' (default True).
         - 'encode_time' (bool): Encode 'time_normalized' (default True).
@@ -246,6 +297,11 @@ class FiLMGenerator(nn.Module):
         die_dim = int(cfg.get("die_embed_dim", 4))
         num_tools = int(cfg.get("num_tools", 8))
         tool_dim = int(cfg.get("tool_embed_dim", 4))
+        self.encode_region = bool(
+            cfg.get("encode_region", cfg.get("use_region", False))
+        )
+        num_regions = int(cfg.get("num_regions", 16))
+        region_dim = int(cfg.get("region_embed_dim", 4)) if self.encode_region else 0
         hidden_dim = int(cfg.get("hidden_dim", 32))
 
         self.encode_flux = bool(
@@ -262,10 +318,19 @@ class FiLMGenerator(nn.Module):
         time_dim = 1 if self.encode_time else 0
         energy_dim = 2 if self.encode_window_energy else 0
 
-        in_dim = die_dim + (2 * tool_dim) + flux_dim + time_dim + energy_dim
+        in_dim = (
+            die_dim
+            + (2 * tool_dim)
+            + region_dim
+            + flux_dim
+            + time_dim
+            + energy_dim
+        )
         self.channels_list = list(channels_list)
         self.die_embedding = nn.Embedding(num_dies, die_dim)
         self.tool_embedding = nn.Embedding(num_tools, tool_dim)
+        if self.encode_region:
+            self.region_embedding = nn.Embedding(num_regions, region_dim)
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -318,6 +383,14 @@ class FiLMGenerator(nn.Module):
             self.tool_embedding(cond_dev["tool_src"]),
             self.tool_embedding(cond_dev["tool_tgt"]),
         ]
+        if self.encode_region:
+            reg_t = cond_dev.get("region")
+            if reg_t is None:
+                b_size = cond_dev["die"].shape[0]
+                reg_t = torch.zeros(
+                    b_size, dtype=torch.long, device=target_device
+                )
+            feat_list.append(self.region_embedding(reg_t))
         if self.encode_flux:
             flux_t = cond_dev.get("die_flux_normalized")
             if flux_t is None:

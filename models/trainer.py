@@ -135,6 +135,7 @@ def _batch_cond(
             "energy_scale_ev": energy_scale_ev,
             "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
             "encode_time": bool(getattr(film_gen, "encode_time", True)),
+            "encode_region": bool(getattr(film_gen, "encode_region", False)),
         },
         device=dev,
         window_energy=batch.get("window_energy"),

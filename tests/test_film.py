@@ -479,6 +479,50 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIn("die_flux_normalized", pred_df.columns)
         self.assertIn("time_normalized", pred_df.columns)
 
+    def test_film_region_encoding(self) -> None:
+        """Verify region index extraction and FiLM conditioning with regions."""
+        meta = [
+            {
+                "die": 0,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "region_index": 2,
+                "die_flux_normalized": 0.0,
+                "time_normalized": 0.0,
+            },
+            {
+                "die": 1,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "region_index": 11,
+                "die_flux_normalized": 0.0,
+                "time_normalized": 0.0,
+            },
+        ]
+        cond = prepare_film_condition_tensor(
+            meta, config={"encode_region": True, "num_samples": 2}
+        )
+        self.assertIn("region", cond)
+        self.assertEqual(cond["region"].tolist(), [2, 11])
+
+        # Test FiLMGenerator with region embedding
+        film_gen = FiLMGenerator(
+            channels_list=[16],
+            config={
+                "encode_region": True,
+                "num_regions": 16,
+                "region_embed_dim": 4,
+            },
+        )
+        modulations = film_gen(cond)
+        self.assertEqual(len(modulations), 1)
+        gamma, beta = modulations[0]
+        self.assertEqual(gamma.shape, (2, 16))
+        self.assertEqual(beta.shape, (2, 16))
+        # Initial gamma is 1.0, initial beta is 0.0
+        torch.testing.assert_close(gamma, torch.ones_like(gamma))
+        torch.testing.assert_close(beta, torch.zeros_like(beta))
+
 
 if __name__ == "__main__":
     unittest.main()
