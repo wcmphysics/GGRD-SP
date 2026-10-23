@@ -1,7 +1,8 @@
-"""Spectral flux calculation module for GGRD-SP.
+"""Spectral flux and intensity calculation module for GGRD-SP.
 
 Provides unified numerical integration across energy grids and calculates
-hierarchical flux metrics across regions, dies, and measurement sessions.
+hierarchical flux and mean intensity metrics across regions, dies, and
+measurement sessions.
 """
 
 from __future__ import annotations
@@ -66,22 +67,27 @@ def integrate_spectral_flux(
     return float(val) if np.ndim(val) == 0 else val
 
 
-def calculate_flux(
+def calculate_flux_and_intensity(
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray,
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Compute hierarchical spectral fluxes for regions, dies, and sessions.
+    """Compute hierarchical spectral fluxes and mean intensities.
 
-    Computes integrated flux on raw spectra and appends six columns:
-    1. 'regional_flux': flux of a region of a die from a measurement.
-    2. 'mean_regional_flux': average 'regional_flux' among regions of that die.
-    3. 'die_flux': total sum of 'regional_flux' across all regions of that die.
-    4. 'mean_die_flux': average 'die_flux' among unique dies in measurement.
-    5. 'measurement_flux': total sum of 'die_flux' in that measurement.
-    6. 'die_flux_normalized': z-score standardized 'die_flux' across unique
-       dies.
+    Computes integrated flux and mean intensity metrics on raw spectra and
+    appends nine columns to df_meta:
+    1. 'mean_intensity_single_region': arithmetic mean intensity of that region.
+    2. 'mean_intensity_single_die': mean intensity across regions for that die.
+    3. 'relative_intensity_single_region': ratio of regional to
+       die mean intensity.
+    4. 'total_flux_single_region': flux of a region of a die from a measurement.
+    5. 'mean_flux_across_regions_single_die': average regional flux
+       among regions.
+    6. 'total_flux_single_die': total sum of regional flux across that die.
+    7. 'mean_flux_across_dies_single_measurement': average die flux in session.
+    8. 'total_flux_single_measurement': total sum of die flux in that session.
+    9. 'total_flux_single_die_normalized': z-score standardized die flux.
 
     Parameters
     ----------
@@ -95,13 +101,13 @@ def calculate_flux(
     config : dict[str, Any] | None, optional
         Optional configuration dictionary:
         - 'fit_split' (str | None): Split name (e.g. 'train') to compute mean
-          and std of die_flux for z-score standardization. If specified,
-          df_meta must contain 'split'. Default is None.
+          and std of total_flux_single_die for z-score standardization.
+          Default is None.
 
     Returns
     -------
     pd.DataFrame
-        New copy of df_meta with the 6 appended flux columns.
+        New copy of df_meta with the 9 appended flux and intensity columns.
 
     Raises
     ------
@@ -125,15 +131,19 @@ def calculate_flux(
         )
 
     df_res = df_meta.copy()
+    appended_cols = [
+        "mean_intensity_single_region",
+        "mean_intensity_single_die",
+        "relative_intensity_single_region",
+        "total_flux_single_region",
+        "mean_flux_across_regions_single_die",
+        "total_flux_single_die",
+        "mean_flux_across_dies_single_measurement",
+        "total_flux_single_measurement",
+        "total_flux_single_die_normalized",
+    ]
     if df_res.empty:
-        for col in [
-            "regional_flux",
-            "mean_regional_flux",
-            "die_flux",
-            "mean_die_flux",
-            "measurement_flux",
-            "die_flux_normalized",
-        ]:
+        for col in appended_cols:
             df_res[col] = pd.Series(dtype=np.float32)
         return df_res
 
@@ -145,27 +155,56 @@ def calculate_flux(
             f"[{indices.min()}, {indices.max()}] for array length {n_total}."
         )
 
-    # 1. Compute regional_flux for each row via vectorized integration
     sub_intensity = ary_intensity[indices]
     sub_energy = ary_energy[indices]
-    df_res["regional_flux"] = integrate_spectral_flux(
+
+    # 1. Mean intensity calculations
+    df_res["mean_intensity_single_region"] = np.mean(
+        sub_intensity, axis=-1
+    ).astype(np.float32)
+
+    die_group_int = df_res.groupby(["measurement_id", "die"])[
+        "mean_intensity_single_region"
+    ]
+    df_res["mean_intensity_single_die"] = die_group_int.transform(
+        "mean"
+    ).astype(np.float32)
+
+    # Relative regional intensity: regional mean / die mean
+    denom_intensity = np.maximum(
+        df_res["mean_intensity_single_die"].to_numpy(dtype=np.float32), 1e-12
+    )
+    df_res["relative_intensity_single_region"] = (
+        df_res["mean_intensity_single_region"] / denom_intensity
+    ).astype(np.float32)
+
+    # 2. Flux calculations
+    df_res["total_flux_single_region"] = integrate_spectral_flux(
         sub_intensity, sub_energy, axis=-1
     ).astype(np.float32)
 
-    # 2 & 3. Group by (measurement_id, die) for regional mean and die total
-    die_group = df_res.groupby(["measurement_id", "die"])["regional_flux"]
-    df_res["mean_regional_flux"] = die_group.transform("mean").astype(np.float32)
-    df_res["die_flux"] = die_group.transform("sum").astype(np.float32)
+    die_group_flux = df_res.groupby(["measurement_id", "die"])[
+        "total_flux_single_region"
+    ]
+    df_res["mean_flux_across_regions_single_die"] = die_group_flux.transform(
+        "mean"
+    ).astype(np.float32)
+    df_res["total_flux_single_die"] = die_group_flux.transform("sum").astype(
+        np.float32
+    )
 
-    # 4, 5 & 6. Group unique dies for measurement metrics and z-score flux
     die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
-    meas_mean_die = die_summary.groupby("measurement_id")["die_flux"].mean()
-    meas_total_die = die_summary.groupby("measurement_id")["die_flux"].sum()
+    meas_mean_die = die_summary.groupby("measurement_id")[
+        "total_flux_single_die"
+    ].mean()
+    meas_total_die = die_summary.groupby("measurement_id")[
+        "total_flux_single_die"
+    ].sum()
 
-    df_res["mean_die_flux"] = (
+    df_res["mean_flux_across_dies_single_measurement"] = (
         df_res["measurement_id"].map(meas_mean_die).astype(np.float32)
     )
-    df_res["measurement_flux"] = (
+    df_res["total_flux_single_measurement"] = (
         df_res["measurement_id"].map(meas_total_die).astype(np.float32)
     )
 
@@ -174,8 +213,9 @@ def calculate_flux(
     if fit_split is not None:
         if "split" not in df_res.columns:
             raise KeyError(
-                "df_meta must contain 'split' column to compute 'die_flux_normalized'. "
-                "Please run split_measurement_sessions before standardizing die flux."
+                "df_meta must contain 'split' column to compute "
+                "'total_flux_single_die_normalized'. Please run "
+                "split_measurement_sessions before standardizing die flux."
             )
         if not (df_res["split"] == fit_split).any():
             raise ValueError(
@@ -183,40 +223,44 @@ def calculate_flux(
                 f"Available splits: {list(df_res['split'].dropna().unique())}."
             )
         die_fit = die_summary[die_summary["split"] == fit_split]
-        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+        die_flux_vals = die_fit["total_flux_single_die"].to_numpy(dtype=np.float64)
         flux_mean = float(np.mean(die_flux_vals))
         flux_std = float(np.std(die_flux_vals))
         if flux_std == 0.0:
             warnings.warn(
-                f"Standard deviation of die_flux across '{fit_split}' dies is 0.0; "
-                "setting die_flux_normalized to 0.0."
+                f"Standard deviation of total_flux_single_die across '{fit_split}' "
+                "dies is 0.0; setting total_flux_single_die_normalized to 0.0."
             )
-            df_res["die_flux_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
         else:
-            df_res["die_flux_normalized"] = (
-                (df_res["die_flux"] - flux_mean) / flux_std
+            df_res["total_flux_single_die_normalized"] = (
+                (df_res["total_flux_single_die"] - flux_mean) / flux_std
             ).astype(np.float32)
     elif "split" in df_res.columns and (df_res["split"] == "train").any():
         die_fit = die_summary[die_summary["split"] == "train"]
-        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+        die_flux_vals = die_fit["total_flux_single_die"].to_numpy(dtype=np.float64)
         flux_mean = float(np.mean(die_flux_vals))
         flux_std = float(np.std(die_flux_vals))
         if flux_std == 0.0:
             warnings.warn(
-                "Standard deviation of die_flux across 'train' dies is 0.0; "
-                "setting die_flux_normalized to 0.0."
+                "Standard deviation of total_flux_single_die across 'train' "
+                "dies is 0.0; setting total_flux_single_die_normalized to 0.0."
             )
-            df_res["die_flux_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
         else:
-            df_res["die_flux_normalized"] = (
-                (df_res["die_flux"] - flux_mean) / flux_std
+            df_res["total_flux_single_die_normalized"] = (
+                (df_res["total_flux_single_die"] - flux_mean) / flux_std
             ).astype(np.float32)
     else:
-        df_res["die_flux_normalized"] = pd.Series(
+        df_res["total_flux_single_die_normalized"] = pd.Series(
             np.nan, index=df_res.index, dtype=np.float32
         )
 
     return df_res
+
+
+# Alias for backward compatibility
+calculate_flux = calculate_flux_and_intensity
 
 
 def calculate_normalized_time(
@@ -224,10 +268,6 @@ def calculate_normalized_time(
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Standardize measurement time across unique measurement sessions.
-
-    Computes the time difference between each measurement timestamp and the
-    mean timestamp across unique measurements (optionally fitting mean and std
-    strictly on the training split defined by config['fit_split']).
 
     Parameters
     ----------
@@ -317,14 +357,14 @@ def standardize_metadata_features(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Standardize metadata features ('time_normalized', 'die_flux_normalized')
-    strictly on the training split to prevent data leakage.
+    """Standardize metadata features ('time_normalized' and
+    'total_flux_single_die_normalized') on train split without data leakage.
 
     Parameters
     ----------
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'measurement_id', 'die', and optionally
-        'time', 'die_flux', and 'split'.
+        'time', 'total_flux_single_die', and 'split'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'fit_split' (str): Split name (e.g. 'train') to compute mean
@@ -334,7 +374,7 @@ def standardize_metadata_features(
     -------
     pd.DataFrame
         New copy of df_meta with standardized 'time_normalized' and
-        'die_flux_normalized' columns.
+        'total_flux_single_die_normalized' columns.
 
     Raises
     ------
@@ -364,25 +404,26 @@ def standardize_metadata_features(
     if "time" in df_res.columns:
         df_res = calculate_normalized_time(df_res, config={"fit_split": fit_split})
 
-    if (
-        "die_flux" in df_res.columns
-        and "die" in df_res.columns
-        and "measurement_id" in df_res.columns
-    ):
+    flux_col = (
+        "total_flux_single_die"
+        if "total_flux_single_die" in df_res.columns
+        else ("die_flux" if "die_flux" in df_res.columns else None)
+    )
+    if flux_col is not None and "die" in df_res.columns and "measurement_id" in df_res.columns:
         die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
         die_fit = die_summary[die_summary["split"] == fit_split]
-        die_flux_vals = die_fit["die_flux"].to_numpy(dtype=np.float64)
+        die_flux_vals = die_fit[flux_col].to_numpy(dtype=np.float64)
         flux_mean = float(np.mean(die_flux_vals))
         flux_std = float(np.std(die_flux_vals))
         if flux_std == 0.0:
             warnings.warn(
-                f"Standard deviation of die_flux across '{fit_split}' dies is 0.0; "
-                "setting die_flux_normalized to 0.0."
+                f"Standard deviation of {flux_col} across '{fit_split}' dies is 0.0; "
+                "setting total_flux_single_die_normalized to 0.0."
             )
-            df_res["die_flux_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
         else:
-            df_res["die_flux_normalized"] = (
-                (df_res["die_flux"] - flux_mean) / flux_std
+            df_res["total_flux_single_die_normalized"] = (
+                (df_res[flux_col] - flux_mean) / flux_std
             ).astype(np.float32)
 
     return df_res
@@ -395,9 +436,9 @@ def compute_die_total_flux(
 ) -> dict[tuple[str, int], float]:
     """Calculate total integrated spectral flux for (measurement_id, die).
 
-    If 'die_flux' is already present in df_meta, it is retrieved directly.
-    Otherwise, fluxes are computed by numerical integration across regional
-    spectra.
+    If 'total_flux_single_die' (or 'die_flux') is already present in df_meta,
+    it is retrieved directly. Otherwise, fluxes are computed by numerical
+    integration across regional spectra.
 
     Parameters
     ----------
@@ -415,23 +456,29 @@ def compute_die_total_flux(
     dict[tuple[str, int], float]
         Dictionary mapping (measurement_id, die) to total integrated flux.
     """
-    if "die_flux" in df_meta.columns and not df_meta["die_flux"].isna().all():
+    col_name = None
+    if "total_flux_single_die" in df_meta.columns and not df_meta["total_flux_single_die"].isna().all():
+        col_name = "total_flux_single_die"
+    elif "die_flux" in df_meta.columns and not df_meta["die_flux"].isna().all():
+        col_name = "die_flux"
+
+    if col_name is not None:
         sub = df_meta.drop_duplicates(subset=["measurement_id", "die"])
         invalid_rows = [
             (str(r.measurement_id), int(r.die))
             for r in sub.itertuples()
-            if pd.isna(r.die_flux) or not np.isfinite(float(r.die_flux))
+            if pd.isna(getattr(r, col_name)) or not np.isfinite(float(getattr(r, col_name)))
         ]
         if invalid_rows:
             sample_invalid = invalid_rows[:5]
             raise ValueError(
-                f"df_meta contains invalid or NaN 'die_flux' values for "
+                f"df_meta contains invalid or NaN '{col_name}' values for "
                 f"{len(invalid_rows)} (measurement_id, die) pairs: "
                 f"{sample_invalid}. All rows must have valid numerical "
-                "die_flux if the column is present."
+                f"{col_name} if the column is present."
             )
         return {
-            (str(r.measurement_id), int(r.die)): max(float(r.die_flux), 1e-4)
+            (str(r.measurement_id), int(r.die)): max(float(getattr(r, col_name)), 1e-4)
             for r in sub.itertuples()
         }
 

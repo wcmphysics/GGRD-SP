@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from utility.flux import compute_die_total_flux, integrate_spectral_flux
+from utility.flux_and_intensity import compute_die_total_flux, integrate_spectral_flux
 from utility.patching import calculate_window_points, extract_sliding_windows
 from utility.quantification import calculate_shirley_background
 

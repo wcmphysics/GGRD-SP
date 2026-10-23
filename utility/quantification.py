@@ -12,7 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from utility.flux import trapezoid_integral
+from utility.flux_and_intensity import trapezoid_integral
 
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation

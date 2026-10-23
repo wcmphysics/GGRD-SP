@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from utility.pseudo_measurement import generate_pseudo_measurements
-from utility.flux import compute_die_total_flux
+from utility.flux_and_intensity import compute_die_total_flux
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
     _find_minima_endpoints,

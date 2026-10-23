@@ -1,4 +1,4 @@
-"""Unit tests for utility.flux module."""
+"""Unit tests for utility.flux_and_intensity module."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from utility.flux import (
+from utility.flux_and_intensity import (
     calculate_flux,
+    calculate_flux_and_intensity,
     calculate_normalized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
@@ -105,13 +106,34 @@ class TestCalculateFlux(unittest.TestCase):
             "split": ["train", "train", "train", "train"],
         })
 
-    def test_hierarchical_flux_metrics(self) -> None:
-        """Verify exact hierarchical relationships of computed flux columns."""
-        df_res = calculate_flux(self.ary_intensity, self.ary_energy, self.df_meta)
+    def test_hierarchical_flux_and_intensity_metrics(self) -> None:
+        """Verify exact hierarchical relationships of flux and intensity columns."""
+        df_res = calculate_flux_and_intensity(
+            self.ary_intensity, self.ary_energy, self.df_meta
+        )
+
+        # Expected regional mean intensities
+        # Die 1: region 0 is 2.0, region 1 is 3.0 -> die mean is 2.5
+        # Die 2: region 0 is 4.0, region 1 is 6.0 -> die mean is 5.0
+        np.testing.assert_allclose(
+            df_res["mean_intensity_single_region"].to_numpy(),
+            [2.0, 3.0, 4.0, 6.0],
+            rtol=1e-5,
+        )
+        np.testing.assert_allclose(
+            df_res["mean_intensity_single_die"].to_numpy(),
+            [2.5, 2.5, 5.0, 5.0],
+            rtol=1e-5,
+        )
+        np.testing.assert_allclose(
+            df_res["relative_intensity_single_region"].to_numpy(),
+            [2.0 / 2.5, 3.0 / 2.5, 4.0 / 5.0, 6.0 / 5.0],
+            rtol=1e-5,
+        )
 
         # Expected regional fluxes
         np.testing.assert_allclose(
-            df_res["regional_flux"].to_numpy(),
+            df_res["total_flux_single_region"].to_numpy(),
             [20.0, 30.0, 40.0, 60.0],
             rtol=1e-5,
         )
@@ -119,32 +141,33 @@ class TestCalculateFlux(unittest.TestCase):
         # Die 1 has regions with flux 20 and 30 -> mean 25, total 50
         # Die 2 has regions with flux 40 and 60 -> mean 50, total 100
         np.testing.assert_allclose(
-            df_res["mean_regional_flux"].to_numpy(),
+            df_res["mean_flux_across_regions_single_die"].to_numpy(),
             [25.0, 25.0, 50.0, 50.0],
             rtol=1e-5,
         )
         np.testing.assert_allclose(
-            df_res["die_flux"].to_numpy(),
+            df_res["total_flux_single_die"].to_numpy(),
             [50.0, 50.0, 100.0, 100.0],
             rtol=1e-5,
         )
 
-        # Measurement m1 has 2 dies with die_flux 50 and 100
-        # mean_die_flux = (50 + 100) / 2 = 75.0
-        # measurement_flux = 50 + 100 = 150.0
+        # Measurement m1 has 2 dies with die flux 50 and 100
+        # mean_flux_across_dies = (50 + 100) / 2 = 75.0
+        # total_flux_single_measurement = 50 + 100 = 150.0
         np.testing.assert_allclose(
-            df_res["mean_die_flux"].to_numpy(),
+            df_res["mean_flux_across_dies_single_measurement"].to_numpy(),
             [75.0, 75.0, 75.0, 75.0],
             rtol=1e-5,
         )
         np.testing.assert_allclose(
-            df_res["measurement_flux"].to_numpy(),
+            df_res["total_flux_single_measurement"].to_numpy(),
             [150.0, 150.0, 150.0, 150.0],
             rtol=1e-5,
         )
-        # die_flux_normalized for unique dies [50.0, 100.0] -> [-1.0, 1.0]
+        # total_flux_single_die_normalized for unique dies:
+        # [50.0, 100.0] -> [-1.0, 1.0]
         np.testing.assert_allclose(
-            df_res["die_flux_normalized"].to_numpy(),
+            df_res["total_flux_single_die_normalized"].to_numpy(),
             [-1.0, -1.0, 1.0, 1.0],
             rtol=1e-5,
         )
@@ -160,9 +183,13 @@ class TestCalculateFlux(unittest.TestCase):
             "split": ["train", "train"],
         })
         with self.assertWarns(UserWarning):
-            res = calculate_flux(identical_intensity, self.ary_energy[:2], meta)
+            res = calculate_flux_and_intensity(
+                identical_intensity, self.ary_energy[:2], meta
+            )
         np.testing.assert_allclose(
-            res["die_flux_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
+            res["total_flux_single_die_normalized"].to_numpy(),
+            [0.0, 0.0],
+            atol=1e-6,
         )
 
     def test_calculate_flux_missing_split_raises_key_error(self) -> None:
@@ -171,7 +198,7 @@ class TestCalculateFlux(unittest.TestCase):
         """
         bad_meta = self.df_meta.drop(columns=["split"])
         with self.assertRaises(KeyError):
-            calculate_flux(
+            calculate_flux_and_intensity(
                 self.ary_intensity,
                 self.ary_energy,
                 bad_meta,
@@ -183,7 +210,7 @@ class TestCalculateFlux(unittest.TestCase):
         df_meta['split'].
         """
         with self.assertRaises(ValueError):
-            calculate_flux(
+            calculate_flux_and_intensity(
                 self.ary_intensity,
                 self.ary_energy,
                 self.df_meta,
@@ -191,17 +218,21 @@ class TestCalculateFlux(unittest.TestCase):
             )
 
     def test_calculate_flux_unsplit_leaves_die_flux_normalized_nan(self) -> None:
-        """Verify die_flux_normalized is NaN when df_meta has no 'split'
-        column.
+        """Verify total_flux_single_die_normalized is NaN when df_meta has
+        no 'split' column.
         """
         bad_meta = self.df_meta.drop(columns=["split"])
-        res = calculate_flux(self.ary_intensity, self.ary_energy, bad_meta)
-        self.assertTrue(res["die_flux_normalized"].isna().all())
+        res = calculate_flux_and_intensity(
+            self.ary_intensity, self.ary_energy, bad_meta
+        )
+        self.assertTrue(res["total_flux_single_die_normalized"].isna().all())
 
     def test_df_meta_immutability(self) -> None:
         """Verify original df_meta DataFrame is not mutated in-place."""
         cols_before = list(self.df_meta.columns)
-        _ = calculate_flux(self.ary_intensity, self.ary_energy, self.df_meta)
+        _ = calculate_flux_and_intensity(
+            self.ary_intensity, self.ary_energy, self.df_meta
+        )
         self.assertEqual(list(self.df_meta.columns), cols_before)
 
     def test_empty_dataframe(self) -> None:
@@ -209,16 +240,19 @@ class TestCalculateFlux(unittest.TestCase):
         empty_meta = pd.DataFrame(
             columns=["spectrum_index", "measurement_id", "die", "region"]
         )
-        res = calculate_flux(
+        res = calculate_flux_and_intensity(
             np.empty((0, 10)), np.empty((0, 10)), empty_meta
         )
         for col in [
-            "regional_flux",
-            "mean_regional_flux",
-            "die_flux",
-            "mean_die_flux",
-            "measurement_flux",
-            "die_flux_normalized",
+            "mean_intensity_single_region",
+            "mean_intensity_single_die",
+            "relative_intensity_single_region",
+            "total_flux_single_region",
+            "mean_flux_across_regions_single_die",
+            "total_flux_single_die",
+            "mean_flux_across_dies_single_measurement",
+            "total_flux_single_measurement",
+            "total_flux_single_die_normalized",
         ]:
             self.assertIn(col, res.columns)
         self.assertEqual(len(res), 0)
@@ -226,7 +260,7 @@ class TestCalculateFlux(unittest.TestCase):
     def test_mismatched_intensity_energy_raises(self) -> None:
         """Verify ValueError raised when intensity and energy lengths differ."""
         with self.assertRaises(ValueError):
-            calculate_flux(
+            calculate_flux_and_intensity(
                 self.ary_intensity[:2], self.ary_energy, self.df_meta
             )
 
@@ -234,29 +268,39 @@ class TestCalculateFlux(unittest.TestCase):
         """Verify ValueError raised when required columns are absent."""
         bad_meta = self.df_meta.drop(columns=["region"])
         with self.assertRaises(ValueError):
-            calculate_flux(self.ary_intensity, self.ary_energy, bad_meta)
+            calculate_flux_and_intensity(
+                self.ary_intensity, self.ary_energy, bad_meta
+            )
 
     def test_out_of_bounds_index_raises(self) -> None:
         """Verify ValueError raised when spectrum_index is out-of-bounds."""
         bad_meta = self.df_meta.copy()
         bad_meta.loc[0, "spectrum_index"] = 999
         with self.assertRaises(ValueError):
-            calculate_flux(self.ary_intensity, self.ary_energy, bad_meta)
+            calculate_flux_and_intensity(
+                self.ary_intensity, self.ary_energy, bad_meta
+            )
 
     def test_negative_index_raises(self) -> None:
         """Verify ValueError raised when spectrum_index has negative value."""
         bad_meta = self.df_meta.copy()
         bad_meta.loc[0, "spectrum_index"] = -1
         with self.assertRaises(ValueError):
-            calculate_flux(self.ary_intensity, self.ary_energy, bad_meta)
+            calculate_flux_and_intensity(
+                self.ary_intensity, self.ary_energy, bad_meta
+            )
 
     def test_non_default_dataframe_index(self) -> None:
-        """Verify calculate_flux preserves non-standard DataFrame index."""
+        """Verify calculate_flux_and_intensity preserves non-standard
+        DataFrame index.
+        """
         custom_meta = self.df_meta.copy()
         custom_meta.index = pd.Index([10, 42, 100, 255])
-        res = calculate_flux(self.ary_intensity, self.ary_energy, custom_meta)
+        res = calculate_flux_and_intensity(
+            self.ary_intensity, self.ary_energy, custom_meta
+        )
         self.assertEqual(list(res.index), [10, 42, 100, 255])
-        self.assertFalse(res["mean_die_flux"].isna().any())
+        self.assertFalse(res["mean_flux_across_dies_single_measurement"].isna().any())
 
     def test_multi_measurement_isolation(self) -> None:
         """Verify hierarchical metrics correctly isolate multiple sessions."""
@@ -266,38 +310,42 @@ class TestCalculateFlux(unittest.TestCase):
             "die": [1, 2, 1, 1],
             "region": ["C1s", "C1s", "C1s", "O1s"],
         })
-        res = calculate_flux(self.ary_intensity, self.ary_energy, meta)
+        res = calculate_flux_and_intensity(
+            self.ary_intensity, self.ary_energy, meta
+        )
         # m1 has die 1 (flux 20) and die 2 (flux 30) -> total 50, mean die 25
         m1_rows = res[res["measurement_id"] == "m1"]
-        self.assertTrue((m1_rows["measurement_flux"] == 50.0).all())
-        self.assertTrue((m1_rows["mean_die_flux"] == 25.0).all())
+        self.assertTrue((m1_rows["total_flux_single_measurement"] == 50.0).all())
+        self.assertTrue((m1_rows["mean_flux_across_dies_single_measurement"] == 25.0).all())
         # m2 has 1 die (die 1) with 2 regions (flux 40 and 60) -> total 100
         m2_rows = res[res["measurement_id"] == "m2"]
-        self.assertTrue((m2_rows["measurement_flux"] == 100.0).all())
-        self.assertTrue((m2_rows["mean_die_flux"] == 100.0).all())
+        self.assertTrue((m2_rows["total_flux_single_measurement"] == 100.0).all())
+        self.assertTrue((m2_rows["mean_flux_across_dies_single_measurement"] == 100.0).all())
 
     def test_integration_with_synthetic_pipeline(self) -> None:
-        """Verify calculate_flux works with generate_pseudo_measurements."""
+        """Verify calculate_flux_and_intensity works with synthetic data."""
         config = get_default_measurement_config()
         config["N_measurement"] = 2
         config["N_die"] = 2
         i_arr, e_arr, meta = generate_pseudo_measurements(config)
         meta["split"] = "train"
-        meta_with_flux = calculate_flux(i_arr, e_arr, meta)
+        meta_with_flux = calculate_flux_and_intensity(i_arr, e_arr, meta)
 
         self.assertEqual(len(meta_with_flux), len(meta))
         for col in [
-            "regional_flux",
-            "mean_regional_flux",
-            "die_flux",
-            "mean_die_flux",
-            "measurement_flux",
+            "mean_intensity_single_region",
+            "mean_intensity_single_die",
+            "relative_intensity_single_region",
+            "total_flux_single_region",
+            "mean_flux_across_regions_single_die",
+            "total_flux_single_die",
+            "mean_flux_across_dies_single_measurement",
+            "total_flux_single_measurement",
+            "total_flux_single_die_normalized",
         ]:
             self.assertIn(col, meta_with_flux.columns)
             self.assertFalse(meta_with_flux[col].isna().any())
-            self.assertTrue((meta_with_flux[col] > 0).all())
-        self.assertIn("die_flux_normalized", meta_with_flux.columns)
-        self.assertFalse(meta_with_flux["die_flux_normalized"].isna().any())
+        self.assertTrue((meta_with_flux["total_flux_single_region"] > 0).all())
 
 
 class TestCalculateNormalizedTime(unittest.TestCase):
@@ -399,20 +447,36 @@ class TestCalculateNormalizedTime(unittest.TestCase):
 
 
 class TestComputeDieTotalFlux(unittest.TestCase):
-    """Test suite for compute_die_total_flux in utility.flux."""
+    """Test suite for compute_die_total_flux in utility.flux_and_intensity."""
 
     def test_nan_die_flux_raises_value_error(self) -> None:
-        """Verify ValueError is raised if any row has NaN die_flux when column exists."""
+        """Verify ValueError raised if row has NaN total_flux_single_die."""
         df_meta = pd.DataFrame({
             "measurement_id": ["m1", "m1", "m2"],
             "die": [0, 1, 0],
             "spectrum_index": [0, 1, 2],
-            "die_flux": [100.0, np.nan, 80.0],
+            "total_flux_single_die": [100.0, np.nan, 80.0],
         })
         ary_intensity = np.ones((3, 10))
         with self.assertRaises(ValueError) as ctx:
             compute_die_total_flux(df_meta, ary_intensity)
-        self.assertIn("invalid or NaN 'die_flux'", str(ctx.exception))
+        self.assertIn("invalid or NaN 'total_flux_single_die'", str(ctx.exception))
+
+    def test_existing_column_fast_path(self) -> None:
+        """Verify compute_die_total_flux directly uses total_flux_single_die
+        if present.
+        """
+        df_meta = pd.DataFrame({
+            "measurement_id": ["m1", "m1", "m2"],
+            "die": [0, 1, 0],
+            "spectrum_index": [0, 1, 2],
+            "total_flux_single_die": [100.0, 50.0, 80.0],
+        })
+        ary_intensity = np.ones((3, 10))
+        f_map = compute_die_total_flux(df_meta, ary_intensity)
+        self.assertEqual(f_map[("m1", 0)], 100.0)
+        self.assertEqual(f_map[("m1", 1)], 50.0)
+        self.assertEqual(f_map[("m2", 0)], 80.0)
 
 
 class TestStandardizeMetadataFeatures(unittest.TestCase):
@@ -433,7 +497,7 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
                 "2026-01-03 00:00:00",
                 "2026-01-03 00:00:00",
             ],
-            "die_flux": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            "total_flux_single_die": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
         })
 
     def test_standardize_on_train_split_only(self) -> None:
@@ -442,18 +506,18 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
             self.df_meta, config={"fit_split": "train"}
         )
         self.assertIn("time_normalized", res.columns)
-        self.assertIn("die_flux_normalized", res.columns)
+        self.assertIn("total_flux_single_die_normalized", res.columns)
 
         # Train dies are 10.0 and 20.0 -> mean 15.0, std 5.0
-        train_flux = res[res["split"] == "train"]["die_flux_normalized"].to_numpy()
+        train_flux = res[res["split"] == "train"]["total_flux_single_die_normalized"].to_numpy()
         np.testing.assert_allclose(train_flux, [-1.0, 1.0], atol=1e-5)
 
         # Val dies (30.0, 40.0) -> (30-15)/5 = 3.0, (40-15)/5 = 5.0
-        val_flux = res[res["split"] == "val"]["die_flux_normalized"].to_numpy()
+        val_flux = res[res["split"] == "val"]["total_flux_single_die_normalized"].to_numpy()
         np.testing.assert_allclose(val_flux, [3.0, 5.0], atol=1e-5)
 
         # Test dies (50.0, 60.0) -> (50-15)/5 = 7.0, (60-15)/5 = 9.0
-        test_flux = res[res["split"] == "test"]["die_flux_normalized"].to_numpy()
+        test_flux = res[res["split"] == "test"]["total_flux_single_die_normalized"].to_numpy()
         np.testing.assert_allclose(test_flux, [7.0, 9.0], atol=1e-5)
 
     def test_calculate_normalized_time_with_fit_split(self) -> None:
