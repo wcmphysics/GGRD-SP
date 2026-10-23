@@ -170,10 +170,148 @@ def extract_element_vocabulary(
     return sorted(vocab_set)
 
 
+def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve and inject cross-section configuration defaults.
+
+    Extracts materials and element vocabulary and propagates global defaults
+    (tools, sliding window settings, regions, FiLM config) into individual stage
+    configuration dictionaries without mutating explicit overrides.
+
+    Parameters
+    ----------
+    config : dict[str, Any]
+        Raw configuration dictionary loaded from YAML.
+
+    Returns
+    -------
+    dict[str, Any]
+        Resolved configuration dictionary with fully populated stage configs.
+    """
+    resolved = dict(config)
+
+    # 1. Resolve material elements and element vocabulary
+    if "materials" in resolved and isinstance(resolved["materials"], dict):
+        materials = load_material_elements(resolved)
+        element_vocab = extract_element_vocabulary(materials)
+        film_sec = resolved.setdefault("film", {})
+        if isinstance(film_sec, dict):
+            film_sec.setdefault("material_elements", materials)
+            film_sec.setdefault("element_vocab", element_vocab)
+
+    # 2. Extract global settings
+    global_cfg = resolved.get("global", {})
+    source_tool = str(global_cfg.get("source_tool", "J4"))
+    target_tool = str(global_cfg.get("target_tool", "J5"))
+    model_type = str(global_cfg.get("model_type", "resnet"))
+    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
+    use_film = bool(global_cfg.get("use_film", False))
+    unified_model = bool(global_cfg.get("unified_model", True))
+    example_region = str(global_cfg.get("example_region", "Ti2p"))
+    sample_measurement_id = str(
+        global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
+    )
+
+    # 3. Extract regions
+    data_gen = resolved.get("data_generation", {})
+    regions = data_gen.get("regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"])
+
+    # 4. Inject into pairing
+    pairing = resolved.setdefault("pairing", {})
+    if isinstance(pairing, dict):
+        pairing.setdefault("source_tool", source_tool)
+        pairing.setdefault("target_tool", target_tool)
+
+    # 5. Inject into splitting
+    splitting = resolved.setdefault("splitting", {})
+    if isinstance(splitting, dict):
+        splitting.setdefault("source_tool", source_tool)
+        splitting.setdefault("target_tool", target_tool)
+
+    # 6. Inject into dataset
+    dataset = resolved.setdefault("dataset", {})
+    if isinstance(dataset, dict):
+        dataset.setdefault("source_tool", source_tool)
+        dataset.setdefault("target_tool", target_tool)
+        dataset.setdefault("use_sliding_window", use_sliding_window)
+        dataset.setdefault("regions", regions)
+
+    # 7. Inject into noise_analysis and noise_plot
+    noise_analysis = resolved.setdefault("noise_analysis", {})
+    if isinstance(noise_analysis, dict):
+        noise_analysis.setdefault("regions", [example_region])
+
+    noise_plot = resolved.setdefault("noise_plot", {})
+    if isinstance(noise_plot, dict):
+        noise_plot.setdefault(
+            "example",
+            {
+                "measurement_id": sample_measurement_id,
+                "region": example_region,
+            },
+        )
+
+    # 8. Inject into film
+    film = resolved.setdefault("film", {})
+    if isinstance(film, dict):
+        film.setdefault("use_film", use_film)
+        film.setdefault("num_regions", len(regions))
+
+    # 9. Format bayesian_opt bounds
+    bo = resolved.setdefault("bayesian_opt", {})
+    if isinstance(bo, dict):
+        lr_b = bo.get("learning_rate_bounds")
+        if isinstance(lr_b, (list, tuple)):
+            bo["learning_rate_bounds"] = tuple(lr_b)
+        l2_b = bo.get("l2_bounds")
+        if isinstance(l2_b, (list, tuple)):
+            bo["l2_bounds"] = tuple(l2_b)
+
+    # 10. Inject into training
+    training = resolved.setdefault("training", {})
+    if isinstance(training, dict):
+        training.setdefault("model_type", model_type)
+        training.setdefault("unified_model", unified_model)
+        training.setdefault("use_film", film.get("use_film", use_film))
+        training.setdefault("film_config", film)
+
+    # 11. Inject into prediction
+    prediction = resolved.setdefault("prediction", {})
+    if isinstance(prediction, dict):
+        prediction.setdefault("source_tool", source_tool)
+        prediction.setdefault("target_tool", target_tool)
+        prediction.setdefault("film_config", film)
+
+    # 12. Inject into metrics_report
+    cost = resolved.get("cost", {})
+    norm_by_max = cost.get("normalized_by_target_max", True)
+    metrics_rep = resolved.setdefault("metrics_report", {})
+    if isinstance(metrics_rep, dict):
+        metrics_rep.setdefault("normalized_by_target_max", norm_by_max)
+        mse_metric = "MSE_normalized_by_target" if norm_by_max else "MSE"
+        existing_metrics = list(
+            metrics_rep.get("metrics", ["peak_err%", "max%err"])
+        )
+        if mse_metric not in existing_metrics and "MSE" not in existing_metrics:
+            existing_metrics = [mse_metric, *existing_metrics]
+        metrics_rep["metrics"] = existing_metrics
+
+    # 13. Inject into visualization
+    vis = resolved.setdefault("visualization", {})
+    if isinstance(vis, dict):
+        vis.setdefault("source_tool", source_tool)
+        vis.setdefault("target_tool", target_tool)
+        vis.setdefault("example_region", example_region)
+        vis.setdefault("sample_measurement_id", sample_measurement_id)
+        vis.setdefault("use_sliding_window", use_sliding_window)
+        vis.setdefault("noise_plot_config", noise_plot)
+
+    return resolved
+
+
 def load_default_config(
     file_path: str | Path = "config/default_config.yaml",
 ) -> dict[str, Any]:
-    """Load default pipeline configuration from config/default_config.yaml.
+    """Load and resolve default pipeline configuration.
 
     Parameters
     ----------
@@ -184,6 +322,7 @@ def load_default_config(
     Returns
     -------
     dict[str, Any]
-        Top-level pipeline configuration dictionary.
+        Fully resolved top-level pipeline configuration dictionary.
     """
-    return load_yaml(file_path)
+    raw = load_yaml(file_path)
+    return resolve_pipeline_config(raw)

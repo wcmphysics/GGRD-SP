@@ -11,6 +11,7 @@ from utility.config_loader import (
     load_default_config,
     load_material_elements,
     load_yaml,
+    resolve_pipeline_config,
 )
 
 
@@ -137,6 +138,67 @@ class TestConfigLoader(unittest.TestCase):
         # Verify dynamic vocabulary
         vocab = extract_element_vocabulary(mat_elements)
         self.assertEqual(vocab, sorted(["Al", "C", "Cl", "N", "O", "Si", "Ti"]))
+
+        # Verify resolve_pipeline_config resolution inside load_default_config
+        self.assertIn("material_elements", cfg["film"])
+        self.assertIn("element_vocab", cfg["film"])
+        self.assertEqual(cfg["pairing"]["source_tool"], cfg["global"]["source_tool"])
+        self.assertIs(cfg["training"]["film_config"], cfg["film"])
+        self.assertIs(cfg["prediction"]["film_config"], cfg["film"])
+
+    def test_resolve_pipeline_config_propagation_and_overrides(self) -> None:
+        """Verify global defaults propagate and explicit overrides persist."""
+        raw_cfg = {
+            "materials": {
+                "MatA": {"elements": ["Ti", "O"]},
+            },
+            "global": {
+                "source_tool": "ToolA",
+                "target_tool": "ToolB",
+                "model_type": "residual_unet",
+                "use_sliding_window": True,
+                "use_film": True,
+                "unified_model": False,
+                "example_region": "Ti2p",
+                "sample_measurement_id": "Meas_01",
+            },
+            "data_generation": {
+                "regions": ["Ti2p", "O1s"],
+            },
+            "dataset": {
+                "source_tool": "CustomTool",  # Explicit override
+            },
+            "bayesian_opt": {
+                "learning_rate_bounds": [1e-4, 1e-2],
+                "l2_bounds": [1e-6, 1e-3],
+            },
+        }
+        resolved = resolve_pipeline_config(raw_cfg)
+
+        # Overridden tool persists in dataset
+        self.assertEqual(resolved["dataset"]["source_tool"], "CustomTool")
+        # Global propagates to pairing
+        self.assertEqual(resolved["pairing"]["source_tool"], "ToolA")
+        self.assertEqual(resolved["pairing"]["target_tool"], "ToolB")
+        # Global sliding window propagates to dataset
+        self.assertTrue(resolved["dataset"]["use_sliding_window"])
+        # Element vocabulary and materials populated in film
+        self.assertEqual(resolved["film"]["element_vocab"], ["O", "Ti"])
+        # Training and prediction share film_config reference
+        self.assertIs(resolved["training"]["film_config"], resolved["film"])
+        self.assertIs(resolved["prediction"]["film_config"], resolved["film"])
+        # Modifying film modifies training film_config
+        resolved["film"]["test_mutability"] = 123
+        self.assertEqual(
+            resolved["training"]["film_config"]["test_mutability"], 123
+        )
+        # Bayesian opt bounds converted to tuples
+        self.assertIsInstance(
+            resolved["bayesian_opt"]["learning_rate_bounds"], tuple
+        )
+        self.assertIsInstance(
+            resolved["bayesian_opt"]["l2_bounds"], tuple
+        )
 
 
 if __name__ == "__main__":
