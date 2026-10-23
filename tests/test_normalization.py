@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -27,36 +28,89 @@ class TestNormalization(unittest.TestCase):
         )
         self.df_meta = pd.DataFrame(
             [
-                {"spectrum_index": 0, "measurement_id": "M1", "die": 0, "region": "Al2p"},
-                {"spectrum_index": 1, "measurement_id": "M1", "die": 0, "region": "Ti2p"},
-                {"spectrum_index": 2, "measurement_id": "M2", "die": 1, "region": "Al2p"},
-                {"spectrum_index": 3, "measurement_id": "M2", "die": 1, "region": "Ti2p"},
+                {
+                    "spectrum_index": 0,
+                    "measurement_id": "M1",
+                    "die": 0,
+                    "region": "Al2p",
+                    "mean_intensity_single_die": 150.0,
+                },
+                {
+                    "spectrum_index": 1,
+                    "measurement_id": "M1",
+                    "die": 0,
+                    "region": "Ti2p",
+                    "mean_intensity_single_die": 150.0,
+                },
+                {
+                    "spectrum_index": 2,
+                    "measurement_id": "M2",
+                    "die": 1,
+                    "region": "Al2p",
+                    "mean_intensity_single_die": 350.0,
+                },
+                {
+                    "spectrum_index": 3,
+                    "measurement_id": "M2",
+                    "die": 1,
+                    "region": "Ti2p",
+                    "mean_intensity_single_die": 350.0,
+                },
             ]
         )
 
-    def test_normalize_by_total_flux(self) -> None:
-        """Verify total_flux mode divides each region by die total flux."""
+    def test_normalize_by_total_flux_single_die(self) -> None:
+        """Verify by_total_flux_single_die mode divides each region by die flux."""
         norm_i, norm_e, meta = normalize_spectral_data(
             self.ary_intensity,
             self.ary_energy,
             self.df_meta,
-            config={"normalization_mode": "total_flux"},
+            config={"normalization_mode": "by_total_flux_single_die"},
         )
         self.assertEqual(norm_i.shape, self.ary_intensity.shape)
         np.testing.assert_array_equal(norm_e, self.ary_energy)
 
         # Die 0 total flux: area(0) + area(1) = (100 * 10) + (200 * 10) = 3000
-        # norm_i[0] should be 100 / 3000 = 1/30
         expected_0 = 100.0 / 3000.0
         np.testing.assert_allclose(norm_i[0], expected_0, rtol=1e-5)
 
-    def test_normalize_by_regional_max(self) -> None:
-        """Verify regional_max mode normalizes each spectrum to peak 1.0."""
+    def test_normalize_by_mean_intensity_single_die(self) -> None:
+        """Verify by_mean_intensity_single_die divides each region by die mean."""
         norm_i, norm_e, meta = normalize_spectral_data(
             self.ary_intensity,
             self.ary_energy,
             self.df_meta,
-            config={"normalization_mode": "regional_max"},
+            config={"normalization_mode": "by_mean_intensity_single_die"},
+        )
+        self.assertEqual(norm_i.shape, self.ary_intensity.shape)
+        # Die 0: 100 / 150 = 2/3, 200 / 150 = 4/3
+        np.testing.assert_allclose(norm_i[0], 100.0 / 150.0, rtol=1e-5)
+        np.testing.assert_allclose(norm_i[1], 200.0 / 150.0, rtol=1e-5)
+        # Die 1: 300 / 350, 400 / 350
+        np.testing.assert_allclose(norm_i[2], 300.0 / 350.0, rtol=1e-5)
+        np.testing.assert_allclose(norm_i[3], 400.0 / 350.0, rtol=1e-5)
+
+    def test_normalize_by_mean_intensity_single_die_missing_column_raises(
+        self,
+    ) -> None:
+        """Verify ValueError is raised if mean_intensity_single_die missing."""
+        df_no_col = self.df_meta.drop(columns=["mean_intensity_single_die"])
+        with self.assertRaises(ValueError) as ctx:
+            normalize_spectral_data(
+                self.ary_intensity,
+                self.ary_energy,
+                df_no_col,
+                config={"normalization_mode": "by_mean_intensity_single_die"},
+            )
+        self.assertIn("mean_intensity_single_die", str(ctx.exception))
+
+    def test_normalize_by_regional_max_intensity(self) -> None:
+        """Verify by_regional_max_intensity normalizes each spectrum to peak 1.0."""
+        norm_i, norm_e, meta = normalize_spectral_data(
+            self.ary_intensity,
+            self.ary_energy,
+            self.df_meta,
+            config={"normalization_mode": "by_regional_max_intensity"},
         )
         for idx in range(4):
             self.assertAlmostEqual(float(norm_i[idx].max()), 1.0, places=5)
@@ -74,9 +128,9 @@ class TestNormalization(unittest.TestCase):
         np.testing.assert_array_equal(norm_e, self.ary_energy)
         pd.testing.assert_frame_equal(meta, self.df_meta)
 
-    def test_normalize_source_regional_max(self) -> None:
-        """Verify source_regional_max divides paired source and target by
-        source peak while leaving unpaired spectra unscaled.
+    def test_normalize_by_regional_max_intensity_of_source(self) -> None:
+        """Verify by_regional_max_intensity_of_source divides paired source and target
+        by source peak while leaving unpaired spectra unscaled.
         """
         paired_meta = pd.DataFrame(
             [
@@ -118,7 +172,7 @@ class TestNormalization(unittest.TestCase):
             self.ary_intensity,
             self.ary_energy,
             paired_meta,
-            config={"normalization_mode": "source_regional_max"},
+            config={"normalization_mode": "by_regional_max_intensity_of_source"},
         )
         # Source 0 (peak 100): 100 / 100 = 1.0
         np.testing.assert_allclose(norm_i[0], 1.0, rtol=1e-5)
@@ -129,26 +183,38 @@ class TestNormalization(unittest.TestCase):
         # Unpaired Target 3: left unscaled at 400.0
         np.testing.assert_allclose(norm_i[3], 400.0, rtol=1e-5)
 
-    def test_normalize_source_regional_max_missing_columns_raises(self) -> None:
-        """Verify ValueError is raised if pairing columns are missing."""
-        with self.assertRaises(ValueError) as ctx:
-            normalize_spectral_data(
-                self.ary_intensity,
+    def test_normalize_scale_less_than_eps_emits_warning(self) -> None:
+        """Verify warning is emitted and scale clamped when scale <= eps."""
+        zero_intensity = np.zeros_like(self.ary_intensity)
+        df_zero = self.df_meta.copy()
+        df_zero["mean_intensity_single_die"] = 0.0
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            norm_i, _, _ = normalize_spectral_data(
+                zero_intensity,
                 self.ary_energy,
-                self.df_meta,
-                config={"normalization_mode": "source_regional_max"},
+                df_zero,
+                config={
+                    "normalization_mode": "by_mean_intensity_single_die",
+                    "eps": 1e-6,
+                },
             )
-        self.assertIn("spectrum_index_target", str(ctx.exception))
+            self.assertTrue(any(issubclass(w.category, UserWarning) for w in caught))
+            self.assertTrue(
+                any("<= eps" in str(w.message) for w in caught)
+            )
 
     def test_invalid_normalization_mode_raises(self) -> None:
         """Verify ValueError is raised for unrecognized normalization_mode."""
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             normalize_spectral_data(
                 self.ary_intensity,
                 self.ary_energy,
                 self.df_meta,
                 config={"normalization_mode": "invalid_mode"},
             )
+        self.assertIn("invalid_mode", str(ctx.exception))
 
 
 if __name__ == "__main__":
