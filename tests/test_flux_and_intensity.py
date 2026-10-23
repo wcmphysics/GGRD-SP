@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 from utility.flux_and_intensity import (
-    calculate_flux,
     calculate_flux_and_intensity,
     calculate_normalized_time,
     compute_die_total_flux,

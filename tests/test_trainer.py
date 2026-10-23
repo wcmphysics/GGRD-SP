@@ -51,14 +51,14 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "epochs": 6,
             "batch_size": 4,
             "learning_rate": init_lr,
-            "use_lr_scheduler": True,
-            "lr_scheduler_patience": 2,  # Reduce after 2 non-improving epochs
+            "use_learning_rate_scheduler": True,
+            "learning_rate_scheduler_patience": 2,  # Reduce after 2 non-improving epochs
             "early_stopping_patience": 10,  # Do not early stop before scheduler acts
             "verbose": False,
         }
 
         res = train_model_region(self.train_ds, self.val_ds, config=config)
-        lr_history = res["history"]["lr"]
+        lr_history = res["history"]["learning_rate"]
 
         self.assertEqual(len(lr_history), 6)
         self.assertAlmostEqual(lr_history[0], init_lr, places=6)
@@ -74,13 +74,15 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "model": model,
             "epochs": 1,
             "learning_rate": init_lr,
-            "use_lr_scheduler": True,
+            "use_learning_rate_scheduler": True,
             "verbose": False,
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
         resolved_cfg = res["config"]
         expected_min_lr = init_lr / 10000.0
-        self.assertAlmostEqual(resolved_cfg["min_lr"], expected_min_lr, places=8)
+        self.assertAlmostEqual(
+            resolved_cfg["min_learning_rate"], expected_min_lr, places=8
+        )
 
     def test_dynamic_lr_custom_factor_and_explicit_min_lr(self) -> None:
         """Verify custom reduction factor and explicit min_lr are respected."""
@@ -92,14 +94,14 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "epochs": 10,
             "batch_size": 10,
             "learning_rate": init_lr,
-            "lr_reduce_factor": 0.5,
-            "lr_scheduler_patience": 1,
-            "min_lr": custom_min_lr,
+            "learning_rate_reduce_factor": 0.5,
+            "learning_rate_scheduler_patience": 1,
+            "min_learning_rate": custom_min_lr,
             "early_stopping_patience": 10,
             "verbose": False,
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
-        lr_history = res["history"]["lr"]
+        lr_history = res["history"]["learning_rate"]
         # LR will step down: 1e-2 -> 5e-3 -> 2.5e-3 -> 1.25e-3 -> min_lr (1e-3)
         self.assertAlmostEqual(lr_history[-1], custom_min_lr, places=5)
 
@@ -112,8 +114,8 @@ class TestReduceLROnPlateau(unittest.TestCase):
             "epochs": 5,
             "batch_size": 10,
             "learning_rate": init_lr,
-            "use_lr_scheduler": True,
-            "lr_scheduler_patience": 2,
+            "use_learning_rate_scheduler": True,
+            "learning_rate_scheduler_patience": 2,
             "early_stopping_patience": 10,
             "verbose": False,
         }
@@ -127,7 +129,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
             self.assertTrue(np.isnan(vl))
 
         # Scheduler stepped on train_loss and reduced LR
-        lr_history = res["history"]["lr"]
+        lr_history = res["history"]["learning_rate"]
         self.assertLess(lr_history[-1], init_lr)
         self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
 
@@ -209,6 +211,22 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.assertAlmostEqual(resolved_cfg["min_learning_rate"], 1e-4, places=5)
         # Should reduce by 0.8 factor
         self.assertAlmostEqual(res["history"]["learning_rate"][-1], init_lr * 0.8, places=5)
+
+    def test_disallowed_trainer_aliases_raise_key_error(self) -> None:
+        """Verify disallowed legacy aliases raise informative KeyError."""
+        model = DummyConstantModel(n_points=self.n_points)
+        base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
+        disallowed = [
+            "use_lr_scheduler",
+            "lr_reduce_factor",
+            "lr_scheduler_patience",
+            "min_lr",
+        ]
+        for alias in disallowed:
+            with self.assertRaises(KeyError):
+                train_model_region(
+                    self.train_ds, self.val_ds, config={**base_cfg, alias: True}
+                )
 
     def test_invalid_scheduler_parameters_raise_error(self) -> None:
         """Verify invalid scheduler parameters raise ValueError."""

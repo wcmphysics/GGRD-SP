@@ -26,14 +26,14 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": -0.5,
+                "total_flux_single_die_normalized": -0.5,
                 "time_normalized": -1.0,
             },
             {
                 "die": 5,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 1.25,
+                "total_flux_single_die_normalized": 1.25,
                 "time_normalized": 1.0,
             },
         ]
@@ -45,7 +45,7 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIn("die", cond)
         self.assertIn("tool_src", cond)
         self.assertIn("tool_tgt", cond)
-        self.assertIn("die_flux_normalized", cond)
+        self.assertIn("total_flux_single_die_normalized", cond)
         self.assertIn("time_normalized", cond)
 
         self.assertEqual(cond["die"][0].item(), 0)
@@ -53,13 +53,13 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond["tool_src"][0].item(), 0)
         self.assertEqual(cond["tool_tgt"][0].item(), 1)
 
-        self.assertEqual(cond["die_flux_normalized"].shape, (2, 1))
+        self.assertEqual(cond["total_flux_single_die_normalized"].shape, (2, 1))
         self.assertEqual(cond["time_normalized"].shape, (2, 1))
         self.assertAlmostEqual(
-            cond["die_flux_normalized"][0, 0].item(), -0.5, places=4
+            cond["total_flux_single_die_normalized"][0, 0].item(), -0.5, places=4
         )
         self.assertAlmostEqual(
-            cond["die_flux_normalized"][1, 0].item(), 1.25, places=4
+            cond["total_flux_single_die_normalized"][1, 0].item(), 1.25, places=4
         )
         self.assertAlmostEqual(
             cond["time_normalized"][0, 0].item(), -1.0, places=4
@@ -76,7 +76,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 2,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.2,
+                "total_flux_single_die_normalized": 0.2,
                 "time_normalized": -0.3,
             }
         ]
@@ -113,7 +113,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.1 * i,
+                "total_flux_single_die_normalized": 0.1 * i,
                 "time_normalized": -0.2 * i,
             }
             for i in range(4)
@@ -153,7 +153,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i % 9,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": float(i) * 0.1,
+                "total_flux_single_die_normalized": float(i) * 0.1,
                 "time_normalized": float(i) * 0.2,
                 "spectrum_index": i,
             }
@@ -187,14 +187,14 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 1,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": -0.4,
+                "total_flux_single_die_normalized": -0.4,
                 "time_normalized": 0.5,
             },
             {
                 "die": 4,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.4,
+                "total_flux_single_die_normalized": 0.4,
                 "time_normalized": -0.5,
             },
         ]
@@ -215,7 +215,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": [0, 1, 2],
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": [0.1, 0.2, 0.3],
+                "total_flux_single_die_normalized": [0.1, 0.2, 0.3],
                 "time_normalized": -0.5,
             },
             config={"num_samples": 3},
@@ -223,7 +223,7 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(cond1["die"].shape, (3,))
         self.assertEqual(cond1["tool_src"].shape, (3,))
         self.assertEqual(cond1["tool_tgt"].shape, (3,))
-        self.assertEqual(cond1["die_flux_normalized"].shape, (3, 1))
+        self.assertEqual(cond1["total_flux_single_die_normalized"].shape, (3, 1))
         self.assertEqual(cond1["time_normalized"].shape, (3, 1))
 
         # Pandas DataFrame input
@@ -233,7 +233,7 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 3,
                     "tool_index": 0,
                     "tool_target_index": 1,
-                    "die_flux_normalized": 1.5,
+                    "total_flux_single_die_normalized": 1.5,
                     "time_normalized": -1.2,
                 }
             ]
@@ -241,7 +241,7 @@ class TestFiLMModulation(unittest.TestCase):
         cond3 = prepare_film_condition_tensor(metadata=df)
         self.assertEqual(cond3["die"][0].item(), 3)
         self.assertAlmostEqual(
-            cond3["die_flux_normalized"][0, 0].item(), 1.5, places=4
+            cond3["total_flux_single_die_normalized"][0, 0].item(), 1.5, places=4
         )
         self.assertAlmostEqual(
             cond3["time_normalized"][0, 0].item(), -1.2, places=4
@@ -307,7 +307,7 @@ class TestFiLMModulation(unittest.TestCase):
             ],
             config={"encode_flux": False},
         )
-        self.assertNotIn("die_flux_normalized", cond_no_flux)
+        self.assertNotIn("total_flux_single_die_normalized", cond_no_flux)
         self.assertEqual(len(fg_no_flux(cond_no_flux)), 1)
 
         # Both flux and time off: 4 + 8 = 12
@@ -408,7 +408,6 @@ class TestFiLMModulation(unittest.TestCase):
         )
         item = pair_ds[0]
         self.assertIn("energy_bounds", item)
-        self.assertIn("window_energy", item)
         self.assertAlmostEqual(item["energy_bounds"][0].item(), 150.0, places=3)
         self.assertAlmostEqual(item["energy_bounds"][1].item(), 175.0, places=3)
 
@@ -476,14 +475,14 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(pred_i.shape, (2, n_pts))
         self.assertEqual(pred_e.shape, (2, n_pts))
 
-    def test_prepare_film_condition_tensor_with_window_energy(self) -> None:
+    def test_prepare_film_condition_tensor_with_energy_bounds(self) -> None:
         """Verify window energy bounds are scaled by energy_scale_ev."""
         meta = [
             {
                 "die": 0,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.0,
+                "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
         ]
@@ -491,29 +490,29 @@ class TestFiLMModulation(unittest.TestCase):
 
         cond_default = prepare_film_condition_tensor(
             metadata=meta,
-            window_energy=we,
+            energy_bounds=we,
         )
-        self.assertIn("window_energy", cond_default)
+        self.assertIn("energy_bounds", cond_default)
         self.assertAlmostEqual(
-            cond_default["window_energy"][0, 0].item(), 0.1, places=4
+            cond_default["energy_bounds"][0, 0].item(), 0.1, places=4
         )
         self.assertAlmostEqual(
-            cond_default["window_energy"][0, 1].item(), 0.106, places=4
+            cond_default["energy_bounds"][0, 1].item(), 0.106, places=4
         )
 
         cond_custom = prepare_film_condition_tensor(
             metadata=meta,
-            window_energy=we,
+            energy_bounds=we,
             config={"energy_scale_ev": 500.0},
         )
         self.assertAlmostEqual(
-            cond_custom["window_energy"][0, 0].item(), 0.2, places=4
+            cond_custom["energy_bounds"][0, 0].item(), 0.2, places=4
         )
         self.assertAlmostEqual(
-            cond_custom["window_energy"][0, 1].item(), 0.212, places=4
+            cond_custom["energy_bounds"][0, 1].item(), 0.212, places=4
         )
 
-    def test_spectrum_patch_dataset_yields_window_energy(self) -> None:
+    def test_spectrum_patch_dataset_yields_energy_bounds(self) -> None:
         """Verify SpectrumPatchDataset extracts window energy bounds."""
         from models.dataset import SpectrumPatchDataset
 
@@ -530,7 +529,7 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 0,
                     "tool_index": 0,
                     "tool_target_index": 1,
-                    "die_flux_normalized": 0.0,
+                    "total_flux_single_die_normalized": 0.0,
                     "time_normalized": 0.0,
                 }
             ]
@@ -539,16 +538,16 @@ class TestFiLMModulation(unittest.TestCase):
         patch_ds = SpectrumPatchDataset(full_ds, window_size=10, stride=5)
         self.assertGreater(len(patch_ds), 0)
         item = patch_ds[0]
-        self.assertIn("window_energy", item)
-        self.assertEqual(item["window_energy"].shape, (2,))
+        self.assertIn("energy_bounds", item)
+        self.assertEqual(item["energy_bounds"].shape, (2,))
         self.assertAlmostEqual(
-            item["window_energy"][0].item(), energy[0], places=3
+            item["energy_bounds"][0].item(), energy[0], places=3
         )
         self.assertAlmostEqual(
-            item["window_energy"][1].item(), energy[9], places=3
+            item["energy_bounds"][1].item(), energy[9], places=3
         )
 
-    def test_resnet_with_window_energy_film_forward_backward(self) -> None:
+    def test_resnet_with_energy_bounds_film_forward_backward(self) -> None:
         """Verify ResNet1D forward and backward pass with window energy FiLM."""
         patch_len = 10
         model = ResNet1D(
@@ -567,14 +566,14 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.1,
+                "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }
         ] * 2
         we = torch.tensor([[70.0, 80.0], [75.0, 85.0]], dtype=torch.float32)
         cond = prepare_film_condition_tensor(
             metadata=meta,
-            window_energy=we,
+            energy_bounds=we,
             config={"num_samples": 2, "energy_scale_ev": 1000.0},
         )
         out = model(x, cond=cond)
@@ -605,7 +604,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i % 2,
                 "region": "Al2p",
                 "split": "test",
-                "die_flux_normalized": 0.1 * i,
+                "total_flux_single_die_normalized": 0.1 * i,
                 "time_normalized": -0.2 * i,
             }
             for i in range(4)
@@ -637,7 +636,7 @@ class TestFiLMModulation(unittest.TestCase):
         )
         self.assertEqual(pred_i.shape, (4, n_pts))
         self.assertEqual(pred_e.shape, (4, n_pts))
-        self.assertIn("die_flux_normalized", pred_df.columns)
+        self.assertIn("total_flux_single_die_normalized", pred_df.columns)
         self.assertIn("time_normalized", pred_df.columns)
 
     def test_film_region_encoding(self) -> None:
@@ -648,7 +647,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "tool_index": 0,
                 "tool_target_index": 1,
                 "region_index": 2,
-                "die_flux_normalized": 0.0,
+                "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             },
             {
@@ -656,7 +655,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "tool_index": 0,
                 "tool_target_index": 1,
                 "region_index": 11,
-                "die_flux_normalized": 0.0,
+                "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             },
         ]
@@ -757,7 +756,7 @@ class TestFiLMModulation(unittest.TestCase):
             meta,
             config={
                 "encode_elements": True,
-                "materials": materials_cfg,
+                "material_elements": materials_cfg,
                 "num_samples": 2,
             },
         )

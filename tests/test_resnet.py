@@ -221,7 +221,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
             "die": torch.tensor([0, 1]),
             "tool_src": torch.tensor([0, 0]),
             "tool_tgt": torch.tensor([1, 1]),
-            "die_flux_normalized": torch.tensor([[0.5], [-0.5]]),
+            "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
             "time_normalized": torch.tensor([[0.2], [-0.2]]),
         }
 
@@ -323,7 +323,6 @@ class TestResNetScaledShort1D(unittest.TestCase):
         )
         self.assertTrue(model.film_gen.encode_energy)
         self.assertFalse(model.shortcut_film_gen.encode_energy)
-        self.assertFalse(model.shortcut_film_gen.encode_window_energy)
 
     def test_instantiate_model_registration(self) -> None:
         """Verify instantiate_model supports 'resnet_scaled_short'."""
@@ -345,7 +344,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.0,
+                "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
             for i in range(8)
@@ -394,7 +393,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.1,
+                "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }
             for i in range(8)
@@ -437,7 +436,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.0,
+                "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
             for i in range(4)
@@ -467,7 +466,7 @@ class TestResNet5L1D(unittest.TestCase):
             "die": torch.tensor([0, 1]),
             "tool_src": torch.tensor([0, 0]),
             "tool_tgt": torch.tensor([1, 1]),
-            "die_flux_normalized": torch.tensor([[0.5], [-0.5]]),
+            "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
             "time_normalized": torch.tensor([[0.2], [-0.2]]),
         }
 
@@ -536,7 +535,7 @@ class TestResNet5L1D(unittest.TestCase):
                 "region": "Al2p",
                 "tool_index": 0,
                 "tool_target_index": 1,
-                "die_flux_normalized": 0.1,
+                "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }
             for i in range(8)

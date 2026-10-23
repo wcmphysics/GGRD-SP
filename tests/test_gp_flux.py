@@ -22,7 +22,7 @@ from models.gp_flux import (
     run_gp_flux_pipeline,
     train_gp_die_flux_model,
 )
-from utility.flux_and_intensity import calculate_flux
+from utility.flux_and_intensity import calculate_flux_and_intensity
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.splitting import split_measurement_sessions
@@ -120,7 +120,7 @@ class TestGPFluxPipeline(unittest.TestCase):
             "seed": 42,
         }
         i_arr, e_arr, meta = generate_pseudo_measurements(gen_cfg)
-        meta = calculate_flux(i_arr, e_arr, meta)
+        meta = calculate_flux_and_intensity(i_arr, e_arr, meta)
         meta = pair_source_target_spectra(
             meta,
             {"source_tool": "J4", "target_tool": "J5", "time_threshold_hours": 12.0},
