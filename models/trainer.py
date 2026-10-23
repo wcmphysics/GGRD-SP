@@ -61,9 +61,13 @@ _DISALLOWED_TRAINER_ALIASES: dict[str, str] = {
     "num_epochs": "epochs",
     "l2": "l2_weight",
     "use_sw": "use_sliding_window",
+    "use_lr_scheduler": "use_learning_rate_scheduler",
     "lr_scheduler": "use_learning_rate_scheduler",
+    "lr_reduce_factor": "learning_rate_reduce_factor",
     "lr_factor": "learning_rate_reduce_factor",
+    "lr_scheduler_patience": "learning_rate_scheduler_patience",
     "lr_patience": "learning_rate_scheduler_patience",
+    "min_lr": "min_learning_rate",
     "lr_min": "min_learning_rate",
     "patience": "early_stopping_patience",
 }
@@ -129,8 +133,6 @@ def _batch_cond(
         model, "shortcut_film_gen", None
     )
     energy_bounds = batch.get("energy_bounds")
-    if energy_bounds is None:
-        energy_bounds = batch.get("window_energy")
     if energy_bounds is None and "energy" in batch:
         e = batch["energy"]
         if isinstance(e, torch.Tensor) and e.dim() >= 2:
@@ -390,29 +392,15 @@ def train_model_region(
             f"got {relative_learning_rate}"
         )
 
-    use_lr_sched = bool(
-        cfg.get(
-            "use_learning_rate_scheduler",
-            cfg.get("use_lr_scheduler", True),
-        )
-    )
+    use_lr_sched = bool(cfg.get("use_learning_rate_scheduler", True))
     learning_rate_reduce_factor = float(
-        cfg.get(
-            "learning_rate_reduce_factor",
-            cfg.get("lr_reduce_factor", 0.9),
-        )
+        cfg.get("learning_rate_reduce_factor", 0.9)
     )
     learning_rate_scheduler_patience = int(
-        cfg.get(
-            "learning_rate_scheduler_patience",
-            cfg.get("lr_scheduler_patience", 10),
-        )
+        cfg.get("learning_rate_scheduler_patience", 10)
     )
     min_learning_rate = float(
-        cfg.get(
-            "min_learning_rate",
-            cfg.get("min_lr", learning_rate / 10000.0),
-        )
+        cfg.get("min_learning_rate", learning_rate / 10000.0)
     )
 
     if not (0.0 < learning_rate_reduce_factor < 1.0):
@@ -561,7 +549,6 @@ def train_model_region(
         "val_loss": [],
         "learning_rate": [],
     }
-    history["lr"] = history["learning_rate"]
     best_loss, best_epoch, best_state, pat_count = float("inf"), 0, None, 0
     run_cfg = {"device": device}
     eval_cfg = {"device": device, "window_size": w_size, "stride": s_step}
@@ -647,10 +634,6 @@ def train_model_region(
             "learning_rate_reduce_factor": learning_rate_reduce_factor,
             "learning_rate_scheduler_patience": learning_rate_scheduler_patience,
             "min_learning_rate": min_learning_rate,
-            "use_lr_scheduler": use_lr_sched,
-            "lr_reduce_factor": learning_rate_reduce_factor,
-            "lr_scheduler_patience": learning_rate_scheduler_patience,
-            "min_lr": min_learning_rate,
             "window_size": w_size,
             "stride": s_step,
             "seq_len": seq_len,
