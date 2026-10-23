@@ -166,6 +166,18 @@ The codes will be composed of the following key stages
       7. Comment lines and docstring should still be complete and comprehensive. No need to remove them unless explicitly requested.
    - Ask me anything if there is something unclear to you
    - Always Propose your plans first for me to review. Only implement the plan if I approve
+12. **Strict Canonical Configurations & Comprehensive Variable Naming:**
+   - Always use strict, explicit, and comprehensive canonical names for
+     configuration keys and variables (e.g., use `learning_rate` instead
+     of `lr`, `energy_endpoints` instead of `points`, `epochs` instead
+     of `num_epochs`).
+   - DO NOT construct bloated alias-mapping dictionaries or maintain lists
+     of legacy/deprecated keys.
+   - Treat any non-canonical or unrecognized configuration key simply as an
+     invalid key and raise an informative `KeyError` or `ValueError` stating
+     the invalid key and what canonical keys are expected.
+   - Validate required keys directly: missing required keys must raise an
+     informative exception specifying which required keys are missing.
 
 # Code Modification Rules (CRITICAL - Strictly Enforced)
 1. **Surgical Edits Only (Minimal Diff)**:
