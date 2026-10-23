@@ -35,6 +35,7 @@ def main() -> None:
     example_region = global_cfg.get("example_region", "Ti2p")
     sample_measurement_id = global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
     show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
+    visualization_config = config.get("visualization", {})
 
     # Stage 1: Data generation configuration
     data_generation_config = config["data_generation"]
@@ -227,10 +228,10 @@ def main() -> None:
     print("\nGP Die Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
 
-    if show_plots:
-        visualization.plot_gp_die_flux_timeline(
-            gp_bundle, gp_flux_config
-        )
+    if show_plots and visualization_config.get("plots", {}).get(
+        "gp_die_flux_timeline", True
+    ):
+        visualization.plot_gp_die_flux_timeline(gp_bundle, gp_flux_config)
 
     # =========================================================================
     # STAGE 5: DATASET AND DATALOADER DEFINITION (With Augmentation)
@@ -320,113 +321,42 @@ def main() -> None:
     )
 
     # =========================================================================
-    # STAGE 11: DIAGNOSTIC PLOTS
+    # STAGE 11: DIAGNOSTIC PLOTS (Via Visualization Dispatcher)
     # =========================================================================
     if show_plots:
-        print("\nGenerating demonstration plots...")
-        for render_plot_function in (
-            lambda: visualization.plot_pairing_timeline(
-                df_meta,
-                plot_config={"source_tool": source_tool, "target_tool": target_tool},
+        print("\nGenerating demonstration plots via dispatcher...")
+        pipeline_plot_data = {
+            "df_meta": df_meta,
+            "ary_intensity": ary_intensity,
+            "ary_energy": ary_energy,
+            "data_original": data_original,
+            "data_predicted": data_predicted,
+            "training_results": training_results,
+            "df_atomic_percentage_samples": df_atomic_percentage_samples,
+            "noise_analysis": (
+                ary_spec_analysis_signal,
+                ary_spec_analysis_noise,
             ),
-            # lambda: visualization.plot_flux_and_averaged_intensity_vs_time(
-            #     ary_intensity,
-            #     ary_energy,
-            #     df_meta,
-            #     plot_config={
-            #         "source_tool": source_tool, "target_tool": target_tool
-            #     },
-            # ),
-            # lambda: visualization.plot_max_intensity_vs_time(
-            #     ary_intensity,
-            #     df_meta,
-            #     region=example_region,
-            #     die=0,
-            #     plot_config={"hue": "tool"},
-            # ),
-            # lambda: visualization.plot_normalized_max_intensity_vs_time(
-            #     ary_intensity,
-            #     df_meta,
-            #     ary_energy=ary_energy,
-            #     region=example_region,
-            #     die=0,
-            #     plot_config={
-            #         "hue": "tool", "normalization_mode": "die_total_flux"
-            #     },
-            # ),
-            # lambda: visualization.plot_tool_comparison(
-            #     ary_energy,
-            #     ary_intensity,
-            #     df_meta,
-            #     compare_config={
-            #         "tools": (source_tool, target_tool),
-            #         "region": example_region,
-            #         "die": 0,
-            #     },
-            # ),
-            # lambda: visualization.plot_shirley_background(
-            #     ary_energy,
-            #     ary_intensity,
-            #     df_meta,
-            #     plot_config={
-            #         "measurement_id": sample_measurement_id, "die": 0
-            #     },
-            # ),
-            lambda: visualization.plot_spectral_noise_analysis(
-                (
-                    ary_intensity,
-                    ary_energy,
-                    df_meta,
-                    ary_spec_analysis_signal,
-                    ary_spec_analysis_noise,
-                ),
-                noise_plot_config,
-            ),
-            lambda: visualization.plot_gp_hyperparameter_convergence(
-                data_original,
-                plot_config={
-                    "measurement_id": sample_measurement_id,
-                    "die": 0,
-                    "save_path": "gp_hyperparameter_convergence.png",
-                },
-            ),
-            lambda: visualization.plot_training_history(training_results["histories"]),
-            lambda: visualization.plot_prediction_comparison(
-                data_original,
-                data_predicted,
-                config={"session_splits": session_splits, "die": 0},
-            ),
-            lambda: visualization.plot_regional_spectrum_distribution(
-                data_original,
-                data_predicted,
-                config={
-                    "split": "test",
-                    "save_path": "regional_spectrum_distribution.png",
-                },
-            ),
-            lambda: visualization.plot_atomic_percentage_distributions(
-                df_atomic_percentage_samples
-            ),
-            lambda: visualization.plot_atomic_percentage_mae(
-                df_atomic_percentage_samples
-            ),
-        ):
-            render_plot_function()
-        if use_sliding_window:
-            example_spectrum_row = df_meta[
-                (df_meta["measurement_id"] == sample_measurement_id)
-                & (df_meta["region"] == example_region)
-                & (df_meta["die"] == 0)
-            ]
-            if not example_spectrum_row.empty:
-                spectrum_index = int(
-                    example_spectrum_row.iloc[0]["spectrum_index"]
-                )
-                visualization.plot_sliding_window_slices(
-                    ary_intensity[spectrum_index],
-                    ary_energy[spectrum_index],
-                    plot_config={"region": example_region},
-                )
+        }
+        dispatch_cfg = {
+            **visualization_config,
+            "show_plots": show_plots,
+            "source_tool": source_tool,
+            "target_tool": target_tool,
+            "example_region": example_region,
+            "sample_measurement_id": sample_measurement_id,
+            "die": 0,
+            "session_splits": session_splits,
+            "use_sliding_window": use_sliding_window,
+            "noise_plot_config": noise_plot_config,
+            "plots": {
+                **visualization_config.get("plots", {}),
+                "gp_die_flux_timeline": False,  # Already plotted in Stage 4
+            },
+        }
+        visualization.dispatch_visualizations(
+            pipeline_plot_data, config=dispatch_cfg
+        )
         print("Showing plots (close plot windows to finish execution)...")
         plt.show()
 
