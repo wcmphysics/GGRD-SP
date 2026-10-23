@@ -1,4 +1,20 @@
-"""Main entry point for GGRD-SP project."""
+"""Main execution pipeline for GGRD-SP.
+
+Orchestrates sequential end-to-end XPS spectral transfer stages:
+1. Synthetic spectrum reading/generation and physical metric extraction.
+2. Temporal pairing of source and target measurements.
+3. Spectrum normalization across dies and regions.
+4. Train, validation, and test session-level splitting.
+4B. Exact Gaussian Process regression for die-level flux modeling.
+5. Regional dataset definition and sliding window patching augmentation.
+6. Multi-component spectral loss preparation.
+6B. Gaussian Process spectral noise and SNR analysis.
+7. Neural network model training and Bayesian hyperparameter optimization.
+8. Cross-tool transformed spectrum prediction.
+9. Side-by-side metric evaluation across train and test partitions.
+10. Shirley background subtraction and atomic percentage quantification.
+11. Diagnostic visualization dispatching.
+"""
 
 from __future__ import annotations
 
@@ -15,129 +31,21 @@ def main() -> None:
     splitting, dataset construction, cost preparation, training, prediction,
     quantification, and plotting.
     
-    Availabe model_type: resnet, resnet_5l, resnet_scaled_short,
-    residual_unet, unet, deeplabv3
+    Available model_type: resnet, resnet_5l, resnet_scaled_short,
+    residual_unet, unet, deeplabv3.
     """
     # =========================================================================
-    # GLOBAL SETUP & CONFIGURATIONS (Loaded from config/default_config.yaml)
+    # GLOBAL SETUP & CONFIGURATIONS (Loaded and resolved from YAML)
     # =========================================================================
     config = utility.load_default_config("config/default_config.yaml")
-    materials = utility.load_material_elements(config)
-    element_vocab = utility.extract_element_vocabulary(materials)
-
-    global_cfg = config.get("global", {})
-    model_type = global_cfg.get("model_type", "resnet")
-    use_sliding_window = global_cfg.get("use_sliding_window", False)
-    use_film = global_cfg.get("use_film", False)
-    unified_model = global_cfg.get("unified_model", True)
-    source_tool = global_cfg.get("source_tool", "J4")
-    target_tool = global_cfg.get("target_tool", "J5")
-    example_region = global_cfg.get("example_region", "Ti2p")
-    sample_measurement_id = global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
     show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
-    visualization_config = config.get("visualization", {})
-
-    # Stage 1: Data generation configuration
-    data_generation_config = config["data_generation"]
-
-    # Stage 2: 1-to-1 temporal pairing configuration
-    pairing_config = {
-        **config["pairing"],
-        "source_tool": source_tool,
-        "target_tool": target_tool,
-    }
-
-    # Stage 3: Normalization configuration
-    normalization_config = config["normalization"]
-
-    # Stage 4: Train-val-test measurement session splitting configuration
-    splitting_config = {
-        **config["splitting"],
-        "source_tool": source_tool,
-        "target_tool": target_tool,
-    }
-
-    # Stage 4B: Gaussian Process die flux prediction configuration
-    gp_flux_config = config["gp_flux"]
-
-    # Stage 5: Dataset & patch augmentation configuration
-    dataset_config = {
-        **config["dataset"],
-        "regions": data_generation_config["regions"],
-        "source_tool": source_tool,
-        "target_tool": target_tool,
-        "use_sliding_window": use_sliding_window,
-    }
-
-    # Stage 6: Cost function configuration
-    cost_config = config["cost"]
-
-    # Stage 6B: Gaussian Process spectral noise analysis configuration
-    noise_analysis_config = {
-        **config["noise_analysis"],
-        "regions": [example_region],
-    }
-    noise_plot_config = {
-        **config["noise_plot"],
-        "example": {
-            "measurement_id": sample_measurement_id,
-            "region": example_region,
-        },
-    }
-
-    # Dedicated Feature-wise Linear Modulation (FiLM) configuration
-    film_config = {
-        **config["film"],
-        "use_film": use_film,
-        "num_regions": len(data_generation_config["regions"]),
-        "material_elements": materials,
-        "element_vocab": element_vocab,
-    }
-
-    # Stage 7A: Bayesian optimization configuration (plural search keys)
-    bayesian_opt_config = {
-        **config["bayesian_opt"],
-        "learning_rate_bounds": tuple(
-            config["bayesian_opt"]["learning_rate_bounds"]
-        ),
-        "l2_bounds": tuple(config["bayesian_opt"]["l2_bounds"]),
-    }
-
-    # Stage 7B: Neural network training configuration (singular keys)
-    training_config = {
-        "model_type": model_type,
-        "unified_model": unified_model,
-        "use_film": film_config["use_film"],
-        "film_config": film_config,
-        "train_config": config["training"]["train_config"],
-        "region_configs": config["training"]["region_configs"],
-    }
-
-    # Stage 8: Model prediction configuration
-    prediction_config = {
-        **config["prediction"],
-        "source_tool": source_tool,
-        "target_tool": target_tool,
-        "film_config": film_config,
-    }
-
-    mse_metric_name = (
-        "MSE_normalized_by_target"
-        if cost_config.get("normalized_by_target_max", True)
-        else "MSE"
-    )
-    metrics_report_config = {
-        **config["metrics_report"],
-        "metrics": [mse_metric_name, *config["metrics_report"]["metrics"]],
-        "normalized_by_target_max": cost_config.get("normalized_by_target_max", True),
-    }
 
     # =========================================================================
     # STAGE 1: SPECTRUM DATA READING OR GENERATION
     # =========================================================================
     print("=== Stage 1: Data Generation ===")
     ary_intensity, ary_energy, df_meta = utility.generate_pseudo_measurements(
-        data_generation_config
+        config["data_generation"]
     )
     print(
         f"Generated raw spectra: {ary_intensity.shape[0]} rows, "
@@ -160,7 +68,8 @@ def main() -> None:
     # STAGE 2: PAIRING SOURCE AND TARGET SPECTRA
     # =========================================================================
     print("\n=== Stage 2: 1-to-1 Tool Pairing ===")
-    df_meta = utility.pair_source_target_spectra(df_meta, pairing_config)
+    df_meta = utility.pair_source_target_spectra(df_meta, config["pairing"])
+    source_tool = str(config["pairing"]["source_tool"])
     df_source_tool = df_meta[df_meta["tool"] == source_tool]
     print(
         f"Paired sessions: {df_source_tool['measurement_id_target'].dropna().nunique()}"
@@ -177,7 +86,7 @@ def main() -> None:
     }
     df_meta["tool_index"] = df_meta["tool"].map(tool_index_mapping)
     df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_index_mapping)
-    training_config["num_tools"] = len(tool_index_mapping)
+    config["training"]["num_tools"] = len(tool_index_mapping)
 
     # Establish fixed region mapping indices
     unique_regions = sorted(df_meta["region"].dropna().astype(str).unique())
@@ -186,18 +95,18 @@ def main() -> None:
         for region_index, region_name in enumerate(unique_regions)
     }
     df_meta["region_index"] = df_meta["region"].map(region_index_mapping)
-    training_config["region_index_mapping"] = region_index_mapping
-    prediction_config["region_index_mapping"] = region_index_mapping
+    config["training"]["region_index_mapping"] = region_index_mapping
+    config["prediction"]["region_index_mapping"] = region_index_mapping
 
     # =========================================================================
     # STAGE 3: NORMALIZATION OF SPECTRAL DATA
     # =========================================================================
     print("\n=== Stage 3: Normalization ===")
     ary_intensity, ary_energy, df_meta = utility.normalize_spectral_data(
-        ary_intensity, ary_energy, df_meta, normalization_config
+        ary_intensity, ary_energy, df_meta, config["normalization"]
     )
     print(
-        f"Normalized intensity by {normalization_config['normalization_mode']}; "
+        f"Normalized intensity by {config['normalization']['normalization_mode']}; "
         f"max={ary_intensity.max():.4f}"
     )
 
@@ -206,7 +115,7 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 4: Train-Val-Test Session Splitting ===")
     df_meta, _, session_splits = utility.split_measurement_sessions(
-        df_meta, splitting_config
+        df_meta, config["splitting"]
     )
     print(
         f"Session splits: train={len(session_splits['train'])}, "
@@ -223,22 +132,22 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 4B: Gaussian Process Die Flux Prediction ===")
     gp_bundle, df_gp_metrics = models.run_gp_flux_pipeline(
-        df_meta, gp_flux_config
+        df_meta, config["gp_flux"]
     )
     print("\nGP Die Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
 
-    if show_plots and visualization_config.get("plots", {}).get(
+    if show_plots and config["visualization"].get("plots", {}).get(
         "gp_die_flux_timeline", True
     ):
-        visualization.plot_gp_die_flux_timeline(gp_bundle, gp_flux_config)
+        visualization.plot_gp_die_flux_timeline(gp_bundle, config["gp_flux"])
 
     # =========================================================================
     # STAGE 5: DATASET AND DATALOADER DEFINITION (With Augmentation)
     # =========================================================================
     print("\n=== Stage 5: Regional Dataset Definition & Patch Augmentation ===")
     regional_datasets = models.create_regional_datasets(
-        df_meta, ary_intensity, ary_energy, config=dataset_config
+        df_meta, ary_intensity, ary_energy, config=config["dataset"]
     )
     for region_name, dataset_bundle in regional_datasets.items():
         print(
@@ -251,7 +160,7 @@ def main() -> None:
     # STAGE 6: COST FUNCTION DEFINITION AND PREPARATION
     # =========================================================================
     print("\n=== Stage 6: Cost Function Preparation ===")
-    criterion = models.SpectralLoss(config=cost_config)
+    criterion = models.SpectralLoss(config=config["cost"])
     print(f"Initialized criterion: {criterion.__class__.__name__}")
 
     # =========================================================================
@@ -260,7 +169,7 @@ def main() -> None:
     print("\n=== Stage 6B: Gaussian Process Noise Analysis ===")
     ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
         models.perform_spectral_noise_analysis(
-            ary_intensity, ary_energy, df_meta, noise_analysis_config
+            ary_intensity, ary_energy, df_meta, config["noise_analysis"]
         )
     )
     print(
@@ -272,12 +181,13 @@ def main() -> None:
     # =========================================================================
     # STAGE 7: NEURAL NETWORK TRAINING AND BAYESIAN OPTIMIZATION
     # =========================================================================
+    model_type = config["training"]["model_type"]
     print(f"\n=== Stage 7: Neural Model Training ({model_type}) ===")
     training_results = models.perform_model_training_and_bayesian_optimization(
         regional_datasets,
         criterion,
-        config=training_config,
-        bayesian_opt_config=bayesian_opt_config,
+        config=config["training"],
+        bayesian_opt_config=config["bayesian_opt"],
     )
     print("Model training completed across all regions.")
 
@@ -285,10 +195,12 @@ def main() -> None:
     # STAGE 8: PREDICTION FROM MODEL
     # =========================================================================
     print("\n=== Stage 8: Transformed Spectrum Prediction ===")
-    prediction_config["session_splits"] = session_splits
+    config["prediction"]["session_splits"] = session_splits
     data_original = (ary_intensity, ary_energy, df_meta)
     data_predicted = models.predict_spectra(
-        models=training_results["models"], data=data_original, config=prediction_config
+        models=training_results["models"],
+        data=data_original,
+        config=config["prediction"],
     )
     print(
         f"Predicted spectra shape: {data_predicted[0].shape} "
@@ -300,23 +212,23 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stages 9 & 10: Performance Metrics & Atomic % Quantification ===")
     df_prediction_metrics, _ = utility.calculate_prediction_metrics(
-        data_original, data_predicted, config=metrics_report_config
+        data_original, data_predicted, config=config["metrics_report"]
     )
     df_atomic_percentage_samples, df_atomic_percentage_summary = (
         utility.calculate_atomic_percentage_split_statistics(
-            data_original, data_predicted, config=metrics_report_config
+            data_original, data_predicted, config=config["metrics_report"]
         )
     )
     print(
         "\nMetrics (Train vs. Test):\n",
         utility.format_side_by_side_metrics(
-            df_prediction_metrics, config=metrics_report_config
+            df_prediction_metrics, config=config["metrics_report"]
         ).to_string(index=False),
     )
     print(
         "\nAtomic % (Train vs. Test):\n",
         utility.format_side_by_side_atomic_percentages(
-            df_atomic_percentage_summary, config=metrics_report_config
+            df_atomic_percentage_summary, config=config["metrics_report"]
         ).to_string(index=False),
     )
 
@@ -339,18 +251,11 @@ def main() -> None:
             ),
         }
         dispatch_cfg = {
-            **visualization_config,
+            **config["visualization"],
             "show_plots": show_plots,
-            "source_tool": source_tool,
-            "target_tool": target_tool,
-            "example_region": example_region,
-            "sample_measurement_id": sample_measurement_id,
-            "die": 0,
             "session_splits": session_splits,
-            "use_sliding_window": use_sliding_window,
-            "noise_plot_config": noise_plot_config,
             "plots": {
-                **visualization_config.get("plots", {}),
+                **config["visualization"].get("plots", {}),
                 "gp_die_flux_timeline": False,  # Already plotted in Stage 4
             },
         }
