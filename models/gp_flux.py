@@ -175,7 +175,7 @@ def get_default_gp_flux_config() -> dict[str, Any]:
     return {
         "reference_date": "2026-01-01",
         "unpaired_split": "train",
-        "target_column": "die_flux",
+        "target_column": "total_flux_single_die",
         "kernel": {
             "time_continuous": {
                 "type": "rbf",
@@ -229,9 +229,11 @@ def build_gp_flux_dataset(
     cfg = {**get_default_gp_flux_config(), **(config or {})}
     ref_date = pd.to_datetime(cfg.get("reference_date", "2026-01-01"))
     unpaired_split = str(cfg.get("unpaired_split", "train"))
-    target_col = str(cfg.get("target_column", "die_flux"))
+    target_col = str(cfg.get("target_column", "total_flux_single_die"))
 
     df_tool = df_meta[df_meta["tool"] == tool_name]
+    if target_col not in df_tool.columns and "die_flux" in df_tool.columns:
+        target_col = "die_flux" 
     if df_tool.empty:
         raise ValueError(f"No records found in df_meta for tool '{tool_name}'.")
     if target_col not in df_tool.columns:

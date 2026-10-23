@@ -22,7 +22,7 @@ from models.gp_flux import (
     run_gp_flux_pipeline,
     train_gp_die_flux_model,
 )
-from utility.flux import calculate_flux
+from utility.flux_and_intensity import calculate_flux
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.splitting import split_measurement_sessions
