@@ -299,13 +299,10 @@ def prepare_film_condition_tensor(
         if raw_mat is None:
             raw_mat = cfg.get("materials")
         if raw_mat is None:
-            try:
-                from utility.config_loader import load_material_elements
-                raw_mat = load_material_elements("config/default_config.yaml")
-            except Exception as exc:
-                raise ValueError(
-                    f"Failed to load material elements configuration: {exc}"
-                ) from exc
+            raise ValueError(
+                "prepare_film_condition_tensor requires 'material_elements' "
+                "(or 'materials') in config when encode_elements=True."
+            )
 
         # Normalize raw_mat to dict[str, list[str]]
         mat_elements: dict[str, list[str]] = {}
@@ -480,24 +477,27 @@ class FiLMGenerator(nn.Module):
 
         self.element_vocab = cfg.get("element_vocab")
         self.material_elements = cfg.get("material_elements")
-        if self.encode_elements and (
-            not self.element_vocab or not self.material_elements
-        ):
-            try:
-                from utility.config_loader import (
-                    extract_element_vocabulary,
-                    load_material_elements,
+        if self.encode_elements:
+            if not self.material_elements and "materials" in cfg:
+                self.material_elements = cfg.get("materials")
+            has_vocab_size = bool(cfg.get("element_vocab_size"))
+            if (
+                not self.material_elements
+                and not self.element_vocab
+                and not has_vocab_size
+            ):
+                raise ValueError(
+                    "FiLMGenerator requires 'material_elements' in config "
+                    "when encode_elements=True."
                 )
+            if self.material_elements and (
+                not self.element_vocab or len(self.element_vocab) == 0
+            ):
+                from utility.config_loader import extract_element_vocabulary
 
-                self.material_elements = load_material_elements(
-                    "config/default_config.yaml"
-                )
                 self.element_vocab = extract_element_vocabulary(
                     self.material_elements
                 )
-            except Exception:
-                self.material_elements = {}
-                self.element_vocab = []
 
         flux_dim = 1 if self.encode_flux else 0
         time_dim = 1 if self.encode_time else 0

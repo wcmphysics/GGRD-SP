@@ -154,41 +154,49 @@ def assemble_prediction_metadata(
             "unpaired",
         )
 
-    return pd.DataFrame(
-        [
-            {
-                "spectrum_index": idx,
-                "material": getattr(r, "material", "NMG"),
-                "tool": target_tool,
-                "measurement_id": format_predicted_measurement_id(
-                    str(r.measurement_id), source_tool, target_tool
-                ),
-                "die": getattr(r, "die", 0),
-                "region": getattr(r, "region", None),
-                "n_points": n_points,
-                "time": getattr(r, "time", None),
-                "source_tool": source_tool,
-                "source_measurement_id": str(r.measurement_id),
-                "source_spectrum_index": int(r.spectrum_index),
-                "split": _resolve_split(
-                    str(r.measurement_id), getattr(r, "split", None)
-                ),
-                "is_predicted": True,
-                **({"t7_code": r.t7_code} if hasattr(r, "t7_code") else {}),
-                **(
-                    {"die_flux_normalized": r.die_flux_normalized}
-                    if hasattr(r, "die_flux_normalized")
-                    else {}
-                ),
-                **(
-                    {"time_normalized": r.time_normalized}
-                    if hasattr(r, "time_normalized")
-                    else {}
-                ),
-            }
-            for idx, r in enumerate(source_df.itertuples())
-        ]
-    )
+    extra_metric_cols = [
+        "t7_code",
+        "relative_strength",
+        "mean_intensity_single_region",
+        "mean_intensity_single_die",
+        "relative_intensity_single_region",
+        "total_flux_single_region",
+        "mean_flux_across_regions_single_die",
+        "total_flux_single_die",
+        "mean_flux_across_dies_single_measurement",
+        "total_flux_single_measurement",
+        "total_flux_single_die_normalized",
+        "die_flux_normalized",
+        "time_normalized",
+    ]
+
+    records: list[dict[str, Any]] = []
+    for idx, r in enumerate(source_df.itertuples()):
+        row_dict: dict[str, Any] = {
+            "spectrum_index": idx,
+            "material": getattr(r, "material", "NMG"),
+            "tool": target_tool,
+            "measurement_id": format_predicted_measurement_id(
+                str(r.measurement_id), source_tool, target_tool
+            ),
+            "die": getattr(r, "die", 0),
+            "region": getattr(r, "region", None),
+            "n_points": n_points,
+            "time": getattr(r, "time", None),
+            "source_tool": source_tool,
+            "source_measurement_id": str(r.measurement_id),
+            "source_spectrum_index": int(r.spectrum_index),
+            "split": _resolve_split(
+                str(r.measurement_id), getattr(r, "split", None)
+            ),
+            "is_predicted": True,
+        }
+        for col in extra_metric_cols:
+            if hasattr(r, col):
+                row_dict[col] = getattr(r, col)
+        records.append(row_dict)
+
+    return pd.DataFrame(records)
 
 
 def predict_spectra(

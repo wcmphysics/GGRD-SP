@@ -140,7 +140,7 @@ def normalize_spectral_data(
                 raw_scale = float(np.max(np.abs(ary_intensity[src_idx])))
                 ctx = f"source spectrum index {src_idx} (region '{row.get('region', 'unknown')}')"
                 scale = _check_and_clamp_scale(raw_scale, eps, ctx)
-                ary_norm[src_idx] = ary_intensity[src_idx] / scale
-                ary_norm[tgt_idx] = ary_intensity[tgt_idx] / scale
+                ary_norm[src_idx] = ary_norm[src_idx] / scale
+                ary_norm[tgt_idx] = ary_norm[tgt_idx] / scale
 
     return ary_norm, ary_energy, df_meta
