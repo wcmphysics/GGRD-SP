@@ -32,9 +32,9 @@ The codes will be composed of the following key stages
 3. Normalization of spectral data
    - need a dedicated config for this part
    - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
-   - 4 options for performing normalization: by total flux (default),
-     regional maximum intensity ('regional_max'), source regional maximum
-     intensity ('source_regional_max'), or no normalization ('no_normalization')
+   - 5 options for performing normalization: 'by_total_flux_single_die' (default),
+     'by_regional_max_intensity', 'by_regional_max_intensity_of_source',
+     'by_mean_intensity_single_die', or 'no_normalization'
    - for normalization by total flux, intensity of every regional spectra from a
      die in a measurement was divided by the total flux of that die in that
      measurement (summation of flux among all regions for that specific die and
@@ -109,7 +109,7 @@ The codes will be composed of the following key stages
          - the same as residual u-net but now no shortcut. Namely from "y = x + UNet(x)" to just "y = UNet(x)".
          - the model has one U-Net model for each regional spectrum
    - dedicated 'film_config' enables FiLM; with sliding windows,
-     'encode_window_energy' encodes patch energy bounds normalized by
+     'encode_energy' encodes patch energy bounds normalized by
      'energy_scale_ev'.
 8. Prediction from model
    - use the trained model from the training part to do prediction here
