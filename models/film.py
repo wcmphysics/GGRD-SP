@@ -635,3 +635,89 @@ class FiLMGenerator(nn.Module):
             (1.0 + gamma_proj(h), beta_proj(h))
             for gamma_proj, beta_proj in zip(self.gamma_projs, self.beta_projs)
         ]
+
+    def get_condition_config(
+        self,
+        num_samples: int = 1,
+        energy_scale_ev: float = 1000.0,
+        extra_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Export canonical conditioning configuration matching this generator.
+
+        Parameters
+        ----------
+        num_samples : int, optional
+            Batch size fallback (default 1).
+        energy_scale_ev : float, optional
+            Scaling factor for eV bounds (default 1000.0).
+        extra_config : dict[str, Any] | None, optional
+            Additional configuration overrides.
+
+        Returns
+        -------
+        dict[str, Any]
+            Configuration dictionary ready for prepare_film_condition_tensor.
+        """
+        base: dict[str, Any] = {
+            "num_samples": num_samples,
+            "energy_scale_ev": energy_scale_ev,
+            "encode_die": self.encode_die,
+            "encode_tool": self.encode_tool,
+            "encode_flux": self.encode_flux,
+            "encode_time": self.encode_time,
+            "encode_region": self.encode_region,
+            "encode_relative_intensity": self.encode_relative_intensity,
+            "encode_elements": self.encode_elements,
+            "encode_energy": self.encode_energy,
+            "element_vocab": self.element_vocab,
+            "material_elements": self.material_elements,
+        }
+        if extra_config:
+            base.update(extra_config)
+        return base
+
+    def prepare_condition_tensor(
+        self,
+        metadata: list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None,
+        *,
+        device: torch.device | None = None,
+        energy_bounds: torch.Tensor | np.ndarray | None = None,
+        energy_scale_ev: float = 1000.0,
+        extra_config: dict[str, Any] | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Pack conditioning tensors using this generator's configuration.
+
+        Parameters
+        ----------
+        metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
+            Sample metadata records or DataFrame.
+        device : torch.device | None, optional
+            Computation device for output tensors.
+        energy_bounds : torch.Tensor | np.ndarray | None, optional
+            Energy bounds tensor or array, shape (B, 2).
+        energy_scale_ev : float, optional
+            Scaling factor for eV bounds (default 1000.0).
+        extra_config : dict[str, Any] | None, optional
+            Additional configuration overrides.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary of conditioning feature tensors.
+        """
+        n_samples = (
+            len(metadata)
+            if isinstance(metadata, (list, tuple, pd.DataFrame)) and len(metadata) > 0
+            else 1
+        )
+        cfg = self.get_condition_config(
+            num_samples=n_samples,
+            energy_scale_ev=energy_scale_ev,
+            extra_config=extra_config,
+        )
+        return prepare_film_condition_tensor(
+            metadata,
+            config=cfg,
+            device=device,
+            energy_bounds=energy_bounds,
+        )

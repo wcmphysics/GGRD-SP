@@ -852,5 +852,40 @@ class TestFiLMModulation(unittest.TestCase):
         )
 
 
+    def test_film_generator_condition_packing_helpers(self) -> None:
+        """Verify get_condition_config and prepare_condition_tensor."""
+        fg = FiLMGenerator(
+            [16, 32],
+            config={
+                "encode_die": True,
+                "encode_tool": True,
+                "encode_flux": True,
+                "encode_time": True,
+                "encode_energy": True,
+            },
+        )
+        cfg = fg.get_condition_config(num_samples=4, energy_scale_ev=500.0)
+        self.assertEqual(cfg["num_samples"], 4)
+        self.assertEqual(cfg["energy_scale_ev"], 500.0)
+        self.assertTrue(cfg["encode_die"])
+        self.assertTrue(cfg["encode_energy"])
+
+        meta = [
+            {
+                "die": 0,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.5,
+                "time_normalized": -0.2,
+            }
+        ]
+        cond = fg.prepare_condition_tensor(
+            meta, energy_bounds=np.array([[100.0, 150.0]])
+        )
+        self.assertIn("die", cond)
+        self.assertIn("total_flux_single_die_normalized", cond)
+        self.assertIn("energy_bounds", cond)
+        self.assertEqual(cond["energy_bounds"].shape, (1, 2))
+
 if __name__ == "__main__":
     unittest.main()

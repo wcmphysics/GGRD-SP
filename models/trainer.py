@@ -139,28 +139,12 @@ def _batch_cond(
             e_flat = e.view(e.shape[0], -1)
             energy_bounds = torch.stack([e_flat[:, 0], e_flat[:, -1]], dim=-1)
 
-    return prepare_film_condition_tensor(
+    return film_gen.prepare_condition_tensor(
         batch.get("meta"),
-        config={
-            "num_samples": num_samples,
-            "energy_scale_ev": energy_scale_ev,
-            "encode_die": bool(getattr(film_gen, "encode_die", True)),
-            "encode_tool": bool(getattr(film_gen, "encode_tool", True)),
-            "encode_energy": bool(getattr(film_gen, "encode_energy", False)),
-            "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
-            "encode_time": bool(getattr(film_gen, "encode_time", True)),
-            "encode_region": bool(getattr(film_gen, "encode_region", False)),
-            "encode_relative_intensity": bool(
-                getattr(film_gen, "encode_relative_intensity", False)
-            ),
-            "encode_elements": bool(
-                getattr(film_gen, "encode_elements", False)
-            ),
-            "element_vocab": getattr(film_gen, "element_vocab", None),
-            "material_elements": getattr(film_gen, "material_elements", None),
-        },
         device=dev,
         energy_bounds=energy_bounds,
+        energy_scale_ev=energy_scale_ev,
+        extra_config={"num_samples": num_samples},
     )
 
 

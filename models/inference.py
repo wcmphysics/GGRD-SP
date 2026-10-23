@@ -232,29 +232,15 @@ def predict_spectra(
             {**r, "tool_target": target_tool}
             for r in sub_df.to_dict("records")
         ]
-        return prepare_film_condition_tensor(
+        return film_gen.prepare_condition_tensor(
             metadata=meta,
-            config={
-                "num_samples": len(sub_df),
-                "energy_scale_ev": float(getattr(m, "energy_scale_ev", 1000.0)),
-                "encode_die": bool(getattr(film_gen, "encode_die", True)),
-                "encode_tool": bool(getattr(film_gen, "encode_tool", True)),
-                "encode_energy": bool(getattr(film_gen, "encode_energy", False)),
-                "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
-                "encode_time": bool(getattr(film_gen, "encode_time", True)),
-                "encode_region": bool(getattr(film_gen, "encode_region", False)),
-                "encode_relative_intensity": bool(
-                    getattr(film_gen, "encode_relative_intensity", False)
-                ),
-                "encode_elements": bool(
-                    getattr(film_gen, "encode_elements", False)
-                ),
-                "element_vocab": getattr(film_gen, "element_vocab", None),
-                "material_elements": getattr(film_gen, "material_elements", None),
-                "region_index_mapping": cfg.get("region_index_mapping"),
-            },
             device=dev,
             energy_bounds=energy_bounds,
+            energy_scale_ev=float(getattr(m, "energy_scale_ev", 1000.0)),
+            extra_config={
+                "num_samples": len(sub_df),
+                "region_index_mapping": cfg.get("region_index_mapping"),
+            },
         )
 
     mask = df_meta["tool"] == source_tool
