@@ -205,18 +205,18 @@ metrics_report:
 visualization:
   show_plots: true
   plots:
-    gp_die_flux_timeline: true
-    pairing_timeline: true
+    gp_die_flux_timeline: false
+    pairing_timeline: false
     flux_and_averaged_intensity: false
     max_intensity: false
     normalized_max_intensity: false
     tool_comparison: false
     shirley_background: false
-    spectral_noise_analysis: true
-    gp_hyperparameter_convergence: true
+    spectral_noise_analysis: false
+    gp_hyperparameter_convergence: false
     training_history: true
     prediction_comparison: true
-    regional_spectrum_distribution: true
-    atomic_percentage_distributions: true
+    regional_spectrum_distribution: false
+    atomic_percentage_distributions: false
     atomic_percentage_mae: true
     sliding_window_slices: true
