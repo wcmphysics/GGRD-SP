@@ -316,12 +316,13 @@ class TestResNetScaledShort1D(unittest.TestCase):
             config={
                 "use_film": True,
                 "use_sliding_window": True,
-                "encode_window_energy": True,
+                "encode_energy": True,
                 "resnet_channel": 8,
                 "kernel_size": 3,
             },
         )
-        self.assertTrue(model.film_gen.encode_window_energy)
+        self.assertTrue(model.film_gen.encode_energy)
+        self.assertFalse(model.shortcut_film_gen.encode_energy)
         self.assertFalse(model.shortcut_film_gen.encode_window_energy)
 
     def test_instantiate_model_registration(self) -> None:

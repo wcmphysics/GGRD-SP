@@ -273,17 +273,23 @@ class TestFiLMModulation(unittest.TestCase):
             prepare_film_condition_tensor(metadata=None)
 
     def test_film_generator_feature_toggles_and_dimensions(self) -> None:
-        """Verify FiLM input dimension adapts to encode_flux, encode_time, and
-        encode_window_energy flags.
-        """
-        # Flux, time, and sliding window energy on: 4 + 8 + 1 + 1 + 2 = 16
+        """Verify FiLM input dimension adapts to feature encoding toggles."""
+        # Flux, time, and energy on (with sliding window on):
+        # die (4) + 2*tool (8) + flux (1) + time (1) + energy (2) = 16
         fg_all = FiLMGenerator(
             [16],
-            config={"use_sliding_window": True, "encode_window_energy": True},
+            config={"use_sliding_window": True, "encode_energy": True},
         )
         self.assertEqual(fg_all.mlp[0].in_features, 16)
 
-        # Sliding window off: 4 + 8 + 1 + 1 = 14
+        # Energy on with sliding window off: 4 + 8 + 1 + 1 + 2 = 16
+        fg_energy_sw_off = FiLMGenerator(
+            [16],
+            config={"use_sliding_window": False, "encode_energy": True},
+        )
+        self.assertEqual(fg_energy_sw_off.mlp[0].in_features, 16)
+
+        # Default (energy off): 4 + 8 + 1 + 1 = 14
         fg_default = FiLMGenerator([16])
         self.assertEqual(fg_default.mlp[0].in_features, 14)
 
@@ -314,6 +320,161 @@ class TestFiLMModulation(unittest.TestCase):
             config={"encode_flux": False, "encode_time": False},
         )
         self.assertEqual(len(fg_neither(cond_neither)), 1)
+
+        # Die encoding off: 0 + 8 + 1 + 1 = 10
+        fg_no_die = FiLMGenerator([16], config={"encode_die": False})
+        self.assertEqual(fg_no_die.mlp[0].in_features, 10)
+        self.assertIsNone(fg_no_die.die_embedding)
+        cond_no_die = prepare_film_condition_tensor(
+            metadata=[
+                {
+                    "tool_index": 0,
+                    "tool_target_index": 1,
+                    "total_flux_single_die_normalized": 0.5,
+                    "time_normalized": -0.2,
+                }
+            ],
+            config={"encode_die": False},
+        )
+        self.assertNotIn("die", cond_no_die)
+        mods_no_die = fg_no_die(cond_no_die)
+        self.assertEqual(len(mods_no_die), 1)
+
+        # Tool encoding off: 4 + 0 + 1 + 1 = 6
+        fg_no_tool = FiLMGenerator([16], config={"encode_tool": False})
+        self.assertEqual(fg_no_tool.mlp[0].in_features, 6)
+        self.assertIsNone(fg_no_tool.tool_embedding)
+        cond_no_tool = prepare_film_condition_tensor(
+            metadata=[
+                {
+                    "die": 3,
+                    "total_flux_single_die_normalized": 0.5,
+                    "time_normalized": -0.2,
+                }
+            ],
+            config={"encode_tool": False},
+        )
+        self.assertNotIn("tool_src", cond_no_tool)
+        self.assertNotIn("tool_tgt", cond_no_tool)
+        mods_no_tool = fg_no_tool(cond_no_tool)
+        self.assertEqual(len(mods_no_tool), 1)
+
+    def test_film_generator_raises_when_all_encodings_disabled(self) -> None:
+        """Verify FiLMGenerator raises ValueError when all encodings are False."""
+        all_off_cfg = {
+            "encode_die": False,
+            "encode_tool": False,
+            "encode_flux": False,
+            "encode_time": False,
+            "encode_region": False,
+            "encode_relative_intensity": False,
+            "encode_elements": False,
+            "encode_energy": False,
+        }
+        with self.assertRaises(ValueError) as ctx:
+            FiLMGenerator([16], config=all_off_cfg)
+        self.assertIn("all feature encodings are disabled", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx2:
+            ResNet1D(
+                n_points=20,
+                config={
+                    "use_film": True,
+                    **all_off_cfg,
+                },
+            )
+        self.assertIn("all feature encodings are disabled", str(ctx2.exception))
+
+    def test_regional_energy_encoding_sliding_window_off(self) -> None:
+        """Verify energy encoding works when sliding window is turned off."""
+        n_pts = 25
+        x = np.ones((2, n_pts), dtype=np.float32)
+        y = np.ones((2, n_pts), dtype=np.float32)
+        energy = np.linspace(150.0, 175.0, n_pts, dtype=np.float32)
+        pair_ds = SpectrumPairDataset(
+            x,
+            y,
+            energy=np.tile(energy, (2, 1)),
+            metadata=[
+                {
+                    "die": 1,
+                    "tool_index": 0,
+                    "tool_target_index": 1,
+                    "total_flux_single_die_normalized": 0.0,
+                    "time_normalized": 0.0,
+                }
+            ]
+            * 2,
+        )
+        item = pair_ds[0]
+        self.assertIn("energy_bounds", item)
+        self.assertIn("window_energy", item)
+        self.assertAlmostEqual(item["energy_bounds"][0].item(), 150.0, places=3)
+        self.assertAlmostEqual(item["energy_bounds"][1].item(), 175.0, places=3)
+
+        model = ResNet1D(
+            n_points=n_pts,
+            config={
+                "resnet_channel": 8,
+                "use_film": True,
+                "use_sliding_window": False,
+                "encode_energy": True,
+                "energy_scale_ev": 1000.0,
+            },
+        )
+        self.assertTrue(model.film_gen.encode_energy)
+
+        # Test forward pass with energy bounds
+        meta = [
+            {
+                "die": 1,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+            }
+        ] * 2
+        cond = prepare_film_condition_tensor(
+            metadata=meta,
+            energy_bounds=torch.tensor([[150.0, 175.0], [150.0, 175.0]]),
+            config={"num_samples": 2, "energy_scale_ev": 1000.0},
+        )
+        self.assertIn("energy_bounds", cond)
+        self.assertAlmostEqual(cond["energy_bounds"][0, 0].item(), 0.15, places=4)
+        self.assertAlmostEqual(cond["energy_bounds"][0, 1].item(), 0.175, places=4)
+
+        out = model(torch.as_tensor(x).unsqueeze(1), cond=cond)
+        self.assertEqual(out.shape, (2, 1, n_pts))
+
+        # Test predict_spectra in non-sliding-window mode
+        # with encode_energy=True.
+        from models.inference import predict_spectra
+
+        meta_df = pd.DataFrame(
+            [
+                {
+                    "spectrum_index": i,
+                    "measurement_id": f"NMG_M_J4_{i:05d}",
+                    "tool": "J4",
+                    "tool_index": 0,
+                    "tool_target": "H1",
+                    "tool_target_index": 1,
+                    "die": i,
+                    "region": "Si2p",
+                    "split": "test",
+                    "total_flux_single_die_normalized": 0.1 * i,
+                    "time_normalized": 0.0,
+                }
+                for i in range(2)
+            ]
+        )
+        pred_i, pred_e, pred_df = predict_spectra(
+            models={"Si2p": model},
+            data=(x, np.tile(energy, (2, 1)), meta_df),
+            config={"source_tool": "J4", "target_tool": "H1", "use_sliding_window": False},
+        )
+        self.assertEqual(pred_i.shape, (2, n_pts))
+        self.assertEqual(pred_e.shape, (2, n_pts))
 
     def test_prepare_film_condition_tensor_with_window_energy(self) -> None:
         """Verify window energy bounds are scaled by energy_scale_ev."""
@@ -396,7 +557,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "resnet_channel": 16,
                 "use_film": True,
                 "use_sliding_window": True,
-                "encode_window_energy": True,
+                "encode_energy": True,
                 "energy_scale_ev": 1000.0,
             },
         )
@@ -457,7 +618,7 @@ class TestFiLMModulation(unittest.TestCase):
                 "kernel_size": 3,
                 "use_film": True,
                 "use_sliding_window": True,
-                "encode_window_energy": True,
+                "encode_energy": True,
             },
         )
         sw_loss = evaluate_sliding_window(
