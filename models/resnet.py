@@ -246,6 +246,21 @@ class ResNetScaledShort1D(ResNet1D):
         shortcut_cfg = {
             **cfg,
             "use_sliding_window": False,
+            "encode_energy": (
+                False
+                if any(
+                    [
+                        cfg.get("encode_die", True),
+                        cfg.get("encode_tool", True),
+                        cfg.get("encode_flux", True),
+                        cfg.get("encode_time", True),
+                        cfg.get("encode_region", False),
+                        cfg.get("encode_relative_intensity", False),
+                        cfg.get("encode_elements", False),
+                    ]
+                )
+                else bool(cfg.get("encode_energy", False))
+            ),
             "encode_window_energy": False,
         }
         self.shortcut_film_gen = FiLMGenerator([1], config=shortcut_cfg)

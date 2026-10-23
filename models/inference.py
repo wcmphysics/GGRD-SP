@@ -55,7 +55,13 @@ def predict_sliding_window_spectrum(
         spectrum_1d, window_size=w_size, stride=s_step
     )
     film_gen = getattr(model, "film_gen", None)
-    encode_energy = bool(getattr(film_gen, "encode_window_energy", False))
+    encode_energy = bool(
+        getattr(
+            film_gen,
+            "encode_energy",
+            getattr(film_gen, "encode_window_energy", False),
+        )
+    )
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
 
     energy_np = None
@@ -88,10 +94,12 @@ def predict_sliding_window_spectrum(
                 else:
                     bounds = [[0.0, 0.0]] * len(b_wins)
                 scale_floor = max(energy_scale_ev, 1e-6)
-                b_cond["window_energy"] = (
+                scaled_b = (
                     torch.tensor(bounds, dtype=torch.float32, device=device)
                     / scale_floor
                 )
+                b_cond["energy_bounds"] = scaled_b
+                b_cond["window_energy"] = scaled_b
             out = (
                 model(b_wins, cond=b_cond)
                 if b_cond is not None
@@ -213,6 +221,7 @@ def predict_spectra(
         m: nn.Module,
         sub_df: pd.DataFrame,
         dev: torch.device,
+        energy_bounds: torch.Tensor | np.ndarray | None = None,
     ) -> dict[str, Any] | None:
         if not getattr(m, "use_film", False):
             return None
@@ -228,6 +237,9 @@ def predict_spectra(
             config={
                 "num_samples": len(sub_df),
                 "energy_scale_ev": float(getattr(m, "energy_scale_ev", 1000.0)),
+                "encode_die": bool(getattr(film_gen, "encode_die", True)),
+                "encode_tool": bool(getattr(film_gen, "encode_tool", True)),
+                "encode_energy": bool(getattr(film_gen, "encode_energy", False)),
                 "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
                 "encode_time": bool(getattr(film_gen, "encode_time", True)),
                 "encode_region": bool(getattr(film_gen, "encode_region", False)),
@@ -242,6 +254,7 @@ def predict_spectra(
                 "region_index_mapping": cfg.get("region_index_mapping"),
             },
             device=dev,
+            energy_bounds=energy_bounds,
         )
 
     mask = df_meta["tool"] == source_tool
@@ -350,10 +363,14 @@ def predict_spectra(
                     dtype=torch.float32,
                     device=device,
                 ).unsqueeze(1)
+                batch_orig = orig_indices[i : i + batch_size]
+                batch_e = ary_energy[batch_orig]
+                bounds = np.column_stack([batch_e[:, 0], batch_e[:, -1]])
                 cond = _film_cond(
                     model_entry,
                     group.iloc[i : i + batch_size],
                     device,
+                    energy_bounds=bounds,
                 )
                 out = (
                     model_entry(bx, cond=cond)

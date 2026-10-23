@@ -67,6 +67,12 @@ class SpectrumPairDataset(Dataset):
         }
         if self.energy is not None:
             item["energy"] = self.energy[idx]
+            e_1d = self.energy[idx].squeeze(0)
+            bounds = torch.tensor(
+                [e_1d[0].item(), e_1d[-1].item()], dtype=torch.float32
+            )
+            item["energy_bounds"] = bounds
+            item["window_energy"] = bounds
         if self.metadata and idx < len(self.metadata):
             item["meta"] = self.metadata[idx]
         return item
@@ -151,6 +157,7 @@ class SpectrumPatchDataset(Dataset):
             "x": self.x[idx],
             "y": self.y[idx],
             "max_val": self.max_vals[idx],
+            "energy_bounds": self.window_energy[idx],
             "window_energy": self.window_energy[idx],
         }
         if self.meta_list and idx < len(self.meta_list):

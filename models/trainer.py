@@ -128,11 +128,23 @@ def _batch_cond(
     film_gen = getattr(model, "film_gen", None) or getattr(
         model, "shortcut_film_gen", None
     )
+    energy_bounds = batch.get("energy_bounds")
+    if energy_bounds is None:
+        energy_bounds = batch.get("window_energy")
+    if energy_bounds is None and "energy" in batch:
+        e = batch["energy"]
+        if isinstance(e, torch.Tensor) and e.dim() >= 2:
+            e_flat = e.view(e.shape[0], -1)
+            energy_bounds = torch.stack([e_flat[:, 0], e_flat[:, -1]], dim=-1)
+
     return prepare_film_condition_tensor(
         batch.get("meta"),
         config={
             "num_samples": num_samples,
             "energy_scale_ev": energy_scale_ev,
+            "encode_die": bool(getattr(film_gen, "encode_die", True)),
+            "encode_tool": bool(getattr(film_gen, "encode_tool", True)),
+            "encode_energy": bool(getattr(film_gen, "encode_energy", False)),
             "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
             "encode_time": bool(getattr(film_gen, "encode_time", True)),
             "encode_region": bool(getattr(film_gen, "encode_region", False)),
@@ -146,7 +158,7 @@ def _batch_cond(
             "material_elements": getattr(film_gen, "material_elements", None),
         },
         device=dev,
-        window_energy=batch.get("window_energy"),
+        energy_bounds=energy_bounds,
     )
 
 
