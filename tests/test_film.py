@@ -255,13 +255,13 @@ class TestFiLMModulation(unittest.TestCase):
             "die": 0,
             "tool_index": 0,
             "tool_target_index": 1,
-            "die_flux_normalized": 0.0,
+            "total_flux_single_die_normalized": 0.0,
             "time_normalized": 0.0,
         }
         for field in (
             "tool_index",
             "tool_target_index",
-            "die_flux_normalized",
+            "total_flux_single_die_normalized",
             "time_normalized",
         ):
             bad_meta = {k: v for k, v in base_meta.items() if k != field}
@@ -520,6 +520,109 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertEqual(gamma.shape, (2, 16))
         self.assertEqual(beta.shape, (2, 16))
         # Initial gamma is 1.0, initial beta is 0.0
+        torch.testing.assert_close(gamma, torch.ones_like(gamma))
+        torch.testing.assert_close(beta, torch.zeros_like(beta))
+
+    def test_film_relative_intensity_encoding(self) -> None:
+        """Verify relative regional intensity condition extraction and FiLM."""
+        meta = [
+            {
+                "die": 0,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+                "relative_intensity_single_region": 0.85,
+            },
+            {
+                "die": 1,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+                "relative_intensity_single_region": 1.30,
+            },
+        ]
+        cond = prepare_film_condition_tensor(
+            meta, config={"encode_relative_intensity": True, "num_samples": 2}
+        )
+        self.assertIn("relative_intensity_single_region", cond)
+        self.assertEqual(cond["relative_intensity_single_region"].shape, (2, 1))
+        self.assertAlmostEqual(
+            cond["relative_intensity_single_region"][0, 0].item(), 0.85, places=4
+        )
+        self.assertAlmostEqual(
+            cond["relative_intensity_single_region"][1, 0].item(), 1.30, places=4
+        )
+
+        film_gen = FiLMGenerator(
+            channels_list=[16],
+            config={"encode_relative_intensity": True},
+        )
+        modulations = film_gen(cond)
+        self.assertEqual(len(modulations), 1)
+        gamma, beta = modulations[0]
+        self.assertEqual(gamma.shape, (2, 16))
+        self.assertEqual(beta.shape, (2, 16))
+        torch.testing.assert_close(gamma, torch.ones_like(gamma))
+        torch.testing.assert_close(beta, torch.zeros_like(beta))
+
+    def test_film_element_encoding_dynamic_vocabulary(self) -> None:
+        """Verify dynamic element vocabulary multi-hot vector encoding."""
+        materials_cfg = {
+            "NMG": {"elements": ["Ti", "Al", "C", "O", "Cl", "Si"]},
+            "PMG": {"elements": ["Ti", "N", "O", "Cl", "Si"]},
+        }
+        # Vocab: ["Al", "C", "Cl", "N", "O", "Si", "Ti"] -> 7 elements
+        meta = [
+            {
+                "die": 0,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+                "material": "NMG",
+            },
+            {
+                "die": 1,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+                "material": "PMG",
+            },
+        ]
+        cond = prepare_film_condition_tensor(
+            meta,
+            config={
+                "encode_elements": True,
+                "materials": materials_cfg,
+                "num_samples": 2,
+            },
+        )
+        self.assertIn("element_multi_hot", cond)
+        self.assertEqual(cond["element_multi_hot"].shape, (2, 7))
+
+        # NMG has Al, C, Cl, O, Si, Ti -> indexes 0, 1, 2, 4, 5, 6 (N at 3 is 0)
+        expected_nmg = [1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]
+        # PMG has Cl, N, O, Si, Ti -> idx 2, 3, 4, 5, 6 (Al, C at 0, 1 are 0)
+        expected_pmg = [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        np.testing.assert_allclose(
+            cond["element_multi_hot"][0].numpy(), expected_nmg, atol=1e-5
+        )
+        np.testing.assert_allclose(
+            cond["element_multi_hot"][1].numpy(), expected_pmg, atol=1e-5
+        )
+
+        film_gen = FiLMGenerator(
+            channels_list=[16],
+            config={"encode_elements": True, "element_vocab_size": 7},
+        )
+        modulations = film_gen(cond)
+        self.assertEqual(len(modulations), 1)
+        gamma, beta = modulations[0]
+        self.assertEqual(gamma.shape, (2, 16))
+        self.assertEqual(beta.shape, (2, 16))
         torch.testing.assert_close(gamma, torch.ones_like(gamma))
         torch.testing.assert_close(beta, torch.zeros_like(beta))
 

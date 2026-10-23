@@ -136,6 +136,14 @@ def _batch_cond(
             "encode_flux": bool(getattr(film_gen, "encode_flux", True)),
             "encode_time": bool(getattr(film_gen, "encode_time", True)),
             "encode_region": bool(getattr(film_gen, "encode_region", False)),
+            "encode_relative_intensity": bool(
+                getattr(film_gen, "encode_relative_intensity", False)
+            ),
+            "encode_elements": bool(
+                getattr(film_gen, "encode_elements", False)
+            ),
+            "element_vocab": getattr(film_gen, "element_vocab", None),
+            "material_elements": getattr(film_gen, "material_elements", None),
         },
         device=dev,
         window_energy=batch.get("window_energy"),

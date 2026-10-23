@@ -1,8 +1,9 @@
 """Feature-wise Linear Modulation (FiLM) module.
 
 Enables dynamic feature conditioning using metadata (die ID,
-tool indices, standardized measurement time, and standardized
-source die flux) without target data leakage.
+tool indices, standardized measurement time, standardized source
+die flux, relative regional intensity, and element multi-hot)
+without target data leakage.
 """
 
 from __future__ import annotations
@@ -155,13 +156,17 @@ def prepare_film_condition_tensor(
     ----------
     metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
         Sample metadata with 'die', 'tool_index', 'tool_target_index',
-        and (when enabled) 'die_flux_normalized' and 'time_normalized'.
+        and (when enabled) flux, time, relative intensity, and material.
     config : dict[str, Any] | None, optional
         Optional configuration containing:
-        - 'encode_flux' (bool): Include 'die_flux_normalized' (default True).
-        - 'encode_time' (bool): Include 'time_normalized' (default True).
-        - 'energy_scale_ev' (float): Window energy scale factor
-          (default 1000.0).
+        - 'encode_flux' (bool): Include standardized die flux.
+        - 'encode_time' (bool): Include 'time_normalized'.
+        - 'encode_relative_intensity' (bool): Include relative regional
+          intensity.
+        - 'encode_elements' (bool): Include material element multi-hot vector.
+        - 'element_vocab' (list[str] | None): Dynamic element vocabulary.
+        - 'material_elements' (dict[str, list[str]] | None): Material map.
+        - 'energy_scale_ev' (float): Window energy scale factor (1000.0).
         - 'num_samples' (int): Batch size fallback when metadata is empty.
     device : torch.device | None, optional
         PyTorch computation device.
@@ -176,9 +181,11 @@ def prepare_film_condition_tensor(
         - 'die': LongTensor (B,)
         - 'tool_src': LongTensor (B,)
         - 'tool_tgt': LongTensor (B,)
-        - 'region': LongTensor (B,) (if encode_region=True or metadata present)
+        - 'region': LongTensor (B,) (if encode_region=True)
         - 'die_flux_normalized': FloatTensor (B, 1) (if encode_flux=True)
         - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
+        - 'relative_intensity_single_region': FloatTensor (B, 1)
+        - 'element_multi_hot': FloatTensor (B, vocab_size)
         - 'window_energy': FloatTensor (B, 2) (if provided)
     """
     cfg = config or {}
@@ -187,6 +194,12 @@ def prepare_film_condition_tensor(
     encode_flux = bool(cfg.get("encode_flux", cfg.get("use_flux", True)))
     encode_time = bool(cfg.get("encode_time", cfg.get("use_time", True)))
     encode_region = bool(cfg.get("encode_region", cfg.get("use_region", False)))
+    encode_rel_int = bool(
+        cfg.get("encode_relative_intensity", cfg.get("use_relative_intensity", False))
+    )
+    encode_elements = bool(
+        cfg.get("encode_elements", cfg.get("use_elements", False))
+    )
 
     meta = (
         metadata.to_dict(orient="records")
@@ -225,12 +238,15 @@ def prepare_film_condition_tensor(
     }
 
     if encode_flux:
-        flux_vals = [
-            _parse_required_float(x, "die_flux_normalized")
-            for x in _extract_meta_column(meta, "die_flux_normalized", n)
-        ]
+        flux_vals = _extract_meta_column(meta, "total_flux_single_die_normalized", n)
+        flux_col = "total_flux_single_die_normalized"
+        if all(x is None for x in flux_vals):
+            flux_vals = _extract_meta_column(meta, "die_flux_normalized", n)
+            flux_col = "total_flux_single_die_normalized (or die_flux_normalized)"
         ret["die_flux_normalized"] = torch.tensor(
-            flux_vals, dtype=torch.float32, device=device
+            [_parse_required_float(x, flux_col) for x in flux_vals],
+            dtype=torch.float32,
+            device=device,
         ).unsqueeze(-1)
 
     if encode_time:
@@ -241,6 +257,71 @@ def prepare_film_condition_tensor(
         ret["time_normalized"] = torch.tensor(
             time_vals, dtype=torch.float32, device=device
         ).unsqueeze(-1)
+
+    if encode_rel_int:
+        rel_vals = _extract_meta_column(meta, "relative_intensity_single_region", n)
+        if all(x is None for x in rel_vals):
+            reg_means = _extract_meta_column(meta, "mean_intensity_single_region", n)
+            die_means = _extract_meta_column(meta, "mean_intensity_single_die", n)
+            if any(x is not None for x in reg_means) and any(x is not None for x in die_means):
+                rel_vals = [
+                    float(r) / max(float(d), 1e-12)
+                    for r, d in zip(reg_means, die_means)
+                ]
+            else:
+                rel_vals = [1.0] * n
+        ret["relative_intensity_single_region"] = torch.tensor(
+            [_parse_required_float(x, "relative_intensity_single_region") for x in rel_vals],
+            dtype=torch.float32,
+            device=device,
+        ).unsqueeze(-1)
+
+    if encode_elements:
+        raw_mat = cfg.get("material_elements")
+        if raw_mat is None:
+            raw_mat = cfg.get("materials")
+        if raw_mat is None:
+            try:
+                from utility.config_loader import load_material_elements
+                raw_mat = load_material_elements("config/default_config.yaml")
+            except Exception as exc:
+                raise ValueError(
+                    f"Failed to load material elements configuration: {exc}"
+                ) from exc
+
+        # Normalize raw_mat to dict[str, list[str]]
+        mat_elements: dict[str, list[str]] = {}
+        for m_k, m_v in raw_mat.items():
+            if isinstance(m_v, dict) and "elements" in m_v:
+                mat_elements[str(m_k)] = [str(x).strip() for x in m_v["elements"]]
+            elif isinstance(m_v, (list, tuple, set)):
+                mat_elements[str(m_k)] = [str(x).strip() for x in m_v]
+            else:
+                mat_elements[str(m_k)] = [str(m_v).strip()]
+
+        elem_vocab = cfg.get("element_vocab")
+        if elem_vocab is None or len(elem_vocab) == 0:
+            from utility.config_loader import extract_element_vocabulary
+            elem_vocab = extract_element_vocabulary(mat_elements)
+
+        mat_names = _extract_meta_column(meta, "material", n)
+        multi_hot_list: list[list[float]] = []
+        for m in mat_names:
+            if m is None or pd.isna(m):
+                raise ValueError("Metadata field 'material' is missing or null.")
+            m_str = str(m)
+            if m_str not in mat_elements:
+                raise KeyError(
+                    f"Material '{m_str}' not found in material definitions. "
+                    f"Available materials: {sorted(mat_elements.keys())}."
+                )
+            active_set = set(mat_elements[m_str])
+            multi_hot_list.append(
+                [1.0 if elem in active_set else 0.0 for elem in elem_vocab]
+            )
+        ret["element_multi_hot"] = torch.tensor(
+            multi_hot_list, dtype=torch.float32, device=device
+        )
 
     reg_mapping = cfg.get("region_index_mapping") or cfg.get("region_mapping")
     reg_vals = _extract_meta_column(meta, "region_index", n)
@@ -299,8 +380,13 @@ class FiLMGenerator(nn.Module):
         - 'region_embed_dim' (int): Region embedding dim (default 4).
         - 'encode_region' (bool): Encode region identity (default False).
         - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
-        - 'encode_flux' (bool): Encode 'die_flux_normalized' (default True).
+        - 'encode_flux' (bool): Encode standardized die flux (default True).
         - 'encode_time' (bool): Encode 'time_normalized' (default True).
+        - 'encode_relative_intensity' (bool): Encode relative regional
+          intensity.
+        - 'encode_elements' (bool): Encode material element multi-hot vector.
+        - 'element_vocab' (list[str] | None): Dynamic element vocabulary.
+        - 'material_elements' (dict[str, list[str]] | None): Material map.
         - 'use_sliding_window' (bool): Whether sliding window is used.
         - 'encode_window_energy' (bool): Whether to encode window energy.
     """
@@ -327,6 +413,26 @@ class FiLMGenerator(nn.Module):
         self.encode_time = bool(
             cfg.get("encode_time", cfg.get("use_time", True))
         )
+        self.encode_relative_intensity = bool(
+            cfg.get("encode_relative_intensity", False)
+        )
+        self.encode_elements = bool(
+            cfg.get("encode_elements", False)
+        )
+        self.element_vocab = cfg.get("element_vocab")
+        self.material_elements = cfg.get("material_elements")
+        if self.encode_elements and (not self.element_vocab or not self.material_elements):
+            try:
+                from utility.config_loader import (
+                    extract_element_vocabulary,
+                    load_material_elements,
+                )
+                self.material_elements = load_material_elements("config/default_config.yaml")
+                self.element_vocab = extract_element_vocabulary(self.material_elements)
+            except Exception:
+                self.material_elements = {}
+                self.element_vocab = []
+
         self.encode_window_energy = bool(
             cfg.get("use_sliding_window", False)
         ) and bool(cfg.get("encode_window_energy", False))
@@ -334,6 +440,12 @@ class FiLMGenerator(nn.Module):
         flux_dim = 1 if self.encode_flux else 0
         time_dim = 1 if self.encode_time else 0
         energy_dim = 2 if self.encode_window_energy else 0
+        rel_int_dim = 1 if self.encode_relative_intensity else 0
+        elem_dim = (
+            len(self.element_vocab)
+            if (self.encode_elements and self.element_vocab)
+            else int(cfg.get("element_vocab_size", 0))
+        )
 
         in_dim = (
             die_dim
@@ -342,6 +454,8 @@ class FiLMGenerator(nn.Module):
             + flux_dim
             + time_dim
             + energy_dim
+            + rel_int_dim
+            + elem_dim
         )
         self.channels_list = list(channels_list)
         self.die_embedding = nn.Embedding(num_dies, die_dim)
@@ -372,19 +486,12 @@ class FiLMGenerator(nn.Module):
         Parameters
         ----------
         cond : dict[str, torch.Tensor]
-            Conditioning features with 'die', 'tool_src', 'tool_tgt',
-            and optional 'die_flux_normalized', 'time_normalized', and
-            'window_energy'.
+            Conditioning features dictionary.
 
         Returns
         -------
         list[tuple[torch.Tensor, torch.Tensor]]
-            List of (gamma, beta) modulation pairs per target layer:
-            - gamma: Multiplicative feature scale factor (B, channels),
-              centered at 1.0 for identity modulation.
-            - beta: Additive feature shift factor (B, channels),
-              centered at 0.0 for identity modulation.
-            Applied to feature map z as: FiLM(z) = gamma * z + beta.
+            List of (gamma, beta) modulation pairs per target layer.
         """
         target_device = self.die_embedding.weight.device
         cond_dev = {
@@ -417,11 +524,13 @@ class FiLMGenerator(nn.Module):
                     reg_t = torch.clamp(reg_t, 0, max_allowed)
             feat_list.append(self.region_embedding(reg_t))
         if self.encode_flux:
-            flux_t = cond_dev.get("die_flux_normalized")
+            flux_t = cond_dev.get("total_flux_single_die_normalized")
+            if flux_t is None:
+                flux_t = cond_dev.get("die_flux_normalized")
             if flux_t is None:
                 raise KeyError(
-                    "FiLMGenerator expects 'die_flux_normalized' in conditioning "
-                    "dictionary when encode_flux=True."
+                    "FiLMGenerator expects 'total_flux_single_die_normalized' in "
+                    "conditioning dictionary when encode_flux=True."
                 )
             feat_list.append(flux_t)
 
@@ -433,6 +542,24 @@ class FiLMGenerator(nn.Module):
                     "dictionary when encode_time=True."
                 )
             feat_list.append(time_t)
+
+        if self.encode_relative_intensity:
+            rel_t = cond_dev.get("relative_intensity_single_region")
+            if rel_t is None:
+                raise KeyError(
+                    "FiLMGenerator expects 'relative_intensity_single_region' in "
+                    "conditioning dictionary when encode_relative_intensity=True."
+                )
+            feat_list.append(rel_t)
+
+        if self.encode_elements:
+            elem_t = cond_dev.get("element_multi_hot")
+            if elem_t is None:
+                raise KeyError(
+                    "FiLMGenerator expects 'element_multi_hot' in conditioning "
+                    "dictionary when encode_elements=True."
+                )
+            feat_list.append(elem_t)
 
         if self.encode_window_energy:
             we = cond_dev.get("window_energy")
