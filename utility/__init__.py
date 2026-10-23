@@ -12,7 +12,6 @@ from utility.evaluation import (
     format_side_by_side_metrics,
 )
 from utility.flux_and_intensity import (
-    calculate_flux,
     calculate_flux_and_intensity,
     calculate_normalized_time,
     compute_die_total_flux,
@@ -57,7 +56,6 @@ __all__ = [
     "generate_tool_timeline",
     "get_default_measurement_config",
     # Flux & Intensity
-    "calculate_flux",
     "calculate_flux_and_intensity",
     "calculate_normalized_time",
     "standardize_metadata_features",

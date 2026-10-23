@@ -259,10 +259,6 @@ def calculate_flux_and_intensity(
     return df_res
 
 
-# Alias for backward compatibility
-calculate_flux = calculate_flux_and_intensity
-
-
 def calculate_normalized_time(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
@@ -407,9 +403,13 @@ def standardize_metadata_features(
     flux_col = (
         "total_flux_single_die"
         if "total_flux_single_die" in df_res.columns
-        else ("die_flux" if "die_flux" in df_res.columns else None)
+        else None
     )
-    if flux_col is not None and "die" in df_res.columns and "measurement_id" in df_res.columns:
+    if (
+        flux_col is not None
+        and "die" in df_res.columns
+        and "measurement_id" in df_res.columns
+    ):
         die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
         die_fit = die_summary[die_summary["split"] == fit_split]
         die_flux_vals = die_fit[flux_col].to_numpy(dtype=np.float64)
@@ -436,8 +436,8 @@ def compute_die_total_flux(
 ) -> dict[tuple[str, int], float]:
     """Calculate total integrated spectral flux for (measurement_id, die).
 
-    If 'total_flux_single_die' (or 'die_flux') is already present in df_meta,
-    it is retrieved directly. Otherwise, fluxes are computed by numerical
+    If 'total_flux_single_die' is already present in df_meta, it is
+    retrieved directly. Otherwise, fluxes are computed by numerical
     integration across regional spectra.
 
     Parameters
@@ -457,10 +457,11 @@ def compute_die_total_flux(
         Dictionary mapping (measurement_id, die) to total integrated flux.
     """
     col_name = None
-    if "total_flux_single_die" in df_meta.columns and not df_meta["total_flux_single_die"].isna().all():
+    if (
+        "total_flux_single_die" in df_meta.columns
+        and not df_meta["total_flux_single_die"].isna().all()
+    ):
         col_name = "total_flux_single_die"
-    elif "die_flux" in df_meta.columns and not df_meta["die_flux"].isna().all():
-        col_name = "die_flux"
 
     if col_name is not None:
         sub = df_meta.drop_duplicates(subset=["measurement_id", "die"])
