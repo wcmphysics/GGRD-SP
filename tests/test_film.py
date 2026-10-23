@@ -787,6 +787,71 @@ class TestFiLMModulation(unittest.TestCase):
         torch.testing.assert_close(gamma, torch.ones_like(gamma))
         torch.testing.assert_close(beta, torch.zeros_like(beta))
 
+    def test_element_encoding_requires_materials_without_fallback(self) -> None:
+        """Verify element encoding raises ValueError when materials config is
+        missing.
+        """
+        meta = [
+            {
+                "die": 0,
+                "tool_index": 0,
+                "tool_target_index": 1,
+                "total_flux_single_die_normalized": 0.0,
+                "time_normalized": 0.0,
+            }
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            prepare_film_condition_tensor(
+                meta, config={"encode_elements": True}
+            )
+        self.assertIn("material_elements", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx2:
+            FiLMGenerator([16], config={"encode_elements": True})
+        self.assertIn("material_elements", str(ctx2.exception))
+
+    def test_assemble_prediction_metadata_propagates_metrics(self) -> None:
+        """Verify assemble_prediction_metadata propagates all Stage 1
+        metrics.
+        """
+        from models.inference import assemble_prediction_metadata
+
+        source_df = pd.DataFrame(
+            [
+                {
+                    "spectrum_index": 0,
+                    "measurement_id": "NMG_M_J4_00000",
+                    "die": 0,
+                    "region": "Al2p",
+                    "total_flux_single_die_normalized": 1.25,
+                    "mean_intensity_single_region": 150.0,
+                    "mean_intensity_single_die": 120.0,
+                    "relative_intensity_single_region": 1.25,
+                    "total_flux_single_die": 5000.0,
+                    "time_normalized": 0.5,
+                }
+            ]
+        )
+        pred_meta = assemble_prediction_metadata(
+            source_df,
+            {
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "n_points": 100,
+            },
+        )
+        self.assertIn("total_flux_single_die_normalized", pred_meta.columns)
+        self.assertIn("mean_intensity_single_region", pred_meta.columns)
+        self.assertIn("mean_intensity_single_die", pred_meta.columns)
+        self.assertIn("relative_intensity_single_region", pred_meta.columns)
+        self.assertIn("total_flux_single_die", pred_meta.columns)
+        self.assertEqual(
+            pred_meta["total_flux_single_die_normalized"].iloc[0], 1.25
+        )
+        self.assertEqual(
+            pred_meta["mean_intensity_single_region"].iloc[0], 150.0
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
