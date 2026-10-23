@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from models.cost import SpectralLoss
-from models.dataset import create_regional_datasets
+from models.dataset_orchestration import create_regional_datasets
 from models.inference import predict_spectra
 from models.orchestration import perform_model_training_and_bayesian_optimization
 from utility.evaluation import calculate_prediction_metrics
