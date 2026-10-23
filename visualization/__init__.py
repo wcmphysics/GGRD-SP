@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from visualization.dispatcher import (
+    DEFAULT_PLOT_TOGGLES,
+    dispatch_visualizations,
+)
 from visualization.plot_noise_analysis import (
     plot_gp_hyperparameter_convergence,
     plot_spectral_noise_analysis,
@@ -24,6 +28,8 @@ from visualization.visualization import (
 )
 
 __all__ = [
+    "DEFAULT_PLOT_TOGGLES",
+    "dispatch_visualizations",
     "plot_gp_hyperparameter_convergence",
     "plot_spectral_noise_analysis",
     "plot_atomic_percentage_distributions",
