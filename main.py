@@ -15,176 +15,91 @@ def main() -> None:
     splitting, dataset construction, cost preparation, training, prediction,
     quantification, and plotting.
     
-    Availabe model_type: resnet, resnet_5l, resnet_scaled_short, residual_unet, unet, deeplabv3
+    Availabe model_type: resnet, resnet_5l, resnet_scaled_short,
+    residual_unet, unet, deeplabv3
     """
     # =========================================================================
-    # GLOBAL SETUP & CONFIGURATIONS
+    # GLOBAL SETUP & CONFIGURATIONS (Loaded from config/default_config.yaml)
     # =========================================================================
-    model_type = "resnet"
-    use_sliding_window = False
-    use_film = False
-    unified_model = True  # Set to True to train 1 single model across all regions
-    source_tool, target_tool = "J4", "J5"
-    example_region = "Ti2p"
-    sample_measurement_id = "NMG_M_J4_00000"
+    config = utility.load_default_config("config/default_config.yaml")
+    materials = utility.load_material_elements(config)
+    element_vocab = utility.extract_element_vocabulary(materials)
+
+    global_cfg = config.get("global", {})
+    model_type = global_cfg.get("model_type", "resnet")
+    use_sliding_window = global_cfg.get("use_sliding_window", False)
+    use_film = global_cfg.get("use_film", False)
+    unified_model = global_cfg.get("unified_model", True)
+    source_tool = global_cfg.get("source_tool", "J4")
+    target_tool = global_cfg.get("target_tool", "J5")
+    example_region = global_cfg.get("example_region", "Ti2p")
+    sample_measurement_id = global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
     show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
 
     # Stage 1: Data generation configuration
-    data_generation_config = {
-        "material": "NMG",
-        "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
-        "region_relative_strengths": {
-            "Al2p": 5.0,
-            "Ti2p": 7.0,
-            "O1s": 10.0,
-            "C1s": 8.0,
-            "Cl2p": 1.0,
-        },
-        "n_points": 100,
-        "measurements_per_tool": {source_tool: 25, target_tool: 30},
-        "measurements_per_t7_code": 10,
-        "interval_hours_range": (4.0, 24.0),
-        "die_variation_std": 0.03,
-        "noise_relative_std": 0.015,
-        "seed": None,
-        "tool_offsets": {
-            source_tool: {"shift_ev": 0.0, "scale": 10000.0},
-            target_tool: {"shift_ev": 1.1, "scale": 14000.0},
-        },
-    }
+    data_generation_config = config["data_generation"]
 
     # Stage 2: 1-to-1 temporal pairing configuration
     pairing_config = {
+        **config["pairing"],
         "source_tool": source_tool,
         "target_tool": target_tool,
-        "time_threshold_hours": 8.0,
-        "method": "optimal",
-        "material": None,
     }
 
-    # Stage 3: Normalization configuration (by total flux across regions)
-    normalization_config = {"normalization_mode": "source_regional_max"}
+    # Stage 3: Normalization configuration
+    normalization_config = config["normalization"]
 
     # Stage 4: Train-val-test measurement session splitting configuration
     splitting_config = {
-        "method": "random",
+        **config["splitting"],
         "source_tool": source_tool,
         "target_tool": target_tool,
-        "train_ratio": 0.5,
-        "val_ratio": 0.2,
-        "test_ratio": 0.3,
-        "seed": None,
     }
 
     # Stage 4B: Gaussian Process die flux prediction configuration
-    gp_flux_config = {
-        "reference_date": "2026-01-01",
-        "unpaired_split": "train",
-        "target_column": "die_flux",
-        "kernel": {
-            "time_continuous": {
-                "type": "rbf",
-                "initial_lengthscale": 5.0,
-            },
-            "time_jump": {
-                "enabled": True,
-                "initial_step_time_days": 10.0,
-                "initial_steepness": 2.0,
-                "learn_step_time": True,
-            },
-            "die": {
-                "type": "index",
-                "num_dies": 9,
-                "rank": 2,
-            },
-            "composition": "product_with_jump",
-        },
-        "training": {
-            "num_iterations": 150,
-            "learning_rate": 0.05,
-        },
-        "plot": {
-            "plot_die": 0,
-        },
-    }
+    gp_flux_config = config["gp_flux"]
 
     # Stage 5: Dataset & patch augmentation configuration
     dataset_config = {
+        **config["dataset"],
         "regions": data_generation_config["regions"],
         "source_tool": source_tool,
         "target_tool": target_tool,
         "use_sliding_window": use_sliding_window,
-        "window_size_ev": 3.0,
-        "sliding_stride_ev": 1.0,
-        "region_configs": {
-            "Al2p": {"window_size_ev": 3.0, "sliding_stride_ev": 1.0},
-        },
     }
 
     # Stage 6: Cost function configuration
-    cost_config = {
-        "w_mse": 1.0,
-        "w_shape": 0.0,
-        "w_gradient": 0.0,
-        "l2_weight": 1e-6,
-        "normalized_by_target_max": True,
-    }
+    cost_config = config["cost"]
 
     # Stage 6B: Gaussian Process spectral noise analysis configuration
     noise_analysis_config = {
-        "splits": None,
-        "dies": [0],
-        "regions":  [example_region],
-        'batch_size': 64,
-        "unpaired_split": "train",
-        "kernel": {"type": "matern52", "initial_lengthscale_ev": 1.0},
-        "noise_model": "homoscedastic",
-        "confidence_type": "observation",
-        "training": {"num_iterations": 50, "learning_rate": 0.2},
+        **config["noise_analysis"],
+        "regions": [example_region],
     }
     noise_plot_config = {
-        "plots": [
-            "noise_vs_time",
-            "snr_by_region",
-            "noise_heatmap",
-            "example_spectrum",
-        ],
-        "example": {"measurement_id": sample_measurement_id, "region": example_region},
+        **config["noise_plot"],
+        "example": {
+            "measurement_id": sample_measurement_id,
+            "region": example_region,
+        },
     }
 
     # Dedicated Feature-wise Linear Modulation (FiLM) configuration
     film_config = {
+        **config["film"],
         "use_film": use_film,
-        "encode_flux": True,
-        "encode_time": True,
-        "encode_window_energy": True,
-        "encode_region": True,
         "num_regions": len(data_generation_config["regions"]),
-        "region_embed_dim": 4,
-        "energy_scale_ev": 1000.0,
-        "die_embed_dim": 4,
-        "tool_embed_dim": 4,
-        "hidden_dim": 32,
-        'relative_learning_rate': 0.1
+        "material_elements": materials,
+        "element_vocab": element_vocab,
     }
 
     # Stage 7A: Bayesian optimization configuration (plural search keys)
     bayesian_opt_config = {
-        "use_bayesian_opt": False,
-        "num_trials": 5,
-        "epochs_per_trial": 15,
-        "verbose": True,
-        "learning_rate_bounds": (1e-4, 1e-2),
-        "l2_bounds": (1e-6, 1e-2),
-        "batch_sizes": [16, 32, 64],
-        "window_size_choices": [15],
-        "kernel_sizes": [3, 5, 7],
-        "resnet_channels": [16, 32, 64],
-        "residual_unet_channels": [16, 32],
-        "unet_channels": [16, 32],
-        "deeplabv3_backbone_channels": [16, 32, 64],
-        "deeplabv3_aspp_channels": [16, 32, 64],
-        "depths": [2, 3],
+        **config["bayesian_opt"],
+        "learning_rate_bounds": tuple(
+            config["bayesian_opt"]["learning_rate_bounds"]
+        ),
+        "l2_bounds": tuple(config["bayesian_opt"]["l2_bounds"]),
     }
 
     # Stage 7B: Neural network training configuration (singular keys)
@@ -193,34 +108,15 @@ def main() -> None:
         "unified_model": unified_model,
         "use_film": film_config["use_film"],
         "film_config": film_config,
-        "train_config": {
-            "epochs": 100,
-            "batch_size": 16,
-            "learning_rate": 1e-4,
-            "depth": 3,
-            "kernel_size": 9,
-            "l2_weight": 1e-6,
-            "use_learning_rate_scheduler": True,
-            "learning_rate_reduce_factor": 0.9,
-            "learning_rate_scheduler_patience": 10,
-            "early_stopping_patience": 20,
-            "verbose": True,
-            "resnet_channel": 32,
-            "residual_unet_channel": 16,
-            "unet_channel": 16,
-            "deeplabv3_backbone_channel": 32,
-            "deeplabv3_aspp_channel": 32,
-        },
-        "region_configs": {
-            "Al2p": {"batch_size": 16, "learning_rate": 1e-4},
-        },
+        "train_config": config["training"]["train_config"],
+        "region_configs": config["training"]["region_configs"],
     }
 
     # Stage 8: Model prediction configuration
     prediction_config = {
+        **config["prediction"],
         "source_tool": source_tool,
         "target_tool": target_tool,
-        "clamp_non_negative": True,
         "film_config": film_config,
     }
 
@@ -230,8 +126,8 @@ def main() -> None:
         else "MSE"
     )
     metrics_report_config = {
-        "splits": ["train", "test"],
-        "metrics": [mse_metric_name, "peak_err%", "max%err"],
+        **config["metrics_report"],
+        "metrics": [mse_metric_name, *config["metrics_report"]["metrics"]],
         "normalized_by_target_max": cost_config.get("normalized_by_target_max", True),
     }
 
@@ -247,12 +143,16 @@ def main() -> None:
         f"{ary_intensity.shape[1]} points"
     )
 
-    # Calculate hierarchical physical flux metrics
-    df_meta = utility.calculate_flux(ary_intensity, ary_energy, df_meta)
+    # Calculate hierarchical physical flux and intensity metrics
+    df_meta = utility.calculate_flux_and_intensity(
+        ary_intensity, ary_energy, df_meta
+    )
     print(
-        f"Calculated spectral fluxes: mean regional={df_meta['regional_flux'].mean():.2f}, "
-        f"mean die={df_meta['die_flux'].mean():.2f}, "
-        f"mean measurement={df_meta['measurement_flux'].mean():.2f}"
+        f"Calculated spectral metrics: "
+        f"mean regional intensity={df_meta['mean_intensity_single_region'].mean():.2f}, "
+        f"mean die intensity={df_meta['mean_intensity_single_die'].mean():.2f}, "
+        f"mean regional flux={df_meta['total_flux_single_region'].mean():.2f}, "
+        f"mean die flux={df_meta['total_flux_single_die'].mean():.2f}"
     )
 
     # =========================================================================
@@ -433,7 +333,9 @@ def main() -> None:
             #     ary_intensity,
             #     ary_energy,
             #     df_meta,
-            #     plot_config={"source_tool": source_tool, "target_tool": target_tool},
+            #     plot_config={
+            #         "source_tool": source_tool, "target_tool": target_tool
+            #     },
             # ),
             # lambda: visualization.plot_max_intensity_vs_time(
             #     ary_intensity,
@@ -448,7 +350,9 @@ def main() -> None:
             #     ary_energy=ary_energy,
             #     region=example_region,
             #     die=0,
-            #     plot_config={"hue": "tool", "normalization_mode": "die_total_flux"},
+            #     plot_config={
+            #         "hue": "tool", "normalization_mode": "die_total_flux"
+            #     },
             # ),
             # lambda: visualization.plot_tool_comparison(
             #     ary_energy,
@@ -464,7 +368,9 @@ def main() -> None:
             #     ary_energy,
             #     ary_intensity,
             #     df_meta,
-            #     plot_config={"measurement_id": sample_measurement_id, "die": 0},
+            #     plot_config={
+            #         "measurement_id": sample_measurement_id, "die": 0
+            #     },
             # ),
             lambda: visualization.plot_spectral_noise_analysis(
                 (
