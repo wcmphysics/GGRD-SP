@@ -1,0 +1,201 @@
+# Default pipeline and material configuration for GGRD-SP
+
+materials:
+  NMG:
+    elements:
+      - Ti
+      - Al
+      - C
+      - O
+      - Cl
+      - Si
+  PMG:
+    elements:
+      - Ti
+      - N
+      - O
+      - Cl
+      - Si
+
+global:
+  model_type: "resnet"
+  use_sliding_window: false
+  use_film: false
+  unified_model: true
+  source_tool: "J4"
+  target_tool: "J5"
+  example_region: "Ti2p"
+  sample_measurement_id: "NMG_M_J4_00000"
+
+data_generation:
+  material: "NMG"
+  regions:
+    - "Al2p"
+    - "Ti2p"
+    - "O1s"
+    - "C1s"
+    - "Cl2p"
+  region_relative_strengths:
+    Al2p: 5.0
+    Ti2p: 7.0
+    O1s: 10.0
+    C1s: 8.0
+    Cl2p: 1.0
+  n_points: 100
+  measurements_per_tool:
+    J4: 25
+    J5: 30
+  measurements_per_t7_code: 10
+  interval_hours_range: [4.0, 24.0]
+  die_variation_std: 0.03
+  noise_relative_std: 0.015
+  seed: null
+  tool_offsets:
+    J4:
+      shift_ev: 0.0
+      scale: 10000.0
+    J5:
+      shift_ev: 1.1
+      scale: 14000.0
+
+pairing:
+  time_threshold_hours: 8.0
+  method: "optimal"
+  material: null
+
+normalization:
+  normalization_mode: "by_regional_max_intensity_of_source"
+  eps: 0.000001
+
+splitting:
+  method: "random"
+  train_ratio: 0.5
+  val_ratio: 0.2
+  test_ratio: 0.3
+  seed: null
+
+gp_flux:
+  reference_date: "2026-01-01"
+  unpaired_split: "train"
+  target_column: "total_flux_single_die"
+  kernel:
+    time_continuous:
+      type: "rbf"
+      initial_lengthscale: 5.0
+    time_jump:
+      enabled: true
+      initial_step_time_days: 10.0
+      initial_steepness: 2.0
+      learn_step_time: true
+    die:
+      type: "index"
+      num_dies: 9
+      rank: 2
+    composition: "product_with_jump"
+  training:
+    num_iterations: 150
+    learning_rate: 0.05
+  plot:
+    plot_die: 0
+
+dataset:
+  window_size_ev: 3.0
+  sliding_stride_ev: 1.0
+  region_configs:
+    Al2p:
+      window_size_ev: 3.0
+      sliding_stride_ev: 1.0
+
+cost:
+  w_mse: 1.0
+  w_shape: 0.0
+  w_gradient: 0.0
+  l2_weight: 0.000001
+  normalized_by_target_max: true
+
+noise_analysis:
+  splits: null
+  dies: [0]
+  batch_size: 64
+  unpaired_split: "train"
+  kernel:
+    type: "matern52"
+    initial_lengthscale_ev: 1.0
+  noise_model: "homoscedastic"
+  confidence_type: "observation"
+  training:
+    num_iterations: 50
+    learning_rate: 0.2
+
+noise_plot:
+  plots:
+    - "noise_vs_time"
+    - "snr_by_region"
+    - "noise_heatmap"
+    - "example_spectrum"
+
+film:
+  use_film: false
+  encode_flux: true
+  encode_time: true
+  encode_window_energy: true
+  encode_region: true
+  encode_relative_intensity: true
+  encode_elements: true
+  region_embed_dim: 4
+  energy_scale_ev: 1000.0
+  die_embed_dim: 4
+  tool_embed_dim: 4
+  hidden_dim: 32
+  relative_learning_rate: 0.1
+
+bayesian_opt:
+  use_bayesian_opt: false
+  num_trials: 5
+  epochs_per_trial: 15
+  verbose: true
+  learning_rate_bounds: [0.0001, 0.01]
+  l2_bounds: [0.000001, 0.01]
+  batch_sizes: [16, 32, 64]
+  window_size_choices: [15]
+  kernel_sizes: [3, 5, 7]
+  resnet_channels: [16, 32, 64]
+  residual_unet_channels: [16, 32]
+  unet_channels: [16, 32]
+  deeplabv3_backbone_channels: [16, 32, 64]
+  deeplabv3_aspp_channels: [16, 32, 64]
+  depths: [2, 3]
+
+training:
+  train_config:
+    epochs: 100
+    batch_size: 16
+    learning_rate: 0.0001
+    depth: 3
+    kernel_size: 9
+    l2_weight: 0.000001
+    use_learning_rate_scheduler: true
+    learning_rate_reduce_factor: 0.9
+    learning_rate_scheduler_patience: 10
+    early_stopping_patience: 20
+    verbose: true
+    resnet_channel: 32
+    residual_unet_channel: 16
+    unet_channel: 16
+    deeplabv3_backbone_channel: 32
+    deeplabv3_aspp_channel: 32
+  region_configs:
+    Al2p:
+      batch_size: 16
+      learning_rate: 0.0001
+
+prediction:
+  clamp_non_negative: true
+
+metrics_report:
+  splits:
+    - "train"
+    - "test"
+  metrics:
+    - "peak_err%"
+    - "max%err"
