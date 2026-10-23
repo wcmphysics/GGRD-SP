@@ -261,7 +261,6 @@ class ResNetScaledShort1D(ResNet1D):
                 )
                 else bool(cfg.get("encode_energy", False))
             ),
-            "encode_window_energy": False,
         }
         self.shortcut_film_gen = FiLMGenerator([1], config=shortcut_cfg)
 

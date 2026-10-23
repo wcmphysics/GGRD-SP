@@ -16,7 +16,6 @@ _CONTAINER_KEYS = {
     "bayesian_opt_config",
     "film_config",
     "region_configs",
-    "region_config",
     "window_size_ev",
     "sliding_stride_ev",
 }
@@ -46,11 +45,7 @@ def _resolve_region_config(
         3-tuple of (sliding_window_config, resolved_train_config,
         resolved_bo_config).
     """
-    region_configs = (
-        global_config.get("region_configs")
-        or global_config.get("region_config")
-        or {}
-    )
+    region_configs = global_config.get("region_configs") or {}
     region_override = (
         dict(region_configs.get(region, {}))
         if isinstance(region_configs, dict) and region in region_configs

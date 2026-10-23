@@ -72,7 +72,6 @@ class SpectrumPairDataset(Dataset):
                 [e_1d[0].item(), e_1d[-1].item()], dtype=torch.float32
             )
             item["energy_bounds"] = bounds
-            item["window_energy"] = bounds
         if self.metadata and idx < len(self.metadata):
             item["meta"] = self.metadata[idx]
         return item
@@ -145,7 +144,7 @@ class SpectrumPatchDataset(Dataset):
             max_vals_list, dtype=torch.float32
         ).view(-1, 1, 1)
         self.meta_list = meta_list
-        self.window_energy = torch.tensor(
+        self.energy_bounds = torch.tensor(
             energy_bounds_list, dtype=torch.float32
         )
 
@@ -157,8 +156,7 @@ class SpectrumPatchDataset(Dataset):
             "x": self.x[idx],
             "y": self.y[idx],
             "max_val": self.max_vals[idx],
-            "energy_bounds": self.window_energy[idx],
-            "window_energy": self.window_energy[idx],
+            "energy_bounds": self.energy_bounds[idx],
         }
         if self.meta_list and idx < len(self.meta_list):
             ret["meta"] = self.meta_list[idx]
@@ -272,9 +270,7 @@ def create_regional_datasets(
     source_tool = cfg.get("source_tool")
     target_tool = cfg.get("target_tool")
     default_use_sw = bool(cfg.get("use_sliding_window", False))
-    region_configs = (
-        cfg.get("region_configs") or cfg.get("region_config") or {}
-    )
+    region_configs = cfg.get("region_configs") or {}
 
     regions = cfg.get("regions")
     if regions is None:

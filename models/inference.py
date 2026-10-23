@@ -55,13 +55,7 @@ def predict_sliding_window_spectrum(
         spectrum_1d, window_size=w_size, stride=s_step
     )
     film_gen = getattr(model, "film_gen", None)
-    encode_energy = bool(
-        getattr(
-            film_gen,
-            "encode_energy",
-            getattr(film_gen, "encode_window_energy", False),
-        )
-    )
+    encode_energy = bool(getattr(film_gen, "encode_energy", False))
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
 
     energy_np = None
@@ -99,7 +93,6 @@ def predict_sliding_window_spectrum(
                     / scale_floor
                 )
                 b_cond["energy_bounds"] = scaled_b
-                b_cond["window_energy"] = scaled_b
             out = (
                 model(b_wins, cond=b_cond)
                 if b_cond is not None
@@ -166,7 +159,6 @@ def assemble_prediction_metadata(
         "mean_flux_across_dies_single_measurement",
         "total_flux_single_measurement",
         "total_flux_single_die_normalized",
-        "die_flux_normalized",
         "time_normalized",
     ]
 

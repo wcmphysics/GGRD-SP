@@ -145,7 +145,6 @@ def prepare_film_condition_tensor(
     *,
     device: torch.device | None = None,
     energy_bounds: torch.Tensor | np.ndarray | None = None,
-    window_energy: torch.Tensor | np.ndarray | None = None,
 ) -> dict[str, torch.Tensor]:
     """Extract and pack conditioning features from metadata.
 
@@ -176,8 +175,6 @@ def prepare_film_condition_tensor(
         PyTorch computation device.
     energy_bounds : torch.Tensor | np.ndarray | None, optional
         Starting and ending binding energies, shape (B, 2).
-    window_energy : torch.Tensor | np.ndarray | None, optional
-        Alias for energy_bounds for backward compatibility.
 
     Returns
     -------
@@ -187,30 +184,23 @@ def prepare_film_condition_tensor(
         - 'tool_src': LongTensor (B,) (if encode_tool=True)
         - 'tool_tgt': LongTensor (B,) (if encode_tool=True)
         - 'region': LongTensor (B,) (if encode_region=True)
-        - 'die_flux_normalized': FloatTensor (B, 1) (if encode_flux=True)
+        - 'total_flux_single_die_normalized': FloatTensor (B, 1)
         - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
         - 'relative_intensity_single_region': FloatTensor (B, 1)
         - 'element_multi_hot': FloatTensor (B, vocab_size)
         - 'energy_bounds': FloatTensor (B, 2) (if provided)
-        - 'window_energy': FloatTensor (B, 2) (if provided)
     """
     cfg = config or {}
     num_samples = int(cfg.get("num_samples", 1))
     energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
     encode_die = bool(cfg.get("encode_die", True))
     encode_tool = bool(cfg.get("encode_tool", True))
-    encode_flux = bool(cfg.get("encode_flux", cfg.get("use_flux", True)))
-    encode_time = bool(cfg.get("encode_time", cfg.get("use_time", True)))
-    encode_region = bool(cfg.get("encode_region", cfg.get("use_region", False)))
-    encode_rel_int = bool(
-        cfg.get("encode_relative_intensity", cfg.get("use_relative_intensity", False))
-    )
-    encode_elements = bool(
-        cfg.get("encode_elements", cfg.get("use_elements", False))
-    )
-    encode_energy = bool(
-        cfg.get("encode_energy", cfg.get("encode_window_energy", False))
-    )
+    encode_flux = bool(cfg.get("encode_flux", True))
+    encode_time = bool(cfg.get("encode_time", True))
+    encode_region = bool(cfg.get("encode_region", False))
+    encode_rel_int = bool(cfg.get("encode_relative_intensity", False))
+    encode_elements = bool(cfg.get("encode_elements", False))
+    encode_energy = bool(cfg.get("encode_energy", False))
 
     meta = (
         metadata.to_dict(orient="records")
@@ -254,18 +244,14 @@ def prepare_film_condition_tensor(
         flux_vals = _extract_meta_column(
             meta, "total_flux_single_die_normalized", n
         )
-        flux_col = "total_flux_single_die_normalized"
-        if all(x is None for x in flux_vals):
-            flux_vals = _extract_meta_column(meta, "die_flux_normalized", n)
-            flux_col = (
-                "total_flux_single_die_normalized (or die_flux_normalized)"
-            )
-        ret["die_flux_normalized"] = torch.tensor(
-            [_parse_required_float(x, flux_col) for x in flux_vals],
+        ret["total_flux_single_die_normalized"] = torch.tensor(
+            [
+                _parse_required_float(x, "total_flux_single_die_normalized")
+                for x in flux_vals
+            ],
             dtype=torch.float32,
             device=device,
         ).unsqueeze(-1)
-        ret["total_flux_single_die_normalized"] = ret["die_flux_normalized"]
 
     if encode_time:
         time_vals = [
@@ -297,11 +283,9 @@ def prepare_film_condition_tensor(
     if encode_elements:
         raw_mat = cfg.get("material_elements")
         if raw_mat is None:
-            raw_mat = cfg.get("materials")
-        if raw_mat is None:
             raise ValueError(
                 "prepare_film_condition_tensor requires 'material_elements' "
-                "(or 'materials') in config when encode_elements=True."
+                "in config when encode_elements=True."
             )
 
         # Normalize raw_mat to dict[str, list[str]]
@@ -338,7 +322,7 @@ def prepare_film_condition_tensor(
             multi_hot_list, dtype=torch.float32, device=device
         )
 
-    reg_mapping = cfg.get("region_index_mapping") or cfg.get("region_mapping")
+    reg_mapping = cfg.get("region_index_mapping")
     reg_vals = _extract_meta_column(meta, "region_index", n)
     if all(x is None for x in reg_vals):
         reg_vals = _extract_meta_column(meta, "region", n)
@@ -354,11 +338,9 @@ def prepare_film_condition_tensor(
             device=device,
         )
 
-    we_data = energy_bounds if energy_bounds is not None else window_energy
+    we_data = energy_bounds
     if we_data is None:
         we_from_meta = _extract_meta_column(meta, "energy_bounds", n)
-        if all(x is None for x in we_from_meta):
-            we_from_meta = _extract_meta_column(meta, "window_energy", n)
         if any(x is not None for x in we_from_meta):
             we_data = we_from_meta
 
@@ -374,7 +356,6 @@ def prepare_film_condition_tensor(
             scaled_we.to(device) if device is not None else scaled_we
         )
         ret["energy_bounds"] = scaled_we_dev
-        ret["window_energy"] = scaled_we_dev
     elif encode_energy:
         warnings.warn(
             "encode_energy=True but no energy bounds were provided to "
@@ -382,7 +363,6 @@ def prepare_film_condition_tensor(
         )
         scaled_we = torch.zeros((n, 2), dtype=torch.float32, device=device)
         ret["energy_bounds"] = scaled_we
-        ret["window_energy"] = scaled_we
 
     return ret
 
@@ -427,25 +407,14 @@ class FiLMGenerator(nn.Module):
         cfg = config or {}
         self.encode_die = bool(cfg.get("encode_die", True))
         self.encode_tool = bool(cfg.get("encode_tool", True))
-        self.encode_flux = bool(
-            cfg.get("encode_flux", cfg.get("use_flux", True))
-        )
-        self.encode_time = bool(
-            cfg.get("encode_time", cfg.get("use_time", True))
-        )
-        self.encode_region = bool(
-            cfg.get("encode_region", cfg.get("use_region", False))
-        )
+        self.encode_flux = bool(cfg.get("encode_flux", True))
+        self.encode_time = bool(cfg.get("encode_time", True))
+        self.encode_region = bool(cfg.get("encode_region", False))
         self.encode_relative_intensity = bool(
             cfg.get("encode_relative_intensity", False)
         )
-        self.encode_elements = bool(
-            cfg.get("encode_elements", False)
-        )
-        self.encode_energy = bool(
-            cfg.get("encode_energy", cfg.get("encode_window_energy", False))
-        )
-        self.encode_window_energy = self.encode_energy
+        self.encode_elements = bool(cfg.get("encode_elements", False))
+        self.encode_energy = bool(cfg.get("encode_energy", False))
 
         all_encodings = [
             self.encode_die,
@@ -619,8 +588,6 @@ class FiLMGenerator(nn.Module):
         if self.encode_flux:
             flux_t = cond_dev.get("total_flux_single_die_normalized")
             if flux_t is None:
-                flux_t = cond_dev.get("die_flux_normalized")
-            if flux_t is None:
                 raise KeyError(
                     "FiLMGenerator expects 'total_flux_single_die_normalized' in "
                     "conditioning dictionary when encode_flux=True."
@@ -657,11 +624,9 @@ class FiLMGenerator(nn.Module):
         if self.encode_energy:
             energy_t = cond_dev.get("energy_bounds")
             if energy_t is None:
-                energy_t = cond_dev.get("window_energy")
-            if energy_t is None:
                 raise KeyError(
-                    "FiLMGenerator expects 'energy_bounds' (or 'window_energy') "
-                    "in conditioning dictionary when encode_energy=True."
+                    "FiLMGenerator expects 'energy_bounds' in conditioning "
+                    "dictionary when encode_energy=True."
                 )
             feat_list.append(energy_t)
 
