@@ -14,6 +14,8 @@ def main() -> None:
     """Execute sequential key stages: generation, normalization, pairing,
     splitting, dataset construction, cost preparation, training, prediction,
     quantification, and plotting.
+    
+    Availabe model_type: resnet, resnet_5l, resnet_scaled_short, residual_unet, unet, deeplabv3
     """
     # =========================================================================
     # GLOBAL SETUP & CONFIGURATIONS
