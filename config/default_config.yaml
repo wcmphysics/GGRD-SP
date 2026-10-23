@@ -136,9 +136,11 @@ noise_plot:
 
 film:
   use_film: false
+  encode_die: true
+  encode_tool: true
   encode_flux: true
   encode_time: true
-  encode_window_energy: true
+  encode_energy: true
   encode_region: true
   encode_relative_intensity: true
   encode_elements: true
