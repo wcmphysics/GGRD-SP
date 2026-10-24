@@ -1,7 +1,7 @@
 """Quantitative model evaluation and prediction metrics for GGRD-SP.
 
 Provides numerical metrics comparing predicted spectra against ground truth
-target spectra, fulfilling Part 4 of GEMINI.md independently from plotting
+target spectra, fulfilling Part 4 of AGENTS.md independently from plotting
 libraries.
 """
 
@@ -12,6 +12,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
+
+from utility.reporting import format_split_comparison_table
 
 
 def calculate_prediction_metrics(
@@ -51,43 +53,47 @@ def calculate_prediction_metrics(
 
     records: list[dict[str, Any]] = []
 
-    # Iterate over predicted spectra records
-    for _, pred_row in df_meta_pred.iterrows():
-        region = str(pred_row["region"])
+    # Build fast O(1) lookup map from df_meta_orig:
+    # Key: (measurement_id, region, die) -> (target_id, target_idx, spec_idx)
+    meas_reg_die_to_spec_idx: dict[tuple[str, str, int], int] = {}
+    src_to_tgt_info: dict[tuple[str, str, int], tuple[str | None, int | None]] = {}
+
+    for row in df_meta_orig.itertuples():
+        m_id = str(row.measurement_id)
+        reg = str(row.region)
+        die_val = int(row.die)
+        key = (m_id, reg, die_val)
+        meas_reg_die_to_spec_idx[key] = int(row.spectrum_index)
+
+        tgt_m = getattr(row, "target_measurement_id", None)
+        tgt_s = getattr(row, "target_spectrum_index", None)
+        tgt_m_str = str(tgt_m) if pd.notna(tgt_m) else None
+        tgt_s_int = int(tgt_s) if pd.notna(tgt_s) else None
+        src_to_tgt_info[key] = (tgt_m_str, tgt_s_int)
+
+    # Iterate over predicted spectra records using fast itertuples
+    for pred_row in df_meta_pred.itertuples():
+        region = str(pred_row.region)
         if regions_filter is not None and region not in regions_filter:
             continue
 
-        src_meas_id = str(pred_row["source_measurement_id"])
-        die = int(pred_row["die"])
-        pred_idx = int(pred_row["spectrum_index"])
+        src_meas_id = str(pred_row.source_measurement_id)
+        die = int(pred_row.die)
+        pred_idx = int(pred_row.spectrum_index)
 
-        # Find matching source row in df_meta_orig
-        src_match = df_meta_orig[
-            (df_meta_orig["measurement_id"] == src_meas_id)
-            & (df_meta_orig["region"] == region)
-            & (df_meta_orig["die"] == die)
-        ]
-        if src_match.empty or pd.isna(src_match["target_measurement_id"].iloc[0]):
+        lookup_key = (src_meas_id, region, die)
+        if lookup_key not in src_to_tgt_info:
             continue
 
-        src_row = src_match.iloc[0]
-        tgt_meas_id = str(src_row["target_measurement_id"])
+        tgt_meas_id, tgt_idx = src_to_tgt_info[lookup_key]
+        if tgt_meas_id is None:
+            continue
 
-        # Use target_spectrum_index directly from df_meta if available
-        if (
-            "target_spectrum_index" in src_match.columns
-            and pd.notna(src_row["target_spectrum_index"])
-        ):
-            tgt_idx = int(src_row["target_spectrum_index"])
-        else:
-            tgt_match = df_meta_orig[
-                (df_meta_orig["measurement_id"] == tgt_meas_id)
-                & (df_meta_orig["region"] == region)
-                & (df_meta_orig["die"] == die)
-            ]
-            if tgt_match.empty:
+        if tgt_idx is None:
+            tgt_key = (tgt_meas_id, region, die)
+            if tgt_key not in meas_reg_die_to_spec_idx:
                 continue
-            tgt_idx = int(tgt_match["spectrum_index"].iloc[0])
+            tgt_idx = meas_reg_die_to_spec_idx[tgt_key]
 
         y_true = ary_intensity_orig[tgt_idx]
         y_pred = ary_intensity_pred[pred_idx]
@@ -108,7 +114,7 @@ def calculate_prediction_metrics(
             "target_measurement_id": tgt_meas_id,
             "region": region,
             "die": die,
-            "split": str(pred_row.get("split", "all")),
+            "split": str(getattr(pred_row, "split", "all")),
             mse_col: mse_val,
             "rmse": raw_rmse,
             "peak_error_percentage": peak_err_pct,
@@ -250,55 +256,27 @@ def format_side_by_side_metrics(
     )
 
     # Resolve metric specifications
-    resolved_metrics: list[tuple[str, str, Any]] = []
+    metric_specs: list[dict[str, Any]] = []
     for m in chosen_metrics:
         m_lower = str(m).lower()
         if m_lower not in METRIC_SPECS:
             raise ValueError(
                 f"Unknown metric '{m}'. Choose from: {list(METRIC_SPECS.keys())}"
             )
-        resolved_metrics.append(METRIC_SPECS[m_lower])
+        col_name, label, fmt_fn = METRIC_SPECS[m_lower]
+        actual_col, actual_label = _resolve_metric_column(
+            df_per_sample.columns, col_name, label, bool(is_normalized)
+        )
+        metric_specs.append({
+            "col": actual_col,
+            "label": actual_label,
+            "formatter": fmt_fn,
+        })
 
-    # Filter splits to those requested and actually present in the data
-    present_splits = [
-        s for s in preferred_splits if s in df_per_sample["split"].unique()
-    ]
-    if not present_splits:
-        return pd.DataFrame()
-
-    regions = sorted(df_per_sample["region"].unique())
-    rows: list[dict[str, Any]] = []
-
-    for reg in regions:
-        reg_df = df_per_sample[df_per_sample["region"] == reg]
-        row_dict: dict[str, Any] = {"region": reg}
-
-        # Group by split: for each split, output configured metrics in order
-        for split in present_splits:
-            s_df = reg_df[reg_df["split"] == split]
-            for col_name, label, fmt_fn in resolved_metrics:
-                actual_col, actual_label = _resolve_metric_column(
-                    s_df.columns, col_name, label, bool(is_normalized)
-                )
-                if s_df.empty or actual_col not in s_df.columns:
-                    val_mean, val_std = np.nan, np.nan
-                else:
-                    val_mean = float(s_df[actual_col].mean())
-                    val_std = (
-                        float(s_df[actual_col].std()) if len(s_df) > 1 else 0.0
-                    )
-
-                if format_str:
-                    row_dict[f"{actual_label}_{split}"] = (
-                        "N/A"
-                        if np.isnan(val_mean)
-                        else fmt_fn(val_mean, val_std)
-                    )
-                else:
-                    row_dict[f"{actual_label}_{split}_mean"] = val_mean
-                    row_dict[f"{actual_label}_{split}_std"] = val_std
-
-        rows.append(row_dict)
-
-    return pd.DataFrame(rows)
+    return format_split_comparison_table(
+        df_per_sample,
+        group_col="region",
+        metric_specs=metric_specs,
+        config=config,
+    )
 

@@ -1,7 +1,7 @@
 """Quantification and Shirley background subtraction module for GGRD-SP.
 
 Provides Shirley background subtraction, peak area integration, and atomic
-percentage calculation fulfilling Part 5 of GEMINI.md.
+percentage calculation fulfilling Part 5 of AGENTS.md.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from utility.flux_and_intensity import trapezoid_integral
+from utility.reporting import format_split_comparison_table
 
 
 def load_rsf_table(
@@ -790,7 +791,9 @@ def calculate_atomic_percentage_split_statistics(
         s for s in splits_filter if s in df_samples["split"].unique()
     ]
     ordered_elements = [
-        c[:-len("_atomic_percentage")] for c in element_cols if c[:-len("_atomic_percentage")] in df_samples["element"].unique()
+        c[:-len("_atomic_percentage")]
+        for c in element_cols
+        if c[:-len("_atomic_percentage")] in df_samples["element"].unique()
     ]
 
     for split in ordered_splits:
@@ -854,87 +857,49 @@ def format_side_by_side_atomic_percentages(
     if df_split_summary.empty or "split" not in df_split_summary.columns:
         return pd.DataFrame()
 
-    cfg = config or {}
-    preferred_splits = list(cfg.get("splits", ["train", "test"]))
-    format_str = bool(cfg.get("format_str", True))
-    include_overall = bool(cfg.get("include_overall", True))
+    cfg = dict(config or {})
+    cfg.setdefault("include_overall", True)
+    cfg.setdefault("overall_metrics", ["mae"])
+    cfg.setdefault("overall_label", "Overall (MAE)")
 
-    present_splits = [
-        s for s in preferred_splits if s in df_split_summary["split"].unique()
+    metric_specs = [
+        {
+            "col": "target_mean",
+            "std_col": "target_std",
+            "label": "target",
+            "formatter": lambda m, s: f"{m:.2f}% ± {s:.2f}%",
+            "num_mean_col": "target_mean_{split}",
+            "num_std_col": "target_std_{split}",
+        },
+        {
+            "col": "predicted_mean",
+            "std_col": "predicted_std",
+            "label": "predicted",
+            "formatter": lambda m, s: f"{m:.2f}% ± {s:.2f}%",
+            "num_mean_col": "predicted_mean_{split}",
+            "num_std_col": "predicted_std_{split}",
+        },
+        {
+            "col": "diff_mean",
+            "std_col": "diff_std",
+            "label": "diff",
+            "formatter": lambda m, s: f"{m:+.2f}% ± {s:.2f}%",
+            "num_mean_col": "diff_mean_{split}",
+            "num_std_col": "diff_std_{split}",
+        },
+        {
+            "col": "mae",
+            "std_col": "mae_std",
+            "label": "mae",
+            "formatter": lambda m, s: f"{m:.2f}% ± {s:.2f}%",
+            "num_mean_col": "mae_{split}",
+            "num_std_col": "mae_std_{split}",
+        },
     ]
-    if not present_splits:
-        return pd.DataFrame()
 
-    elements = sorted(df_split_summary["element"].unique())
-    rows: list[dict[str, Any]] = []
-
-    for elem in elements:
-        row_dict: dict[str, Any] = {"element": elem}
-        for split in present_splits:
-            s_df = df_split_summary[
-                (df_split_summary["split"] == split)
-                & (df_split_summary["element"] == elem)
-            ]
-            if s_df.empty:
-                continue
-            r = s_df.iloc[0]
-
-            mae_val = (
-                float(r["mae"]) if "mae" in r and pd.notna(r["mae"]) else 0.0
-            )
-            mae_std = (
-                float(r["mae_std"])
-                if "mae_std" in r and pd.notna(r["mae_std"])
-                else 0.0
-            )
-
-            if format_str:
-                row_dict[f"target_{split}"] = (
-                    f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
-                )
-                row_dict[f"predicted_{split}"] = (
-                    f"{r['predicted_mean']:.2f}% ± {r['predicted_std']:.2f}%"
-                )
-                row_dict[f"diff_{split}"] = (
-                    f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
-                )
-                row_dict[f"mae_{split}"] = f"{mae_val:.2f}% ± {mae_std:.2f}%"
-            else:
-                row_dict[f"target_mean_{split}"] = r["target_mean"]
-                row_dict[f"target_std_{split}"] = r["target_std"]
-                row_dict[f"predicted_mean_{split}"] = r["predicted_mean"]
-                row_dict[f"predicted_std_{split}"] = r["predicted_std"]
-                row_dict[f"diff_mean_{split}"] = r["diff_mean"]
-                row_dict[f"diff_std_{split}"] = r["diff_std"]
-                row_dict[f"mae_{split}"] = mae_val
-                row_dict[f"mae_std_{split}"] = mae_std
-
-        rows.append(row_dict)
-
-    if include_overall and rows:
-        overall_row: dict[str, Any] = {"element": "Overall (MAE)"}
-        for split in present_splits:
-            sp_df = df_split_summary[df_split_summary["split"] == split]
-            if sp_df.empty:
-                continue
-            mean_mae, std_mae = _mean_std(sp_df["mae"])
-            if format_str:
-                overall_row[f"target_{split}"] = "-"
-                overall_row[f"predicted_{split}"] = "-"
-                overall_row[f"diff_{split}"] = "-"
-                overall_row[f"mae_{split}"] = (
-                    f"{mean_mae:.2f}% ± {std_mae:.2f}%"
-                )
-            else:
-                overall_row[f"target_mean_{split}"] = np.nan
-                overall_row[f"target_std_{split}"] = np.nan
-                overall_row[f"predicted_mean_{split}"] = np.nan
-                overall_row[f"predicted_std_{split}"] = np.nan
-                overall_row[f"diff_mean_{split}"] = np.nan
-                overall_row[f"diff_std_{split}"] = np.nan
-                overall_row[f"mae_{split}"] = mean_mae
-                overall_row[f"mae_std_{split}"] = std_mae
-
-        rows.append(overall_row)
-
-    return pd.DataFrame(rows)
+    return format_split_comparison_table(
+        df_split_summary,
+        group_col="element",
+        metric_specs=metric_specs,
+        config=cfg,
+    )
