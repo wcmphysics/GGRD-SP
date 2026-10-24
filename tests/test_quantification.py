@@ -101,7 +101,7 @@ class TestQuantification(unittest.TestCase):
             config={"measurement_id": meas_id},
         )
 
-        expected_at_cols = ["Al2p_at%", "Ti2p_at%", "O1s_at%", "C1s_at%", "Cl2p_at%"]
+        expected_at_cols = ["Al2p_atomic_percentage", "Ti2p_atomic_percentage", "O1s_atomic_percentage", "C1s_atomic_percentage", "Cl2p_atomic_percentage"]
         for col in expected_at_cols:
             self.assertIn(col, df_per_die.columns)
             self.assertIn(col, df_summary.columns)
@@ -139,7 +139,7 @@ class TestQuantification(unittest.TestCase):
 
         self.assertEqual(len(df_per_die), 1)
         self.assertEqual(df_per_die["measurement_id"].iloc[0], pred_meas_id)
-        at_cols = [c for c in df_per_die.columns if c.endswith("_at%")]
+        at_cols = [c for c in df_per_die.columns if c.endswith("_atomic_percentage")]
         self.assertAlmostEqual(float(df_per_die[at_cols].sum(axis=1).iloc[0]), 100.0, places=2)
 
     def test_custom_rsf_override(self) -> None:
@@ -161,8 +161,8 @@ class TestQuantification(unittest.TestCase):
             config={"measurement_id": "NMG_M_J4_00000", "rsf_table": custom_rsf},
         )
 
-        al_default = df_default["Al2p_at%"].iloc[0]
-        al_custom = df_custom["Al2p_at%"].iloc[0]
+        al_default = df_default["Al2p_atomic_percentage"].iloc[0]
+        al_custom = df_custom["Al2p_atomic_percentage"].iloc[0]
 
         self.assertLess(al_custom, al_default)
 
@@ -209,7 +209,7 @@ class TestQuantification(unittest.TestCase):
             self.meta_df,
             config={"measurement_id": "NMG_M_J4_00000"},
         )
-        at_cols = [c for c in df_per_die.columns if c.endswith("_at%")]
+        at_cols = [c for c in df_per_die.columns if c.endswith("_atomic_percentage")]
         self.assertTrue((df_per_die[at_cols] == 0.0).all().all())
         self.assertFalse(df_per_die.isna().any().any())
 
@@ -555,7 +555,7 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
         self.assertEqual(set(df_summary["split"].unique()), {"train", "test"})
         self.assertIn("element", df_summary.columns)
         self.assertIn("target_mean", df_summary.columns)
-        self.assertIn("pred_mean", df_summary.columns)
+        self.assertIn("predicted_mean", df_summary.columns)
         self.assertIn("diff_mean", df_summary.columns)
         self.assertIn("mae", df_summary.columns)
 
@@ -563,8 +563,8 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
         df_side = format_side_by_side_atomic_percentages(df_summary, config={"splits": ["train", "test"]})
         self.assertFalse(df_side.empty)
         self.assertIn("element", df_side.columns)
-        self.assertIn("pred_train", df_side.columns)
-        self.assertIn("pred_test", df_side.columns)
+        self.assertIn("predicted_train", df_side.columns)
+        self.assertIn("predicted_test", df_side.columns)
         self.assertIn("mae_train", df_side.columns)
         self.assertIn("mae_test", df_side.columns)
         self.assertIn("Overall (MAE)", df_side["element"].values)
@@ -626,46 +626,46 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "split": "train",
                 "element": "Al",
                 "die": 0,
-                "target_at%": 30.5,
-                "pred_at%": 31.0,
-                "diff_at%": 0.5,
-                "abs_diff_at%": 0.5,
+                "target_atomic_percentage": 30.5,
+                "predicted_atomic_percentage": 31.0,
+                "diff_atomic_percentage": 0.5,
+                "abs_diff_atomic_percentage": 0.5,
             },
             {
                 "split": "train",
                 "element": "Al",
                 "die": 1,
-                "target_at%": 29.5,
-                "pred_at%": 29.8,
-                "diff_at%": 0.3,
-                "abs_diff_at%": 0.3,
+                "target_atomic_percentage": 29.5,
+                "predicted_atomic_percentage": 29.8,
+                "diff_atomic_percentage": 0.3,
+                "abs_diff_atomic_percentage": 0.3,
             },
             {
                 "split": "test",
                 "element": "Al",
                 "die": 0,
-                "target_at%": 30.0,
-                "pred_at%": 30.2,
-                "diff_at%": 0.2,
-                "abs_diff_at%": 0.2,
+                "target_atomic_percentage": 30.0,
+                "predicted_atomic_percentage": 30.2,
+                "diff_atomic_percentage": 0.2,
+                "abs_diff_atomic_percentage": 0.2,
             },
             {
                 "split": "train",
                 "element": "Ti",
                 "die": 0,
-                "target_at%": 69.5,
-                "pred_at%": 69.0,
-                "diff_at%": -0.5,
-                "abs_diff_at%": 0.5,
+                "target_atomic_percentage": 69.5,
+                "predicted_atomic_percentage": 69.0,
+                "diff_atomic_percentage": -0.5,
+                "abs_diff_atomic_percentage": 0.5,
             },
             {
                 "split": "test",
                 "element": "Ti",
                 "die": 0,
-                "target_at%": 70.0,
-                "pred_at%": 69.8,
-                "diff_at%": -0.2,
-                "abs_diff_at%": 0.2,
+                "target_atomic_percentage": 70.0,
+                "predicted_atomic_percentage": 69.8,
+                "diff_atomic_percentage": -0.2,
+                "abs_diff_atomic_percentage": 0.2,
             },
         ])
 
@@ -812,10 +812,10 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
                 "split": "val",
                 "element": "Al",
                 "die": 0,
-                "target_at%": 30.0,
-                "pred_at%": 30.4,
-                "diff_at%": 0.4,
-                "abs_diff_at%": 0.4,
+                "target_atomic_percentage": 30.0,
+                "predicted_atomic_percentage": 30.4,
+                "diff_atomic_percentage": 0.4,
+                "abs_diff_atomic_percentage": 0.4,
             }]),
         ], ignore_index=True)
 
@@ -895,7 +895,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         with self.assertRaises(KeyError):
             plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "diff": [0.1]}))
 
-        # Missing abs_diff_at% and diff_at%
+        # Missing abs_diff_atomic_percentage and diff_atomic_percentage
         with self.assertRaises(KeyError):
             plot_atomic_percentage_mae(pd.DataFrame({"split": ["train"], "element": ["Al"]}))
 

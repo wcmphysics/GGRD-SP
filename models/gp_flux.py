@@ -396,10 +396,10 @@ def _build_split_metrics_row(
         s_rows = df_subset[df_subset["split"] == split_name]
         if s_rows.empty:
             row[f"mae_{split_name}"] = np.nan
-            row[f"mape_{split_name}%"] = "-"
+            row[f"mape_{split_name}_percentage"] = "-"
         else:
             row[f"mae_{split_name}"] = round(float(s_rows["abs_err"].mean()), 2)
-            row[f"mape_{split_name}%"] = f"{float(s_rows['ape'].mean()):.2f}%"
+            row[f"mape_{split_name}_percentage"] = f"{float(s_rows['ape'].mean()):.2f}%"
     return row
 
 
@@ -421,8 +421,8 @@ def evaluate_gp_die_flux_models(
     Returns
     -------
     pd.DataFrame
-        Summary table with columns: 'tool', 'die', 'mae_train', 'mape_train%',
-        'mae_val', 'mape_val%', 'mae_test', 'mape_test%'.
+        Summary table with columns: 'tool', 'die', 'mae_train', 'mape_train_percentage',
+        'mae_val', 'mape_val_percentage', 'mae_test', 'mape_test_percentage'.
     """
     records: list[dict[str, Any]] = []
 
@@ -437,8 +437,8 @@ def evaluate_gp_die_flux_models(
         pred_mean, _, _ = predict_gp_die_flux(
             model, likelihood, all_x, ds["scaler"]
         )
-        die_df["pred_flux"] = pred_mean
-        die_df["abs_err"] = (die_df["pred_flux"] - die_df[target_col]).abs()
+        die_df["predicted_flux"] = pred_mean
+        die_df["abs_err"] = (die_df["predicted_flux"] - die_df[target_col]).abs()
         safe_true = np.maximum(die_df[target_col].to_numpy(), 1e-8)
         die_df["ape"] = (die_df["abs_err"] / safe_true) * 100.0
 

@@ -111,8 +111,8 @@ def calculate_prediction_metrics(
             "split": str(pred_row.get("split", "all")),
             mse_col: mse_val,
             "rmse": raw_rmse,
-            "peak_err_pct": peak_err_pct,
-            "max_err_pct": max_err_pct,
+            "peak_error_percentage": peak_err_pct,
+            "max_error_percentage": max_err_pct,
         })
 
     df_per_sample = pd.DataFrame(records)
@@ -129,16 +129,16 @@ def calculate_prediction_metrics(
                 f"{mse_col}_std",
                 "rmse_mean",
                 "rmse_std",
-                "peak_err_pct_mean",
-                "peak_err_pct_std",
-                "max_err_pct_mean",
-                "max_err_pct_std",
+                "peak_error_percentage_mean",
+                "peak_error_percentage_std",
+                "max_error_percentage_mean",
+                "max_error_percentage_std",
             ]
         )
         return df_per_sample, df_summary
 
     group_cols = list(cfg.get("group_by", ["region"]))
-    metrics_to_agg = [mse_col, "rmse", "peak_err_pct", "max_err_pct"]
+    metrics_to_agg = [mse_col, "rmse", "peak_error_percentage", "max_error_percentage"]
     df_summary = (
         df_per_sample.groupby(group_cols)[metrics_to_agg]
         .agg(["mean", "std"])
@@ -158,8 +158,16 @@ _NORM_MSE_SPEC = (
     lambda m, s: f"{m:.4f} ± {s:.4f}",
 )
 _RMSE_SPEC = ("rmse", "rmse", lambda m, s: f"{m:.2f} ± {s:.2f}")
-_PEAK_ERR_SPEC = ("peak_err_pct", "peak_err%", lambda m, s: f"{m:.2f}% ± {s:.2f}%")
-_MAX_ERR_SPEC = ("max_err_pct", "max%err", lambda m, s: f"{m:.2f}% ± {s:.2f}%")
+_PEAK_ERR_SPEC = (
+    "peak_error_percentage",
+    "peak_error_percentage",
+    lambda m, s: f"{m:.2f}% ± {s:.2f}%",
+)
+_MAX_ERR_SPEC = (
+    "max_error_percentage",
+    "max_error_percentage",
+    lambda m, s: f"{m:.2f}% ± {s:.2f}%",
+)
 
 METRIC_SPECS: dict[str, tuple[str, str, Any]] = {
     "mse": _MSE_SPEC,
@@ -168,11 +176,8 @@ METRIC_SPECS: dict[str, tuple[str, str, Any]] = {
     "normalized_mse": _NORM_MSE_SPEC,
     "rmse": _RMSE_SPEC,
     "rms": _RMSE_SPEC,
-    "peak_err%": _PEAK_ERR_SPEC,
-    "peak_err_pct": _PEAK_ERR_SPEC,
-    "max%err": _MAX_ERR_SPEC,
-    "max_err%": _MAX_ERR_SPEC,
-    "max_err_pct": _MAX_ERR_SPEC,
+    "peak_error_percentage": _PEAK_ERR_SPEC,
+    "max_error_percentage": _MAX_ERR_SPEC,
 }
 
 
@@ -240,7 +245,7 @@ def format_side_by_side_metrics(
         )
     default_mse_key = "norm_mse" if is_normalized else "mse"
     chosen_metrics = list(
-        cfg.get("metrics", [default_mse_key, "peak_err%", "max%err"])
+        cfg.get("metrics", [default_mse_key, "peak_error_percentage", "max_error_percentage"])
     )
 
     # Resolve metric specifications

@@ -1171,8 +1171,8 @@ def plot_atomic_percentage_distributions(df_at_samples: pd.DataFrame, plot_confi
     Parameters
     ----------
     df_at_samples : pd.DataFrame
-        DataFrame with 'split', 'element', 'target_at%', 'pred_at%', and
-        'diff_at%'.
+        DataFrame with 'split', 'element', 'target_atomic_percentage', 'predicted_atomic_percentage', and
+        'diff_atomic_percentage'.
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
         - 'splits' (list[str] | None): Splits to filter.
@@ -1194,14 +1194,14 @@ def plot_atomic_percentage_distributions(df_at_samples: pd.DataFrame, plot_confi
     ValueError
         If df_at_samples is empty or filtered dataset has zero records.
     """
-    _check_meta(df_at_samples, {"split", "element", "target_at%", "pred_at%", "diff_at%"}, "df_at_samples")
+    _check_meta(df_at_samples, {"split", "element", "target_atomic_percentage", "predicted_atomic_percentage", "diff_atomic_percentage"}, "df_at_samples")
     cfg = plot_config or {}
     df = _filter_atomic_df(df_at_samples.copy(), cfg, "df_at_samples")
     fig, (ax_abs, ax_diff) = _prepare_canvas(cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2)
-    df_abs = pd.melt(df, id_vars=["split", "element"], value_vars=["target_at%", "pred_at%"],
+    df_abs = pd.melt(df, id_vars=["split", "element"], value_vars=["target_atomic_percentage", "predicted_atomic_percentage"],
                      var_name="spectrum_type", value_name="atomic_percent")
     df_abs["group"] = (df_abs["split"].str.capitalize() + " (" +
-                       df_abs["spectrum_type"].map({"target_at%": "Target", "pred_at%": "Predicted"}) + ")")
+                       df_abs["spectrum_type"].map({"target_atomic_percentage": "Target", "predicted_atomic_percentage": "Predicted"}) + ")")
     pal_abs = {"Train (Target)": "#1f77b4", "Train (Predicted)": "#aec7e8", "Test (Target)": "#2ca02c",
                "Test (Predicted)": "#98df8a", "Val (Target)": "#ff7f0e", "Val (Predicted)": "#ffbb78"}
     groups, splits = list(df_abs["group"].unique()), list(df["split"].unique())
@@ -1209,7 +1209,7 @@ def plot_atomic_percentage_distributions(df_at_samples: pd.DataFrame, plot_confi
     for ax, y_col, hue_col, grps, pal, t_str, y_lbl, is_diff in [
         (ax_abs, "atomic_percent", "group", groups, {g: pal_abs.get(g, "#7f7f7f") for g in groups},
          "Atomic % Distribution: Target vs. Predicted", "Atomic Percentage (%)", False),
-        (ax_diff, "diff_at%", "split", splits, {s: pal_diff.get(str(s).lower(), "#7f7f7f") for s in splits},
+        (ax_diff, "diff_atomic_percentage", "split", splits, {s: pal_diff.get(str(s).lower(), "#7f7f7f") for s in splits},
          "Atomic % Difference Distribution (Pred - Target)", "Difference: Pred - Target (at. %)", True),
     ]:
         data_src = df if is_diff else df_abs
@@ -1236,7 +1236,7 @@ def plot_atomic_percentage_mae(df_at_data: pd.DataFrame, plot_config: dict[str, 
     ----------
     df_at_data : pd.DataFrame
         DataFrame containing per-sample records with 'split', 'element',
-        and 'abs_diff_at%' (or 'diff_at%').
+        and 'abs_diff_atomic_percentage' (or 'diff_atomic_percentage').
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
         - 'splits' (list[str] | None): Splits to display in Panel 1.
@@ -1269,10 +1269,10 @@ def plot_atomic_percentage_mae(df_at_data: pd.DataFrame, plot_config: dict[str, 
     """
     _check_meta(df_at_data, {"split", "element"}, "df_at_data")
     df = df_at_data.copy()
-    if "abs_diff_at%" not in df.columns:
-        if "diff_at%" not in df.columns:
-            raise KeyError("df_at_data must contain sample-level 'abs_diff_at%' (or 'diff_at%') column.")
-        df["abs_diff_at%"] = df["diff_at%"].abs()
+    if "abs_diff_atomic_percentage" not in df.columns:
+        if "diff_atomic_percentage" not in df.columns:
+            raise KeyError("df_at_data must contain sample-level 'abs_diff_atomic_percentage' (or 'diff_atomic_percentage') column.")
+        df["abs_diff_atomic_percentage"] = df["diff_atomic_percentage"].abs()
     cfg = plot_config or {}
     df = _filter_atomic_df(df, cfg, "df_at_data")
 
@@ -1293,7 +1293,7 @@ def plot_atomic_percentage_mae(df_at_data: pd.DataFrame, plot_config: dict[str, 
     for i, cat in enumerate(categories):
         c_df = df if cat == "Overall" else df[df["element"] == cat]
         for j, split in enumerate(present_splits):
-            vals = c_df[c_df["split"].str.lower() == str(split).lower()]["abs_diff_at%"].values
+            vals = c_df[c_df["split"].str.lower() == str(split).lower()]["abs_diff_atomic_percentage"].values
             if len(vals) == 0:
                 continue
             x_c, col = i + (j - (n_splits - 1) / 2.0) * dodge, split_pal.get(str(split).lower(), "#7f7f7f")
@@ -1327,7 +1327,7 @@ def plot_atomic_percentage_mae(df_at_data: pd.DataFrame, plot_config: dict[str, 
     for elem in elements_list:
         for split in active_ecdf:
             sub = df[(df["element"] == elem) & (df["split"].str.lower() == split)]
-            if (vals := np.sort(sub["abs_diff_at%"].values)).size > 0:
+            if (vals := np.sort(sub["abs_diff_atomic_percentage"].values)).size > 0:
                 max_x = max(max_x, float(vals[-1]))
                 ax_ecdf.step(np.r_[0.0, vals], np.arange(len(vals) + 1) / len(vals) * 100.0, where="post",
                              color=elem_pal[elem], ls=split_ls.get(split, "-"), lw=1.7, alpha=0.9,

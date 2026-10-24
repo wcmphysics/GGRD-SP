@@ -620,7 +620,7 @@ def calculate_atomic_percentages(
     df_calc["at_pct"] = np.where(
         totals > 0.0, (df_calc["scaled_area"] / totals) * 100.0, 0.0
     ).round(4)
-    df_calc["col_name"] = df_calc["region"] + "_at%"
+    df_calc["col_name"] = df_calc["region"] + "_atomic_percentage"
 
     # Pivot regions to wide format preserving regional discovery order
     df_per_die = df_calc.pivot(
@@ -630,9 +630,9 @@ def calculate_atomic_percentages(
     ).reset_index()
     df_per_die.columns.name = None
     region_cols = [
-        f"{r}_at%"
+        f"{r}_atomic_percentage"
         for r in filtered_df["region"].unique()
-        if f"{r}_at%" in df_per_die.columns
+        if f"{r}_atomic_percentage" in df_per_die.columns
     ]
     df_per_die = df_per_die[["measurement_id", "material", "die"] + region_cols]
 
@@ -736,7 +736,7 @@ def calculate_atomic_percentage_split_statistics(
         return pd.DataFrame(), pd.DataFrame()
 
     element_cols = [
-        c for c in df_per_die_orig.columns if c.endswith("_at%")
+        c for c in df_per_die_orig.columns if c.endswith("_atomic_percentage")
     ]
 
     records: list[dict[str, Any]] = []
@@ -768,17 +768,17 @@ def calculate_atomic_percentage_split_statistics(
 
                 records.append({
                     "split": split_val,
-                    "element": c[:-4],
+                    "element": c[:-len("_atomic_percentage")],
                     "source_measurement_id": s_id,
                     "target_measurement_id": t_id,
                     "predicted_measurement_id": p_id,
                     "die": int(die),
-                    "source_at%": val_s,
-                    "target_at%": val_t,
-                    "pred_at%": val_p,
-                    "diff_at%": diff_val,
-                    "abs_diff_at%": abs(diff_val),
-                    "base_abs_diff_at%": abs(val_s - val_t),
+                    "source_atomic_percentage": val_s,
+                    "target_atomic_percentage": val_t,
+                    "predicted_atomic_percentage": val_p,
+                    "diff_atomic_percentage": diff_val,
+                    "abs_diff_atomic_percentage": abs(diff_val),
+                    "base_abs_diff_atomic_percentage": abs(val_s - val_t),
                 })
 
     df_samples = pd.DataFrame(records)
@@ -790,7 +790,7 @@ def calculate_atomic_percentage_split_statistics(
         s for s in splits_filter if s in df_samples["split"].unique()
     ]
     ordered_elements = [
-        c[:-4] for c in element_cols if c[:-4] in df_samples["element"].unique()
+        c[:-len("_atomic_percentage")] for c in element_cols if c[:-len("_atomic_percentage")] in df_samples["element"].unique()
     ]
 
     for split in ordered_splits:
@@ -800,12 +800,12 @@ def calculate_atomic_percentage_split_statistics(
             if el_df.empty:
                 continue
 
-            src_mean, src_std = _mean_std(el_df["source_at%"], decimals=3)
-            tgt_mean, tgt_std = _mean_std(el_df["target_at%"], decimals=3)
-            pred_mean, pred_std = _mean_std(el_df["pred_at%"], decimals=3)
-            diff_mean, diff_std = _mean_std(el_df["diff_at%"], decimals=3)
-            mae, mae_std = _mean_std(el_df["abs_diff_at%"], decimals=3)
-            base_mae = round(float(el_df["base_abs_diff_at%"].mean()), 3)
+            src_mean, src_std = _mean_std(el_df["source_atomic_percentage"], decimals=3)
+            tgt_mean, tgt_std = _mean_std(el_df["target_atomic_percentage"], decimals=3)
+            pred_mean, pred_std = _mean_std(el_df["predicted_atomic_percentage"], decimals=3)
+            diff_mean, diff_std = _mean_std(el_df["diff_atomic_percentage"], decimals=3)
+            mae, mae_std = _mean_std(el_df["abs_diff_atomic_percentage"], decimals=3)
+            base_mae = round(float(el_df["base_abs_diff_atomic_percentage"].mean()), 3)
 
             summary_records.append({
                 "split": split,
@@ -815,8 +815,8 @@ def calculate_atomic_percentage_split_statistics(
                 "source_std": src_std,
                 "target_mean": tgt_mean,
                 "target_std": tgt_std,
-                "pred_mean": pred_mean,
-                "pred_std": pred_std,
+                "predicted_mean": pred_mean,
+                "predicted_std": pred_std,
                 "diff_mean": diff_mean,
                 "diff_std": diff_std,
                 "mae": mae,
@@ -892,8 +892,8 @@ def format_side_by_side_atomic_percentages(
                 row_dict[f"target_{split}"] = (
                     f"{r['target_mean']:.2f}% ± {r['target_std']:.2f}%"
                 )
-                row_dict[f"pred_{split}"] = (
-                    f"{r['pred_mean']:.2f}% ± {r['pred_std']:.2f}%"
+                row_dict[f"predicted_{split}"] = (
+                    f"{r['predicted_mean']:.2f}% ± {r['predicted_std']:.2f}%"
                 )
                 row_dict[f"diff_{split}"] = (
                     f"{r['diff_mean']:+.2f}% ± {r['diff_std']:.2f}%"
@@ -902,8 +902,8 @@ def format_side_by_side_atomic_percentages(
             else:
                 row_dict[f"target_mean_{split}"] = r["target_mean"]
                 row_dict[f"target_std_{split}"] = r["target_std"]
-                row_dict[f"pred_mean_{split}"] = r["pred_mean"]
-                row_dict[f"pred_std_{split}"] = r["pred_std"]
+                row_dict[f"predicted_mean_{split}"] = r["predicted_mean"]
+                row_dict[f"predicted_std_{split}"] = r["predicted_std"]
                 row_dict[f"diff_mean_{split}"] = r["diff_mean"]
                 row_dict[f"diff_std_{split}"] = r["diff_std"]
                 row_dict[f"mae_{split}"] = mae_val
@@ -920,7 +920,7 @@ def format_side_by_side_atomic_percentages(
             mean_mae, std_mae = _mean_std(sp_df["mae"])
             if format_str:
                 overall_row[f"target_{split}"] = "-"
-                overall_row[f"pred_{split}"] = "-"
+                overall_row[f"predicted_{split}"] = "-"
                 overall_row[f"diff_{split}"] = "-"
                 overall_row[f"mae_{split}"] = (
                     f"{mean_mae:.2f}% ± {std_mae:.2f}%"

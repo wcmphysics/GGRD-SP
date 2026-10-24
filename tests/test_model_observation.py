@@ -122,7 +122,7 @@ class TestModelPerformanceObservation(unittest.TestCase):
         self.assertFalse(df_summary.empty)
         self.assertIn("MSE_normalized_by_target", df_per_sample.columns)
         self.assertIn("rmse", df_per_sample.columns)
-        self.assertIn("peak_err_pct", df_per_sample.columns)
+        self.assertIn("peak_error_percentage", df_per_sample.columns)
         self.assertIn("region", df_summary.columns)
         self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
         self.assertIn("MSE_normalized_by_target_std", df_summary.columns)

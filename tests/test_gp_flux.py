@@ -202,11 +202,11 @@ class TestGPFluxPipeline(unittest.TestCase):
             "tool",
             "die",
             "mae_train",
-            "mape_train%",
+            "mape_train_percentage",
             "mae_val",
-            "mape_val%",
+            "mape_val_percentage",
             "mae_test",
-            "mape_test%",
+            "mape_test_percentage",
         ]
         self.assertEqual(list(df_metrics.columns), expected_cols)
         # Check presence of tool mean rows

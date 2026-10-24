@@ -199,8 +199,8 @@ metrics_report:
     - "train"
     - "test"
   metrics:
-    - "peak_err%"
-    - "max%err"
+    - "peak_error_percentage"
+    - "max_error_percentage"
 
 quantification:
   material: "NMG"
