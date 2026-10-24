@@ -33,6 +33,92 @@ _DISALLOWED_RESNET_KEYS = (
 )
 
 
+def _validate_layer_count(num_layers: int) -> int:
+    """Validate layer count to ensure at least one hidden and one output conv.
+
+    Raises ValueError if num_layers < 2 (cannot form a residual block).
+    """
+    if num_layers < 2:
+        raise ValueError(
+            f"ResNet1D num_layers must be >= 2, got {num_layers}."
+        )
+    return num_layers
+
+
+def _build_hidden_conv_and_norm_layers(
+    num_hidden: int,
+    resnet_channel: int,
+    kernel_size: int,
+    padding_mode: str,
+    use_batch_norm: bool,
+) -> tuple[nn.ModuleList, nn.ModuleList]:
+    """Build paired lists of 1D conv layers and BatchNorm/Identity modules.
+
+    Iterates through hidden layers, mapping 1 input channel to resnet_channel
+    at layer 0 and preserving resnet_channel across all subsequent layers.
+    """
+    hidden_convs = nn.ModuleList([
+        build_conv1d_layer(
+            (1 if i == 0 else resnet_channel, resnet_channel),
+            kernel_size,
+            padding_mode=padding_mode,
+        )
+        for i in range(num_hidden)
+    ])
+    hidden_bns = nn.ModuleList([
+        nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
+        for _ in range(num_hidden)
+    ])
+    return hidden_convs, hidden_bns
+
+
+def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Build dedicated FiLM configuration for the scaled shortcut connection.
+
+    Disables energy bounds if global sample attributes (die, tool, flux, time)
+    are active, ensuring shortcut gain reflects global tool scaling.
+    """
+    has_global_condition = any([
+        cfg.get("encode_die", True),
+        cfg.get("encode_tool", True),
+        cfg.get("encode_flux", True),
+        cfg.get("encode_time", True),
+        cfg.get("encode_region", False),
+        cfg.get("encode_relative_intensity", False),
+        cfg.get("encode_elements", False),
+    ])
+    return {
+        **cfg,
+        "use_sliding_window": False,
+        "encode_energy": (
+            False
+            if has_global_condition
+            else bool(cfg.get("encode_energy", False))
+        ),
+    }
+
+
+def _extract_and_clamp_shortcut_gain(
+    shortcut_mods: list[tuple[torch.Tensor, torch.Tensor]],
+) -> torch.Tensor:
+    """Extract and non-negatively clamp scalar shortcut gain gamma_out.
+
+    Clamps negative gain to zero to prevent unphysical spectrum inversion if
+    FiLM outputs a negative scale factor on the identity residual path.
+    """
+    gamma_out, _ = shortcut_mods[0]
+    if not (gamma_out < 0.0).any():
+        return gamma_out
+
+    warnings.warn(
+        "Negative shortcut gain detected in ResNetScaledShort1D; "
+        "clamping gamma_out to 0.0.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return torch.clamp(gamma_out, min=0.0)
+
+
 class ResNet1D(nn.Module):
     """Residual 1D CNN with 3 convolutional layers, mirror padding, identity
     shortcut, and optional FiLM.
@@ -44,6 +130,12 @@ class ResNet1D(nn.Module):
     3 CNN layers learn the tool-to-tool spectral shift and deformation Delta(x).
     Reflection (mirror) padding prevents boundary attenuation artifacts at
     spectral edges.
+
+    Structure Overview:
+    1. Validates hyperparameter dictionary and kernel bounds against n_points.
+    2. Builds hidden 1D conv layers and normalization modules.
+    3. Initializes 1x1 output projection conv, activation, and dropout layers.
+    4. Instantiates optional FiLM generator for metadata condition modulation.
 
     Parameters
     ----------
@@ -66,7 +158,9 @@ class ResNet1D(nn.Module):
           conditioning (default False).
     """
 
-    def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, n_points: int, config: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
         cfg = config or {}
         self.n_points = int(n_points)
@@ -94,40 +188,40 @@ class ResNet1D(nn.Module):
         self.use_film = bool(cfg.get("use_film", False))
         self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
 
-        self.num_layers = int(cfg.get("num_layers", 3))
-        if self.num_layers < 2:
-            raise ValueError(
-                f"ResNet1D num_layers must be >= 2, got {self.num_layers}."
-            )
+        self.num_layers = _validate_layer_count(int(cfg.get("num_layers", 3)))
         num_hidden = self.num_layers - 1
 
-        # Hidden conv layers and normalizations
-        self.hidden_convs = nn.ModuleList([
-            build_conv1d_layer(
-                (1 if i == 0 else resnet_channel, resnet_channel),
-                kernel_size,
-                padding_mode=padding_mode,
-            )
-            for i in range(num_hidden)
-        ])
-        self.hidden_bns = nn.ModuleList([
-            nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
-            for _ in range(num_hidden)
-        ])
+        self.hidden_convs, self.hidden_bns = _build_hidden_conv_and_norm_layers(
+            num_hidden,
+            resnet_channel,
+            kernel_size,
+            padding_mode,
+            use_batch_norm,
+        )
         self.conv_out = build_conv1d_layer(
             (resnet_channel, 1), kernel_size, padding_mode=padding_mode
         )
 
-        # Normalization, activation, and dropout layers
         self.activation = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
-        # Optional FiLM generator for metadata-conditioned modulation
         self.film_gen = (
             FiLMGenerator([resnet_channel] * num_hidden, config=cfg)
             if self.use_film
             else None
         )
+
+    def _get_film_modulations(
+        self, cond: dict[str, torch.Tensor] | torch.Tensor | None
+    ) -> list[tuple[torch.Tensor, torch.Tensor]] | None:
+        """Compute FiLM modulation parameters from metadata condition vector.
+
+        Returns None early if FiLM is disabled, condition is absent, or the
+        generator is uninitialized.
+        """
+        if not self.use_film or cond is None or self.film_gen is None:
+            return None
+        return self.film_gen(cond)
 
     def _forward_delta(
         self,
@@ -174,13 +268,7 @@ class ResNet1D(nn.Module):
             If x is not a 3D tensor of shape (batch_size, 1, n_points).
         """
         validate_3d_spectrum_tensor(x)
-
-        film_modulations = (
-            self.film_gen(cond)
-            if (self.use_film and cond is not None and self.film_gen is not None)
-            else None
-        )
-
+        film_modulations = self._get_film_modulations(cond)
         return x + self._forward_delta(x, film_modulations)
 
     def get_l2_regularization(self) -> torch.Tensor:
@@ -236,25 +324,7 @@ class ResNetScaledShort1D(ResNet1D):
         if not self.film_internal_layers:
             self.film_gen = None
 
-        shortcut_cfg = {
-            **cfg,
-            "use_sliding_window": False,
-            "encode_energy": (
-                False
-                if any(
-                    [
-                        cfg.get("encode_die", True),
-                        cfg.get("encode_tool", True),
-                        cfg.get("encode_flux", True),
-                        cfg.get("encode_time", True),
-                        cfg.get("encode_region", False),
-                        cfg.get("encode_relative_intensity", False),
-                        cfg.get("encode_elements", False),
-                    ]
-                )
-                else bool(cfg.get("encode_energy", False))
-            ),
-        }
+        shortcut_cfg = _build_shortcut_film_config(cfg)
         self.shortcut_film_gen = FiLMGenerator([1], config=shortcut_cfg)
 
     def forward(
@@ -290,22 +360,8 @@ class ResNetScaledShort1D(ResNet1D):
             )
 
         shortcut_mods = self.shortcut_film_gen(cond)
-        gamma_out, _ = shortcut_mods[0]
-        if (gamma_out < 0.0).any():
-            warnings.warn(
-                "Negative shortcut gain detected in ResNetScaledShort1D; "
-                "clamping gamma_out to 0.0.",
-                UserWarning,
-                stacklevel=2,
-            )
-            gamma_out = torch.clamp(gamma_out, min=0.0)
-
-        film_modulations = (
-            self.film_gen(cond)
-            if (self.use_film and self.film_gen is not None)
-            else None
-        )
-
+        gamma_out = _extract_and_clamp_shortcut_gain(shortcut_mods)
+        film_modulations = self._get_film_modulations(cond)
         delta = self._forward_delta(x, film_modulations)
         return (gamma_out.unsqueeze(-1) * x) + delta
 
@@ -335,4 +391,3 @@ class ResNet5L1D(ResNet1D):
 
 
 __all__ = ["ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
-
