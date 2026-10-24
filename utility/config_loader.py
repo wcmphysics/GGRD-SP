@@ -205,6 +205,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     model_type = str(global_cfg.get("model_type", "resnet"))
     use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
     use_film = bool(global_cfg.get("use_film", False))
+    apply_denoise = bool(global_cfg.get("apply_denoise", False))
     unified_model = bool(global_cfg.get("unified_model", True))
     example_region = str(global_cfg.get("example_region", "Ti2p"))
     sample_measurement_id = str(
@@ -245,10 +246,18 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         dataset.setdefault("use_sliding_window", use_sliding_window)
         dataset.setdefault("regions", regions)
 
-    # 7. Inject into noise_analysis and noise_plot
+    # 7. Inject into noise_analysis, denoise, and noise_plot
     noise_analysis = resolved.setdefault("noise_analysis", {})
     if isinstance(noise_analysis, dict):
         noise_analysis.setdefault("regions", [example_region])
+
+    denoise_cfg = resolved.setdefault("denoise", {})
+    if isinstance(denoise_cfg, dict):
+        denoise_cfg.setdefault("apply_denoise", apply_denoise)
+        denoise_cfg.setdefault("source_tool", source_tool)
+        denoise_cfg.setdefault("target_tool", target_tool)
+        denoise_cfg.setdefault("material", material)
+        denoise_cfg.setdefault("regions", ["Cl2p", "Ti2p"])
 
     noise_plot = resolved.setdefault("noise_plot", {})
     if isinstance(noise_plot, dict):
@@ -323,11 +332,13 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         vis.setdefault("use_sliding_window", use_sliding_window)
         vis.setdefault("noise_plot_config", noise_plot)
 
-    # 14. Inject into quantification and metrics_report
+    # 14. Inject into quantification, denoise, and metrics_report
     quant = resolved.setdefault("quantification", {})
     if isinstance(quant, dict):
         quant.setdefault("material", material)
         rsf_tbl = quant.get("rsf_table")
+        if rsf_tbl and isinstance(denoise_cfg, dict):
+            denoise_cfg.setdefault("rsf_table", rsf_tbl)
         if rsf_tbl and isinstance(metrics_rep, dict):
             metrics_quant = metrics_rep.setdefault("quantification_config", {})
             if isinstance(metrics_quant, dict):

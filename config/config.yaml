@@ -22,6 +22,7 @@ global:
   model_type: "resnet"
   use_sliding_window: false
   use_film: false
+  apply_denoise: false
   unified_model: true
   source_tool: "J4"
   target_tool: "J5"
@@ -113,6 +114,7 @@ cost:
   normalized_by_target_max: true
 
 noise_analysis:
+  method: "gp"
   splits: null
   dies: [0]
   batch_size: 64
@@ -125,6 +127,50 @@ noise_analysis:
   training:
     num_iterations: 50
     learning_rate: 0.2
+
+denoise:
+  method: "savgol"
+  regions:
+    - "Cl2p"
+    - "Ti2p"
+  apply_to: "both"
+  savgol:
+    window_length: 11
+    polynomial_order: 3
+    boundary_mode: "interp"
+  wavelet:
+    transform_type: "stationary"
+    wavelet_name: "sym4"
+    decomposition_level: 2
+    threshold_mode: "soft"
+    threshold_rule: "universal"
+    threshold_scale: 1.0
+  fourier:
+    filter_type: "dct"
+    cutoff_ratio: 0.25
+    filter_order: 4
+    rolloff_type: "butterworth"
+    padding_mode: "even"
+  gp:
+    kernel:
+      type: "matern52"
+      initial_lengthscale_ev: 1.0
+    noise_model: "homoscedastic"
+    confidence_type: "observation"
+    training:
+      num_iterations: 50
+      learning_rate: 0.2
+  region_configs:
+    Cl2p:
+      method: "savgol"
+      savgol:
+        window_length: 11
+        polynomial_order: 3
+    Ti2p:
+      method: "savgol"
+      savgol:
+        window_length: 9
+        polynomial_order: 3
 
 noise_plot:
   plots:
@@ -231,3 +277,5 @@ visualization:
     atomic_percentage_distributions: false
     atomic_percentage_mae: true
     sliding_window_slices: true
+    denoise_spectrum_comparison: true
+    denoise_atomic_percentage_mae: true

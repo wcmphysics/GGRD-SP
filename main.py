@@ -4,12 +4,12 @@ Orchestrates sequential end-to-end XPS spectral transfer stages:
 1. Synthetic spectrum reading/generation.
 2. Temporal pairing of source and target measurements.
 3. Train, validation, and test session-level splitting.
-4. Pre-processing: physical metric calculation, tool and region mapping,
+4. Spectral noise and SNR analysis and regional spectrum de-noising.
+5. Pre-processing: physical metric calculation, tool and region mapping,
    feature standardization, and spectral normalization.
-5. Die flux prediction and baseline drift modeling.
-6. Regional dataset definition and sliding window patch augmentation.
-7. Multi-component spectral loss preparation.
-8. Spectral noise and SNR analysis.
+6. Die flux prediction and baseline drift modeling.
+7. Regional dataset definition and sliding window patch augmentation.
+8. Multi-component spectral loss preparation.
 9. Neural network model training and Bayesian hyperparameter optimization.
 10. Cross-tool transformed spectrum prediction.
 11. Quantitative model evaluation across train and test partitions.
@@ -22,6 +22,7 @@ from __future__ import annotations
 import sys
 import matplotlib.pyplot as plt
 
+import denoise
 import models
 import utility
 import visualization
@@ -29,9 +30,9 @@ import visualization
 
 def main() -> None:
     """Execute sequential key stages: generation, pairing, splitting,
-    preprocessing, die flux prediction, dataset construction, cost preparation,
-    noise analysis, training, prediction, evaluation, quantification, and
-    visualization.
+    noise analysis and denoising, preprocessing, die flux prediction, dataset
+    construction, cost preparation, training, prediction, evaluation,
+    quantification, and visualization.
 
     Available model_type: resnet, resnet_5l, resnet_scaled_short,
     residual_unet, unet, deeplabv3.
@@ -79,9 +80,48 @@ def main() -> None:
     )
 
     # =========================================================================
-    # STAGE 4: PRE-PROCESSING
+    # STAGE 4: NOISE ANALYSIS AND DE-NOISING
     # =========================================================================
-    print("\n=== Stage 4: Pre-processing ===")
+    print("\n=== Stage 4: Noise Analysis & Regional De-noising ===")
+    ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
+        denoise.perform_spectral_noise_analysis(
+            ary_intensity, ary_energy, df_meta, config["noise_analysis"]
+        )
+    )
+    print(
+        f"Analysed {ary_spec_analysis_signal.shape[0]} regional spectra; "
+        f"mean noise sigma={df_meta['gp_noise_sigma'].mean():.4g}, "
+        f"mean SNR={df_meta['gp_snr'].mean():.4g}"
+    )
+
+    ary_intensity, ary_intensity_non_denoised, ary_intensity_denoised = (
+        denoise.denoise_regional_spectra(
+            ary_intensity, ary_energy, df_meta, config["denoise"]
+        )
+    )
+    df_denoise_atomic_samples, df_denoise_atomic_summary = (
+        denoise.compare_denoised_atomic_percentages(
+            ary_energy,
+            (ary_intensity_non_denoised, ary_intensity_denoised),
+            df_meta,
+            config["denoise"],
+        )
+    )
+    print(
+        f"Denoised regions={config['denoise']['regions']} "
+        f"(method={config['denoise']['method']}, "
+        f"apply_denoise={config['denoise']['apply_denoise']})"
+    )
+    if not df_denoise_atomic_summary.empty:
+        print(
+            "\nDenoised vs. Non-Denoised Atomic % Comparison:\n",
+            df_denoise_atomic_summary.to_string(index=False),
+        )
+
+    # =========================================================================
+    # STAGE 5: PRE-PROCESSING
+    # =========================================================================
+    print("\n=== Stage 5: Pre-processing ===")
     df_meta, _, _ = utility.preprocess(
         ary_intensity, ary_energy, df_meta, config=config
     )
@@ -103,9 +143,9 @@ def main() -> None:
     )
 
     # =========================================================================
-    # STAGE 5: DIE FLUX PREDICTION
+    # STAGE 6: DIE FLUX PREDICTION
     # =========================================================================
-    print("\n=== Stage 5: Die Flux Prediction ===")
+    print("\n=== Stage 6: Die Flux Prediction ===")
     gp_bundle, df_gp_metrics = models.run_gp_flux_pipeline(
         df_meta, config["gp_flux"]
     )
@@ -118,9 +158,9 @@ def main() -> None:
         visualization.plot_gp_die_flux_timeline(gp_bundle, config["gp_flux"])
 
     # =========================================================================
-    # STAGE 6: DATASET AND DATALOADER DEFINITION (With Augmentation)
+    # STAGE 7: DATASET AND DATALOADER DEFINITION (With Augmentation)
     # =========================================================================
-    print("\n=== Stage 6: Regional Dataset Definition & Patch Augmentation ===")
+    print("\n=== Stage 7: Regional Dataset Definition & Patch Augmentation ===")
     regional_datasets = models.create_regional_datasets(
         df_meta, ary_intensity, ary_energy, config=config["dataset"]
     )
@@ -132,26 +172,11 @@ def main() -> None:
         )
 
     # =========================================================================
-    # STAGE 7: COST FUNCTION DEFINITION AND PREPARATION
+    # STAGE 8: COST FUNCTION DEFINITION AND PREPARATION
     # =========================================================================
-    print("\n=== Stage 7: Cost Function Preparation ===")
+    print("\n=== Stage 8: Cost Function Preparation ===")
     criterion = models.SpectralLoss(config=config["cost"])
     print(f"Initialized criterion: {criterion.__class__.__name__}")
-
-    # =========================================================================
-    # STAGE 8: NOISE ANALYSIS
-    # =========================================================================
-    print("\n=== Stage 8: Noise Analysis ===")
-    ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
-        models.perform_spectral_noise_analysis(
-            ary_intensity, ary_energy, df_meta, config["noise_analysis"]
-        )
-    )
-    print(
-        f"Analysed {ary_spec_analysis_signal.shape[0]} regional spectra; "
-        f"mean noise sigma={df_meta['gp_noise_sigma'].mean():.4g}, "
-        f"mean SNR={df_meta['gp_snr'].mean():.4g}"
-    )
 
     # =========================================================================
     # STAGE 9: NEURAL NETWORK TRAINING AND BAYESIAN OPTIMIZATION
@@ -230,6 +255,11 @@ def main() -> None:
                 ary_spec_analysis_signal,
                 ary_spec_analysis_noise,
             ),
+            "denoise_intensity_pair": (
+                ary_intensity_non_denoised,
+                ary_intensity_denoised,
+            ),
+            "df_denoise_atomic_samples": df_denoise_atomic_samples,
         }
         dispatch_cfg = {
             **config["visualization"],
@@ -237,7 +267,7 @@ def main() -> None:
             "session_splits": session_splits,
             "plots": {
                 **config["visualization"].get("plots", {}),
-                "gp_die_flux_timeline": False,  # Already plotted in Stage 5
+                "gp_die_flux_timeline": False,  # Already plotted in Stage 6
             },
         }
         visualization.dispatch_visualizations(

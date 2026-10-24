@@ -33,7 +33,17 @@ The codes will be composed of the following key stages
    - configurable seed for random splitting (default to None)
    - split for direct assignment takes in a dictionary with keys `train`, `val`, and `test` and their values are a list of measurement ids. Check must be made to verify one measurement only appears in one group and the 3 groups take all paired measurements
    - output a session partition dictionary `session_splits` and dictionary `measurement_mapping` with keys being the measurement id from the paired source tool and values being the corresponding paired measurement id from target tool
-4. Pre-processing
+4. Spectral noise analysis and de-noising
+   - encapsulated in the `denoise/` package with dedicated configs (`noise_analysis`, `denoise`)
+   - supports four signal-noise decomposition and de-noising techniques:
+      1. Savitzky–Golay polynomial filtering (`savgol`)
+      2. Wavelet coefficient shrinkage (`wavelet`, supporting Stationary and Discrete Wavelet Transforms via PyWavelets)
+      3. Fourier / zero-phase low-pass filtering (`fourier`, supporting Discrete Cosine Transform and zero-phase Butterworth `filtfilt`)
+      4. Exact Gaussian Process regression (`gp`, with smooth Matérn/RBF kernels and homoscedastic or Poisson-scaled noise models)
+   - quantifies regional noise standard deviation sigma and signal-to-noise ratio (SNR), appending `noise_analysis_index`, `gp_noise_sigma`, `gp_snr`, and `gp_lengthscale` to `df_meta`
+   - deep-copies `ary_intensity` to preserve non-denoised spectra, applies de-noising to configured regions (default `Cl2p` and `Ti2p`) and tool scope (`apply_to`: `'both'`, `'source'`, or `'target'`), and updates `ary_intensity` for downstream stages when `global.apply_denoise` is `true`
+   - evaluates atomic percentage differences and regional Mean Absolute Error (MAE) between non-denoised and denoised spectra
+5. Pre-processing
    - encapsulated pre-processing module (`preprocess`) and spectral normalization (`normalize_spectral_data`)
    - physical spectral flux and mean intensity metrics are extracted via numerical trapezoidal integration over binding energy:
       - regional flux (`total_flux_single_region`) and regional mean intensity (`mean_intensity_single_region`)
@@ -55,7 +65,7 @@ The codes will be composed of the following key stages
       - for no normalization (`no_normalization`), intensity array is left unscaled
       - defensive scale clamping against near-zero scales using configurable `eps`
       - output are `ary_intensity` (normalization applied), `ary_energy`, and `df_meta`
-5. Die flux modeling and prediction
+6. Die flux modeling and prediction
    - need a dedicated config for this part (`gp_flux`)
    - models tool intensity drift, aging, and baseline shifts in die flux over time using exact Gaussian Process regression (GPyTorch)
    - features a composite covariance kernel:
@@ -63,7 +73,7 @@ The codes will be composed of the following key stages
       2. learnable sigmoid step kernel (`SigmoidStepKernel`): k(t1, t2) = sigma_jump^2 * sigmoid(s * (t1 - t0)) * sigmoid(s * (t2 - t0)), with learnable transition time t0 and steepness s capturing abrupt tool maintenance baseline shifts
       3. categorical die index covariance modeling inter-die spatial correlations across the sample holder
    - evaluates Mean Absolute Error (MAE) and Mean Absolute Percentage Error (`mape_train_percentage`, `mape_val_percentage`, `mape_test_percentage`) across train, val, and test partitions for source and target tools
-6. Data set and data loader definition (with sliding window patch augmentation)
+7. Data set and data loader definition (with sliding window patch augmentation)
    - define dataset and data loader in this part
    - supports two equal first-class paradigms for dataset organization:
       1. Regional Datasets: separate dataset bundles (`dataset_train`, `dataset_val`, `dataset_test`) assembled independently for each core-level spectral region
@@ -80,7 +90,7 @@ The codes will be composed of the following key stages
       - the predicted regional spectrum is reconstructed by accumulating and averaging all overlapping predicted slices across that region
       - validation loss and early stopping are evaluated directly on the reconstructed full spectrum
       - when sliding window is used, Bayesian optimization should allow for hyper-parameter search for window size and stride
-7. Cost function definition and preparation
+8. Cost function definition and preparation
    - define cost functions for model to use in this part (`SpectralLoss`)
    - need a dedicated config for this part (`cost`)
    - the cost function is mainly composed of a weighted average error among all regions (default is equal weight for all regions but tunable by user via the config)
@@ -90,13 +100,6 @@ The codes will be composed of the following key stages
       3. mean-squared error (MSE) between gradient of predicted and true intensity (central difference, default weight=0) to preserve peak inflections and peak shapes
       4. L2 regularization term (default weight=0) penalizing model parameter magnitudes
    - the cost function handles both sliding window patch tensors and full regional spectra
-8. Spectral noise and SNR analysis
-   - need a dedicated config for this part (`noise_analysis`)
-   - fits exact Gaussian Process regression with smooth kernels (Matérn52 or RBF) to individual regional spectra
-   - physical signal-noise decomposition: models each measured regional spectrum as y(E) = f(E) + eps, where f(E) is the latent smooth physical signal and eps ~ N(0, sigma^2) represents instrumentation noise
-   - supports homoscedastic noise or Poisson-scaled intensity-dependent noise models
-   - quantifies intrinsic regional noise standard deviation sigma and signal-to-noise ratio (SNR)
-   - appends extracted diagnostic columns directly to `df_meta`: `gp_noise_sigma`, `gp_snr`, and `gp_lengthscale`
 9. Neural network definition, training, and hyperparameter search (by Bayesian optimization)
    - need a dedicated config for this part (`training`, `film`, `bayesian_opt`)
    - we want to train a model such that it can find the mapping of spectra from source tool to the target tool, that is, the transformation such that the measurement performed on source tool can be transformed into the measurement performed on the target tool
@@ -162,6 +165,8 @@ The codes will be composed of the following key stages
       - Shirley background subtraction and endpoint overlays
       - spectral noise decomposition and SNR curves
       - GP hyperparameter optimization convergence curves
+      - non-denoised vs. denoised regional spectrum comparison overlays (solid black vs. dashed dark pink)
+      - denoised vs. non-denoised atomic percentage Mean Absolute Error (MAE) regional box plots
       - model training and validation loss progression histories
       - transformed prediction vs. target spectral comparison overlays
       - regional spectrum intensity distributions
@@ -170,21 +175,21 @@ The codes will be composed of the following key stages
 
 ## Tech Stack
 - Python 3
-- Scikit-learn, PyTorch, GPyTorch, Pandas, NumPy, SciPy, Ax (for Bayesian optimization)
+- Scikit-learn, PyTorch, GPyTorch, Pandas, NumPy, SciPy, PyWavelets, Ax (for Bayesian optimization)
 - Jupyter Notebooks for exploration, Python scripts for utilities.
 
 ## Agent Instructions
 1. **Virtual Environment:** Always execute Python commands using the local environment at `\.venv\Scripts\python.exe`.
 2. **File Structure:** 
    - Main python body: `main.py`
-   - Core ML models, utilities, and plotting modules belong in the `models/`, `utility/`, and `visualization/` folders.
+   - Core ML models, denoising/noise analysis, utilities, and plotting modules belong in the `models/`, `denoise/`, `utility/`, and `visualization/` folders.
 3. **Code Style:** Use strict PEP-8 formatting. Include type hints and concise docstrings for all new functions.
 4. **Autonomous Commits and Pushing:**
    - Once a feature request, plan, or review iteration is approved, autonomously commit and push the changes without asking for separate micro-permissions on commit messages.
    - Follow standard Conventional Commits format (e.g. `feat:`, `fix:`, `test:`, `docs:`) and always display the created commit hashes and messages in your final summary for transparency.
 5. **Commit Size:** When the change is more than 50 lines, try to separate the commits and so one commit is readable and will not be flooded with changes.
 6. **Modular Functionality:** 
-   - Implement new features in a strictly modular fashion inside dedicated modules within `models/`, `utility/`, or `visualization/`.
+   - Implement new features in a strictly modular fashion inside dedicated modules within `models/`, `denoise/`, `utility/`, or `visualization/`.
    - New functionality must be encapsulated as callable functions or classes ready for import by `main.py`, avoiding unsolicited edits or side effects to `main.py` or other existing modules.
    - Try to minimize coupling between modules so editing one is less likely to break the others.
    - Encapsulate internal functions that will not or should not be used by other modules.
@@ -228,11 +233,11 @@ The codes will be composed of the following key stages
      informative exception specifying which required keys are missing.
    - Single Source of Truth in `config/config.yaml`: Shared pipeline settings
      (`material`, `model_type`, `use_sliding_window`, `use_film`,
-     `unified_model`, `source_tool`, `target_tool`, `example_region`,
-     `sample_measurement_id`) must be defined once under `global:` (and
-     `l2_weight` once under `cost:`) and propagated to stage sub-configs via
-     `resolve_pipeline_config`, never duplicated with conflicting defaults in
-     stage sections.
+     `apply_denoise`, `unified_model`, `source_tool`, `target_tool`,
+     `example_region`, `sample_measurement_id`) must be defined once under
+     `global:` (and `l2_weight` once under `cost:`) and propagated to stage
+     sub-configs via `resolve_pipeline_config`, never duplicated with
+     conflicting defaults in stage sections.
    - Canonical Variable & Column Naming Rules:
       1. Prefix Style for Pairing & Tool Context: Always use `source_*` and
          `target_*` prefixes in paired context (e.g., `source_tool`, `target_tool`,
