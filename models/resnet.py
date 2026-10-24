@@ -23,14 +23,27 @@ from models.layers import (
     validate_positive_int,
 )
 
-_DISALLOWED_RESNET_KEYS = (
-    "resnet_channels",
-    "hidden_channels",
-    "hidden_channel",
-    "kernel_sizes",
-    "batch_sizes",
-    "window_size_choices",
+REQUIRED_RESNET_KEYS = (
+    "resnet_channel",
+    "kernel_size",
+    "dropout",
+    "use_batch_norm",
+    "padding_mode",
+    "use_film",
 )
+
+
+def _validate_required_resnet_keys(cfg: dict[str, Any]) -> None:
+    """Validate presence of all mandatory ResNet configuration keys.
+
+    Raises KeyError if any required configuration key is missing.
+    """
+    missing = [key for key in REQUIRED_RESNET_KEYS if key not in cfg]
+    if missing:
+        raise KeyError(
+            f"Missing required ResNet config key(s): {missing}. "
+            "Please ensure they are defined in config.yaml under 'training.train_config'."
+        )
 
 
 def _validate_layer_count(num_layers: int) -> int:
@@ -158,26 +171,23 @@ class ResNet1D(nn.Module):
         self, n_points: int, config: dict[str, Any] | None = None
     ) -> None:
         super().__init__()
-        cfg = config or {}
+        cfg = config if config is not None else {}
         self.n_points = int(n_points)
+        _validate_required_resnet_keys(cfg)
         max_allowed_k = validate_common_model_config(
             cfg,
             self.n_points,
-            _DISALLOWED_RESNET_KEYS,
-            (
-                "ResNet1D",
-                "use singular 'resnet_channel' and 'kernel_size' outside "
-                "Bayesian optimization.",
-            ),
+            (),
+            ("ResNet1D", ""),
         )
 
-        resnet_channel = validate_positive_int(cfg.get("resnet_channel", 32), "resnet_channel")
-        kernel_size =    validate_odd_kernel_size(cfg.get("kernel_size", 5), max_allowed=max_allowed_k)
+        resnet_channel = validate_positive_int(cfg["resnet_channel"], "resnet_channel")
+        kernel_size = validate_odd_kernel_size(cfg["kernel_size"], max_allowed=max_allowed_k)
 
-        dropout = float(cfg.get("dropout", 0.0))
-        use_batch_norm = bool(cfg.get("use_batch_norm", True))
-        padding_mode = str(cfg.get("padding_mode", "reflect"))
-        self.use_film = bool(cfg.get("use_film", False))
+        dropout = float(cfg["dropout"])
+        use_batch_norm = bool(cfg["use_batch_norm"])
+        padding_mode = str(cfg["padding_mode"])
+        self.use_film = bool(cfg["use_film"])
         self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
 
         self.num_layers = _validate_layer_count(int(cfg.get("num_layers", 3)))
@@ -382,4 +392,4 @@ class ResNet5L1D(ResNet1D):
         super().__init__(n_points, {**(config or {}), "num_layers": 5})
 
 
-__all__ = ["ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
+__all__ = ["REQUIRED_RESNET_KEYS", "ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
