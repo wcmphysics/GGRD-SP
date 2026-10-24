@@ -29,10 +29,16 @@ class TestPairing(unittest.TestCase):
             "seed": 42,
         }
         cls.ary_int, cls.ary_ene, cls.meta_df = generate_pseudo_measurements(config)
+        cls.pairing_cfg = {
+            "source_tool": "J4",
+            "target_tool": "J5",
+            "time_threshold_hours": 12.0,
+            "material": "all",
+        }
 
     def test_default_pairing_columns_and_invariants(self) -> None:
         """Verify appended columns, strictly 1-to-1 matching, and threshold adherence."""
-        paired_df = pair_source_target_spectra(self.meta_df)
+        paired_df = pair_source_target_spectra(self.meta_df, config=self.pairing_cfg)
 
         expected_new_cols = {
             "target_tool",
@@ -82,7 +88,7 @@ class TestPairing(unittest.TestCase):
 
     def test_die_and_region_consistency(self) -> None:
         """Verify paired target_spectrum_index preserves exact die and region correspondence."""
-        paired_df = pair_source_target_spectra(self.meta_df)
+        paired_df = pair_source_target_spectra(self.meta_df, config=self.pairing_cfg)
         paired_rows = paired_df[
             (paired_df["tool"] == "J4") & paired_df["target_spectrum_index"].notna()
         ]
@@ -100,7 +106,10 @@ class TestPairing(unittest.TestCase):
 
     def test_greedy_method(self) -> None:
         """Verify greedy pairing method produces valid 1-to-1 assignments."""
-        paired_df = pair_source_target_spectra(self.meta_df, config={"method": "greedy"})
+        paired_df = pair_source_target_spectra(
+            self.meta_df,
+            config={**self.pairing_cfg, "method": "greedy"},
+        )
         src_mask = paired_df["tool"] == "J4"
 
         paired_sessions = (
@@ -119,7 +128,7 @@ class TestPairing(unittest.TestCase):
         """Verify small threshold produces 0 pairs while maintaining target_tool for source rows."""
         paired_df = pair_source_target_spectra(
             self.meta_df,
-            config={"time_threshold_hours": 0.0001},
+            config={**self.pairing_cfg, "time_threshold_hours": 0.0001},
         )
         src_mask = paired_df["tool"] == "J4"
 
@@ -169,7 +178,10 @@ class TestPairing(unittest.TestCase):
         df = pd.DataFrame(data)
 
         # Optimal pairing
-        paired_opt = pair_source_target_spectra(df, config={"time_threshold_hours": 5.0})
+        paired_opt = pair_source_target_spectra(
+            df,
+            config={**self.pairing_cfg, "time_threshold_hours": 5.0},
+        )
         assigned_targets = (
             paired_opt[paired_opt["tool"] == "J4"]["target_measurement_id"].dropna().tolist()
         )
@@ -188,23 +200,44 @@ class TestPairing(unittest.TestCase):
     def test_invalid_configs_raise(self) -> None:
         """Verify validation errors for bad arguments."""
         with self.assertRaises(ValueError):
-            pair_source_target_spectra(self.meta_df, config={"source_tool": "J4", "target_tool": "J4"})
+            pair_source_target_spectra(
+                self.meta_df,
+                config={**self.pairing_cfg, "source_tool": "J4", "target_tool": "J4"},
+            )
         with self.assertRaises(ValueError):
-            pair_source_target_spectra(self.meta_df, config={"time_threshold_hours": -2.0})
+            pair_source_target_spectra(
+                self.meta_df,
+                config={**self.pairing_cfg, "time_threshold_hours": -2.0},
+            )
         with self.assertRaises(ValueError):
-            pair_source_target_spectra(self.meta_df, config={"method": "invalid_method"})
+            pair_source_target_spectra(
+                self.meta_df,
+                config={**self.pairing_cfg, "method": "invalid_method"},
+            )
+        with self.assertRaises(KeyError):
+            pair_source_target_spectra(
+                self.meta_df,
+                config={"source_tool": "J4", "target_tool": "J5"},
+            )
+        with self.assertRaises(KeyError):
+            pair_source_target_spectra(self.meta_df)
+        with self.assertRaises(ValueError):
+            pair_source_target_spectra(
+                self.meta_df,
+                config={**self.pairing_cfg, "material": None},
+            )
 
     def test_missing_required_columns_raises(self) -> None:
         """Verify KeyError when missing required metadata columns."""
         bad_df = self.meta_df.drop(columns=["tool"])
         with self.assertRaises(KeyError):
-            pair_source_target_spectra(bad_df)
+            pair_source_target_spectra(bad_df, config=self.pairing_cfg)
 
     def test_filtered_non_range_index_preserves_alignment(self) -> None:
         """Verify pairing works correctly on sliced/filtered DataFrames with non-RangeIndex."""
         # Sliced DataFrame with arbitrary indices
         sliced_df = self.meta_df.iloc[15:45].copy()
-        paired_df = pair_source_target_spectra(sliced_df)
+        paired_df = pair_source_target_spectra(sliced_df, config=self.pairing_cfg)
 
         self.assertEqual(len(paired_df), len(sliced_df))
         self.assertListEqual(list(paired_df.index), list(sliced_df.index))
@@ -249,12 +282,71 @@ class TestPairing(unittest.TestCase):
             },
         ]
         df = pd.DataFrame(data)
-        paired = pair_source_target_spectra(df, config={"time_threshold_hours": 10.0})
+        paired = pair_source_target_spectra(
+            df,
+            config={**self.pairing_cfg, "time_threshold_hours": 10.0},
+        )
 
         # M_J4_A should pair with M_J5_A (same material), NOT M_J5_B (different material)
         src_row = paired[paired["measurement_id"] == "M_J4_A"].iloc[0]
         self.assertEqual(src_row["target_measurement_id"], "M_J5_A")
         self.assertEqual(src_row["target_spectrum_index"], 2)
+
+    def test_material_filter_selection(self) -> None:
+        """Verify explicit material string filters pairing to that material."""
+        t0 = datetime(2026, 1, 1, 10, 0, 0)
+        data = [
+            {
+                "spectrum_index": 0,
+                "material": "MaterialA",
+                "tool": "J4",
+                "measurement_id": "M_J4_A",
+                "time": t0,
+                "die": 0,
+                "region": "Reg1",
+            },
+            {
+                "spectrum_index": 1,
+                "material": "MaterialB",
+                "tool": "J4",
+                "measurement_id": "M_J4_B",
+                "time": t0,
+                "die": 0,
+                "region": "Reg1",
+            },
+            {
+                "spectrum_index": 2,
+                "material": "MaterialA",
+                "tool": "J5",
+                "measurement_id": "M_J5_A",
+                "time": t0 + timedelta(hours=1),
+                "die": 0,
+                "region": "Reg1",
+            },
+            {
+                "spectrum_index": 3,
+                "material": "MaterialB",
+                "tool": "J5",
+                "measurement_id": "M_J5_B",
+                "time": t0 + timedelta(hours=1),
+                "die": 0,
+                "region": "Reg1",
+            },
+        ]
+        df = pd.DataFrame(data)
+        paired_a = pair_source_target_spectra(
+            df,
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "time_threshold_hours": 10.0,
+                "material": "MaterialA",
+            },
+        )
+        row_a = paired_a[paired_a["measurement_id"] == "M_J4_A"].iloc[0]
+        self.assertEqual(row_a["target_measurement_id"], "M_J5_A")
+        row_b = paired_a[paired_a["measurement_id"] == "M_J4_B"].iloc[0]
+        self.assertTrue(pd.isna(row_b["target_measurement_id"]))
 
     def test_t7_code_isolation(self) -> None:
         """Verify measurements are only paired with target sessions sharing the same t7_code."""
@@ -295,7 +387,10 @@ class TestPairing(unittest.TestCase):
             },
         ]
         df = pd.DataFrame(data)
-        paired = pair_source_target_spectra(df, config={"time_threshold_hours": 10.0})
+        paired = pair_source_target_spectra(
+            df,
+            config={**self.pairing_cfg, "time_threshold_hours": 10.0},
+        )
 
         # M_J4_1 must pair with M_J5_1 (same t7_code), NOT M_J5_2 (different t7_code despite closer time)
         src_row = paired[paired["measurement_id"] == "M_J4_1"].iloc[0]
@@ -305,7 +400,12 @@ class TestPairing(unittest.TestCase):
 
         # When match_t7_code is disabled, closer session M_J5_2 is selected
         paired_unconstrained = pair_source_target_spectra(
-            df, config={"time_threshold_hours": 10.0, "match_t7_code": False}
+            df,
+            config={
+                **self.pairing_cfg,
+                "time_threshold_hours": 10.0,
+                "match_t7_code": False,
+            },
         )
         src_unconstrained = paired_unconstrained[
             paired_unconstrained["measurement_id"] == "M_J4_1"
@@ -336,7 +436,7 @@ class TestPairing(unittest.TestCase):
             },
         ]
         df = pd.DataFrame(data)
-        paired = pair_source_target_spectra(df)
+        paired = pair_source_target_spectra(df, config=self.pairing_cfg)
         src_row = paired[paired["measurement_id"] == "M_J4_null"].iloc[0]
         self.assertEqual(src_row["target_measurement_id"], "M_J5_null")
 
@@ -361,7 +461,7 @@ class TestPairing(unittest.TestCase):
             },
         ]
         df = pd.DataFrame(data)
-        paired = pair_source_target_spectra(df)
+        paired = pair_source_target_spectra(df, config=self.pairing_cfg)
         src_row = paired[paired["tool"] == "J4"].iloc[0]
         self.assertEqual(src_row["target_measurement_id"], "M2")
         self.assertAlmostEqual(src_row["time_diff_hours"], 0.0, places=3)
@@ -383,7 +483,15 @@ class TestPairingVisualization(unittest.TestCase):
             "seed": 42,
         }
         cls.ary_int, cls.ary_ene, meta = generate_pseudo_measurements(config)
-        cls.paired_df = pair_source_target_spectra(meta)
+        cls.paired_df = pair_source_target_spectra(
+            meta,
+            config={
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "time_threshold_hours": 12.0,
+                "material": "all",
+            },
+        )
 
     def test_plot_pairing_timeline(self) -> None:
         """Verify timeline plot renders valid figure and axes."""

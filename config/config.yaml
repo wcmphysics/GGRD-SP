@@ -61,7 +61,7 @@ data_generation:
 pairing:
   time_threshold_hours: 8.0
   method: "optimal"
-  material: null
+  material: "all"
 
 normalization:
   normalization_mode: "by_regional_max_intensity_of_source"

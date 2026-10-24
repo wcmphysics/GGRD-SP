@@ -43,7 +43,12 @@ class TestOrchestrationPipeline(unittest.TestCase):
         ary_i, ary_e, df_meta = generate_pseudo_measurements(pseudo_cfg)
         df_meta = pair_source_target_spectra(
             df_meta,
-            config={"source_tool": "J4", "target_tool": "H1", "time_threshold_hours": 12.0},
+            config={
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "time_threshold_hours": 12.0,
+                "material": "all",
+            },
         )
         ary_i, ary_e, df_meta = normalize_spectral_data(ary_i, ary_e, df_meta)
         df_meta, _, session_splits = split_measurement_sessions(

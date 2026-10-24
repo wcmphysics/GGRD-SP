@@ -123,7 +123,12 @@ class TestGPFluxPipeline(unittest.TestCase):
         meta = calculate_flux_and_intensity(i_arr, e_arr, meta)
         meta = pair_source_target_spectra(
             meta,
-            {"source_tool": "J4", "target_tool": "J5", "time_threshold_hours": 12.0},
+            {
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "time_threshold_hours": 12.0,
+                "material": "all",
+            },
         )
         meta, _, _ = split_measurement_sessions(
             meta,

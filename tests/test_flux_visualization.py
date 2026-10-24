@@ -43,6 +43,7 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
                 "source_tool": "J4",
                 "target_tool": "J5",
                 "time_threshold_hours": 12.0,
+                "material": "all",
             },
         )
 

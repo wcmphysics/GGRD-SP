@@ -29,7 +29,7 @@ def get_default_pairing_config() -> dict[str, Any]:
         - 'target_tool': 'J5'
         - 'time_threshold_hours': 12.0
         - 'method': 'optimal' ('optimal' for Hungarian, 'greedy' for nearest)
-        - 'material': None (if None, pairs within each material separately)
+        - 'material': 'all' (pairs within each material separately)
         - 'match_t7_code': True (if True and 't7_code' in metadata, only pair
           measurements with identical t7_code)
     """
@@ -38,7 +38,7 @@ def get_default_pairing_config() -> dict[str, Any]:
         "target_tool": "J5",
         "time_threshold_hours": 12.0,
         "method": "optimal",
-        "material": None,
+        "material": "all",
         "match_t7_code": True,
     }
 
@@ -97,6 +97,23 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
     if method not in ("optimal", "greedy"):
         raise ValueError(
             f"method must be either 'optimal' or 'greedy', got '{method}'"
+        )
+
+    if "material" not in config:
+        raise KeyError(
+            "Missing required configuration key 'material' in pairing config."
+        )
+    material = config["material"]
+    if material is None:
+        raise ValueError(
+            "'material' in pairing config cannot be None. "
+            "Set 'material': 'all' to pair within each material separately, "
+            "or specify a specific material string."
+        )
+    if not isinstance(material, str) or not material.strip():
+        raise ValueError(
+            f"'material' in pairing config must be a non-empty string or 'all', "
+            f"got {material!r}."
         )
 
     match_t7 = config.get("match_t7_code", True)
@@ -227,9 +244,9 @@ def pair_source_target_spectra(
     df_meta : pd.DataFrame
         Metadata DataFrame containing: 'tool', 'measurement_id', 'time',
         'die', 'region', and 'spectrum_index'.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary. If None, default settings from
-        `get_default_pairing_config()` are used.
+    config : dict[str, Any]
+        Configuration dictionary. Must contain required key 'material'
+        ('all' to pair each material separately, or a specific material string).
 
     Returns
     -------
@@ -243,9 +260,19 @@ def pair_source_target_spectra(
     ValueError
         If configuration parameters are invalid.
     """
+    if config is None or "material" not in config:
+        raise KeyError(
+            "Missing required configuration key 'material' in pairing config."
+        )
+    if config["material"] is None:
+        raise ValueError(
+            "'material' in pairing config cannot be None. "
+            "Set 'material': 'all' to pair within each material separately, "
+            "or specify a specific material string."
+        )
+
     merged_config = get_default_pairing_config()
-    if config is not None:
-        merged_config.update(config)
+    merged_config.update(config)
 
     _validate_pairing_config(merged_config)
 
@@ -253,7 +280,7 @@ def pair_source_target_spectra(
     target_tool: str = merged_config["target_tool"]
     threshold_hours = float(merged_config["time_threshold_hours"])
     method: str = merged_config["method"]
-    material_filter: str | None = merged_config.get("material")
+    material_filter: str = str(merged_config["material"]).strip()
     match_t7_code = bool(merged_config.get("match_t7_code", True))
 
     required_cols = {
@@ -278,12 +305,15 @@ def pair_source_target_spectra(
     )
 
     # Determine materials to pair over
-    if "material" not in result_df.columns:
-        materials_to_process: list[str | None] = [None]
-    elif material_filter:
-        materials_to_process = [material_filter]
+    if material_filter.lower() == "all":
+        if "material" in result_df.columns:
+            materials_to_process: list[str | None] = list(
+                result_df["material"].dropna().unique()
+            )
+        else:
+            materials_to_process = [None]
     else:
-        materials_to_process = list(result_df["material"].dropna().unique())
+        materials_to_process = [material_filter]
 
     # session_pairs: mapping of (src_meas_id) -> (tgt_meas_id, diff_hours)
     all_session_pairs: dict[str, tuple[str, float]] = {}
