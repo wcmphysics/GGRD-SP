@@ -26,6 +26,10 @@ _NOISE_MODELS: tuple[str, ...] = ("homoscedastic", "poisson_scaled")
 _CONFIDENCE_TYPES: tuple[str, ...] = ("observation", "latent")
 
 
+if hasattr(torch.sparse, "check_sparse_tensor_invariants"):
+    torch.sparse.check_sparse_tensor_invariants.enable()
+
+
 class _ScaledHomoskedasticNoise(
     gpytorch.likelihoods.noise_models.HomoskedasticNoise
 ):

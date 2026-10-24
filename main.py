@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 import matplotlib.pyplot as plt
+import torch
 
 import denoise
 import models
@@ -42,6 +43,9 @@ def main() -> None:
     # =========================================================================
     config = utility.load_config("config/config.yaml")
     show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
+
+    if hasattr(torch.sparse, "check_sparse_tensor_invariants"):
+        torch.sparse.check_sparse_tensor_invariants.enable()
 
     # =========================================================================
     # STAGE 1: SPECTRUM DATA READING OR GENERATION

@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+if hasattr(torch.sparse, "check_sparse_tensor_invariants"):
+    torch.sparse.check_sparse_tensor_invariants.enable()
+
 _MATERN_NU_MAP: dict[str, float] = {
     "matern52": 2.5,
     "matern32": 1.5,
