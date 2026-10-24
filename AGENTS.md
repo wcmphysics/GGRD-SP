@@ -184,6 +184,7 @@ The codes will be composed of the following key stages
    - Main python body: `main.py`
    - Core ML models, denoising/noise analysis, utilities, and plotting modules belong in the `models/`, `denoise/`, `utility/`, and `visualization/` folders.
 3. **Code Style:** Use strict PEP-8 formatting with two exception: one coding line cannot exceed 120 characters and one comment or docstring line cannot exceed 80 characters. Include type hints and concise docstrings for all new functions. 
+3. Ensure cyclomatic complexity <= 10 in a function. Decompose the function with single-responsibility helper functions if the complexity > 10. 
 4. **Autonomous Commits and Pushing:**
    - Once a feature request, plan, or review iteration is approved, autonomously commit and push the changes without asking for separate micro-permissions on commit messages.
    - Follow standard Conventional Commits format (e.g. `feat:`, `fix:`, `test:`, `docs:`) and always display the created commit hashes and messages in your final summary for transparency.
