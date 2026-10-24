@@ -40,47 +40,30 @@ class SpectralLoss(nn.Module):
     Parameters
     ----------
     config : dict[str, Any] | None, optional
-        Optional configuration dictionary packaging loss weights.
-    w_mse : float, optional
-        Weight for mean-squared error component (default 1.0).
-    w_shape : float, optional
-        Weight for scale-invariant cosine shape distance (default 0.0).
-    w_gradient : float, optional
-        Weight for intensity gradient MSE component (default 0.0).
-    l2_weight : float, optional
-        Weight for model parameter L2 regularization (default 0.0).
-    eps : float, optional
-        Small positive floor to prevent division by zero (default 1e-4).
-    region_weights : dict[str, float] | None, optional
-        Optional regional weighting mapping region names to error multipliers
-        (default None).
-    normalized_by_target_max : bool, optional
-        Whether to divide intensities by the maximum intensity of the true
-        spectrum (default True).
+        Optional configuration dictionary packaging loss weights:
+        - 'w_mse' (float): Weight for MSE component (default 1.0).
+        - 'w_shape' (float): Weight for cosine shape distance (default 0.0).
+        - 'w_gradient' (float): Weight for intensity gradient MSE (default 0.0).
+        - 'l2_weight' (float): Weight for parameter L2 penalty (default 0.0).
+        - 'eps' (float): Small positive floor (default 1e-4).
+        - 'region_weights' (dict[str, float] | None): Regional weight factors.
+        - 'normalized_by_target_max' (bool): Divide by max(|y_true|) (True).
     """
 
     def __init__(
         self,
         config: dict[str, Any] | None = None,
-        *,
-        w_mse: float = 1.0,
-        w_shape: float = 0.0,
-        w_gradient: float = 0.0,
-        l2_weight: float = 0.0,
-        eps: float = 1e-4,
-        region_weights: dict[str, float] | None = None,
-        normalized_by_target_max: bool = True,
     ) -> None:
         super().__init__()
         cfg = config or {}
-        self.w_mse = float(cfg.get("w_mse", w_mse))
-        self.w_shape = float(cfg.get("w_shape", w_shape))
-        self.w_gradient = float(cfg.get("w_gradient", w_gradient))
-        self.l2_weight = float(cfg.get("l2_weight", l2_weight))
-        self.eps = float(cfg.get("eps", eps))
-        self.region_weights = dict(cfg.get("region_weights") or region_weights or {})
+        self.w_mse = float(cfg.get("w_mse", 1.0))
+        self.w_shape = float(cfg.get("w_shape", 0.0))
+        self.w_gradient = float(cfg.get("w_gradient", 0.0))
+        self.l2_weight = float(cfg.get("l2_weight", 0.0))
+        self.eps = float(cfg.get("eps", 1e-4))
+        self.region_weights = dict(cfg.get("region_weights") or {})
         self.normalized_by_target_max = bool(
-            cfg.get("normalized_by_target_max", normalized_by_target_max)
+            cfg.get("normalized_by_target_max", True)
         )
 
     def _normalize_pair(
@@ -107,8 +90,7 @@ class SpectralLoss(nn.Module):
         y_pred: torch.Tensor,
         y_true: torch.Tensor,
         model: nn.Module | None = None,
-        max_val: torch.Tensor | None = None,
-        region: str | None = None,
+        loss_context: dict[str, Any] | torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute the spectral loss between predicted and ground truth spectra.
 
@@ -121,12 +103,9 @@ class SpectralLoss(nn.Module):
         model : nn.Module | None, optional
             The model instance, needed to compute L2 regularization if
             l2_weight > 0.
-        max_val : torch.Tensor | None, optional
-            Precomputed normalization maximum tensor. If None, computes
-            max(|y_true|) per sample.
-        region : str | None, optional
-            Name of the spectral region (used for regional weighting if
-            configured).
+        loss_context : dict[str, Any] | torch.Tensor | None, optional
+            Optional context dictionary with 'max_val' (precomputed scale)
+            and/or 'region' (str), or a direct max_val tensor.
 
         Returns
         -------
@@ -140,6 +119,13 @@ class SpectralLoss(nn.Module):
         """
         validate_3d_spectrum_tensor(y_pred, "y_pred")
         validate_3d_spectrum_tensor(y_true, "y_true")
+
+        if isinstance(loss_context, dict):
+            max_val = loss_context.get("max_val")
+            region = loss_context.get("region")
+        else:
+            max_val = loss_context
+            region = None
 
         norm_pred, norm_true = self._normalize_pair(y_pred, y_true, max_val)
         total_loss = 0.0 * torch.sum(y_pred)

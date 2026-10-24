@@ -52,7 +52,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
         model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
-        crit = SpectralLoss(l2_weight=0.0)
+        crit = SpectralLoss({"l2_weight": 0.0})
         loss = evaluate_sliding_window(
             model=model,
             full_val_dataset=self.val_ds,
@@ -239,7 +239,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         loss = evaluate_sliding_window(
             model,
             self.val_ds,
-            SpectralLoss(l2_weight=0.0),
+            SpectralLoss({"l2_weight": 0.0}),
             config={"window_size": 15, "stride": 5},
         )
         self.assertIsInstance(loss, float)

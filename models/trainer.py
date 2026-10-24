@@ -136,7 +136,7 @@ def _run_epoch(
                 optimizer.zero_grad()
             yp = model(x, cond=cond) if cond is not None else model(x)
             loss = criterion(
-                yp, y, model=model if is_train else None, max_val=max_v
+                yp, y, model=model if is_train else None, loss_context=max_v
             )
             if is_train:
                 loss.backward()

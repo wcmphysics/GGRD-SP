@@ -164,9 +164,11 @@ def dispatch_visualizations(
         plot_max_intensity_vs_time(
             ary_intensity,
             df_meta,
-            region=example_region,
-            die=die,
-            plot_config={"hue": "tool"},
+            plot_config={
+                "region": example_region,
+                "die": die,
+                "hue": "tool",
+            },
         )
         rendered.append("max_intensity")
 
@@ -180,9 +182,9 @@ def dispatch_visualizations(
             ary_intensity,
             df_meta,
             ary_energy=ary_energy,
-            region=example_region,
-            die=die,
             plot_config={
+                "region": example_region,
+                "die": die,
                 "hue": "tool",
                 "normalization_mode": "die_total_flux",
             },

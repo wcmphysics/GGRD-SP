@@ -34,7 +34,7 @@ class TestCostFunctions(unittest.TestCase):
         """Verify cosine shape loss is 0.0 when shapes are identical up to
         arbitrary scalar scaling.
         """
-        criterion = SpectralLoss(w_shape=1.0, w_mse=0.0)
+        criterion = SpectralLoss({"w_shape": 1.0, "w_mse": 0.0})
 
         y_true = torch.tensor([[[2.0, 8.0, 4.0, 1.0]]])
         # Prediction has completely different scale (e.g. 2.5x higher)
@@ -45,7 +45,7 @@ class TestCostFunctions(unittest.TestCase):
 
     def test_composite_loss_combination(self) -> None:
         """Verify SpectralLoss combines w_shape and w_mse correctly."""
-        criterion = SpectralLoss(w_shape=0.5, w_mse=0.5)
+        criterion = SpectralLoss({"w_shape": 0.5, "w_mse": 0.5})
 
         y_true = torch.tensor([[[1.0, 5.0, 2.0]]])
         y_pred = torch.tensor([[[1.0, 5.0, 2.0]]])
@@ -65,7 +65,9 @@ class TestCostFunctions(unittest.TestCase):
                 return self.conv(x)
 
         net = SimpleNet()
-        criterion = SpectralLoss(w_shape=0.0, w_mse=1.0, l2_weight=0.01)
+        criterion = SpectralLoss(
+            {"w_shape": 0.0, "w_mse": 1.0, "l2_weight": 0.01}
+        )
 
         y = torch.ones((1, 1, 10))
         loss = criterion(y, y, model=net)
@@ -80,7 +82,7 @@ class TestCostFunctions(unittest.TestCase):
 
     def test_cosine_sim_clamp_non_negative(self) -> None:
         """Verify loss is non-negative even with exact identical tensors."""
-        criterion = SpectralLoss(w_shape=1.0, w_mse=0.0)
+        criterion = SpectralLoss({"w_shape": 1.0, "w_mse": 0.0})
         y = torch.tensor([[[1.0, 2.0, 3.0, 4.0, 5.0]]])
         loss = criterion(y, y)
         self.assertGreaterEqual(loss.item(), 0.0)
@@ -129,13 +131,13 @@ class TestCostFunctions(unittest.TestCase):
         # Default: normalized_by_target_max=True
         # norm_true = [0.5, 1.0, 0.5], norm_pred = [0.25, 1.0, 0.5]
         # MSE = ((0.25 - 0.5)^2) / 3 = 0.0625 / 3 = 0.020833
-        crit_norm = SpectralLoss(normalized_by_target_max=True)
+        crit_norm = SpectralLoss({"normalized_by_target_max": True})
         loss_norm = crit_norm(y_pred, y_true)
         self.assertAlmostEqual(loss_norm.item(), 0.0625 / 3.0, places=5)
 
         # Disabled: normalized_by_target_max=False
         # Unnormalized MSE = (5.0 - 10.0)^2 / 3 = 25.0 / 3 = 8.333333
-        crit_unnorm = SpectralLoss(normalized_by_target_max=False)
+        crit_unnorm = SpectralLoss({"normalized_by_target_max": False})
         loss_unnorm = crit_unnorm(y_pred, y_true)
         self.assertAlmostEqual(loss_unnorm.item(), 25.0 / 3.0, places=5)
 
@@ -161,7 +163,11 @@ class TestCostFunctions(unittest.TestCase):
         # Normalized: true max = 12.0, norm gradients are 1/3 vs 1/6
         # grad diff = -1/6, MSE = 1/36
         crit_norm = SpectralLoss(
-            w_mse=0.0, w_gradient=1.0, normalized_by_target_max=True
+            {
+                "w_mse": 0.0,
+                "w_gradient": 1.0,
+                "normalized_by_target_max": True,
+            }
         )
         loss_norm = crit_norm(y_pred, y_true)
         self.assertAlmostEqual(loss_norm.item(), 1.0 / 36.0, places=5)
@@ -169,7 +175,11 @@ class TestCostFunctions(unittest.TestCase):
         # Unnormalized: true max not divided, gradients are 4.0 vs 2.0
         # grad diff = -2.0, MSE = 4.0
         crit_unnorm = SpectralLoss(
-            w_mse=0.0, w_gradient=1.0, normalized_by_target_max=False
+            {
+                "w_mse": 0.0,
+                "w_gradient": 1.0,
+                "normalized_by_target_max": False,
+            }
         )
         loss_unnorm = crit_unnorm(y_pred, y_true)
         self.assertAlmostEqual(loss_unnorm.item(), 4.0, places=5)
@@ -179,10 +189,10 @@ class TestCostFunctions(unittest.TestCase):
         y_true = torch.tensor([[[0.0, 4.0, 8.0, 12.0]]])
         y_pred = torch.tensor([[[0.0, 2.0, 4.0, 6.0]]])
 
-        crit_default = SpectralLoss(w_mse=1.0)
+        crit_default = SpectralLoss({"w_mse": 1.0})
         self.assertEqual(crit_default.w_gradient, 0.0)
 
-        crit_zero = SpectralLoss(w_mse=1.0, w_gradient=0.0)
+        crit_zero = SpectralLoss({"w_mse": 1.0, "w_gradient": 0.0})
         loss_def = crit_default(y_pred, y_true).item()
         loss_zero = crit_zero(y_pred, y_true).item()
         self.assertEqual(loss_def, loss_zero)

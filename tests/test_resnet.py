@@ -119,8 +119,8 @@ class TestTrainingAndInference(unittest.TestCase):
         _, val_loader = create_dataloaders(self.train_ds, self.val_ds, config={"batch_size": 4})
         model = ResNet1D(n_points=50, config={"resnet_channel": 8, "kernel_size": 3})
 
-        crit_zero_l2 = SpectralLoss(l2_weight=0.0)
-        crit_large_l2 = SpectralLoss(l2_weight=10.0)
+        crit_zero_l2 = SpectralLoss({"l2_weight": 0.0})
+        crit_large_l2 = SpectralLoss({"l2_weight": 10.0})
 
         loss_zero = evaluate(model, val_loader, crit_zero_l2)
         loss_large = evaluate(model, val_loader, crit_large_l2)

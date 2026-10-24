@@ -219,6 +219,71 @@ def create_dataloaders(
     return train_loader, DataLoader(val_dataset, shuffle=False, **loader_kwargs)
 
 
+def _build_split_dataset_bundle(
+    df_subset: pd.DataFrame,
+    ary_intensity: np.ndarray,
+    ary_energy: np.ndarray,
+    use_sw: bool,
+    sw_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Slice train/val/test rows and construct paired or patch datasets."""
+
+    def _slice_rows(arr: np.ndarray, indices: np.ndarray) -> np.ndarray:
+        if len(indices) > 0:
+            return arr[indices]
+        return np.empty((0, arr.shape[1]), dtype=np.float32)
+
+    def _make_pair_ds(split_name: str) -> SpectrumPairDataset:
+        df_split = df_subset[df_subset["split"] == split_name]
+        x_idx = df_split["spectrum_index"].astype(int).to_numpy()
+        y_idx = df_split["target_spectrum_index"].astype(int).to_numpy()
+        return SpectrumPairDataset(
+            _slice_rows(ary_intensity, x_idx),
+            _slice_rows(ary_intensity, y_idx),
+            energy=_slice_rows(ary_energy, x_idx),
+            metadata=df_split.to_dict(orient="records"),
+        )
+
+    dataset_train_full = _make_pair_ds("train")
+    dataset_val_full = _make_pair_ds("val")
+    dataset_test_full = _make_pair_ds("test")
+
+    full_spectrum_length = (
+        int(dataset_train_full[0]["x"].shape[-1])
+        if len(dataset_train_full) > 0
+        else ary_intensity.shape[1]
+    )
+
+    if use_sw and len(dataset_train_full) > 0:
+        sample_energy_tensor = dataset_train_full[0].get("energy")
+        energy_grid = (
+            sample_energy_tensor.cpu().numpy().ravel()
+            if sample_energy_tensor is not None
+            else np.linspace(0.0, 10.0, full_spectrum_length)
+        )
+        w_pts, s_pts = calculate_window_points(energy_grid, config=sw_cfg)
+        window_size_points = min(full_spectrum_length, max(3, w_pts))
+        sliding_stride_points = max(1, min(window_size_points, s_pts))
+        dataset_train: Dataset = SpectrumPatchDataset(
+            dataset_train_full,
+            window_size=window_size_points,
+            stride=sliding_stride_points,
+        )
+    else:
+        window_size_points = sliding_stride_points = full_spectrum_length
+        dataset_train = dataset_train_full
+
+    return {
+        "dataset_train": dataset_train,
+        "dataset_val": dataset_val_full,
+        "dataset_test": dataset_test_full,
+        "dataset_train_full": dataset_train_full,
+        "window_size_points": window_size_points,
+        "sliding_stride_points": sliding_stride_points,
+        "full_spectrum_length": full_spectrum_length,
+    }
+
+
 def create_regional_datasets(
     df_meta: pd.DataFrame,
     ary_intensity: np.ndarray,
@@ -302,11 +367,6 @@ def create_regional_datasets(
         df_meta = df_meta.copy()
         df_meta["region_index"] = df_meta["region"].map(reg_map)
 
-    def _slice_rows(arr: np.ndarray, indices: np.ndarray) -> np.ndarray:
-        if len(indices) > 0:
-            return arr[indices]
-        return np.empty((0, arr.shape[1]), dtype=np.float32)
-
     regional_datasets: dict[str, dict[str, Any]] = {}
 
     for region in regions:
@@ -332,67 +392,21 @@ def create_regional_datasets(
         if df_region.empty:
             continue
 
-        def _make_pair_ds(split_name: str) -> SpectrumPairDataset:
-            df_split = df_region[df_region["split"] == split_name]
-            x_idx = df_split["spectrum_index"].astype(int).to_numpy()
-            y_idx = df_split["target_spectrum_index"].astype(int).to_numpy()
-            return SpectrumPairDataset(
-                _slice_rows(ary_intensity, x_idx),
-                _slice_rows(ary_intensity, y_idx),
-                energy=_slice_rows(ary_energy, x_idx),
-                metadata=df_split.to_dict(orient="records"),
-            )
-
-        dataset_train_full = _make_pair_ds("train")
-        dataset_val_full = _make_pair_ds("val")
-        dataset_test_full = _make_pair_ds("test")
-
-        full_spectrum_length = (
-            int(dataset_train_full[0]["x"].shape[-1])
-            if len(dataset_train_full) > 0
-            else ary_intensity.shape[1]
-        )
-
-        if use_sw and len(dataset_train_full) > 0:
-            sample_energy_tensor = dataset_train_full[0].get("energy")
-            energy_grid = (
-                sample_energy_tensor.cpu().numpy().ravel()
-                if sample_energy_tensor is not None
-                else np.linspace(0.0, 10.0, full_spectrum_length)
-            )
-            sw_cfg = {
-                "window_size_ev": region_override.get(
-                    "window_size_ev", cfg.get("window_size_ev", 6.0)
-                ),
-                "sliding_stride_ev": region_override.get(
-                    "sliding_stride_ev", cfg.get("sliding_stride_ev", 2.0)
-                ),
-                "window_size": region_override.get(
-                    "window_size", cfg.get("window_size")
-                ),
-                "stride": region_override.get("stride", cfg.get("stride")),
-            }
-            w_pts, s_pts = calculate_window_points(energy_grid, config=sw_cfg)
-            window_size_points = min(full_spectrum_length, max(3, w_pts))
-            sliding_stride_points = max(1, min(window_size_points, s_pts))
-            dataset_train: Dataset = SpectrumPatchDataset(
-                dataset_train_full,
-                window_size=window_size_points,
-                stride=sliding_stride_points,
-            )
-        else:
-            window_size_points = sliding_stride_points = full_spectrum_length
-            dataset_train = dataset_train_full
-
-        regional_datasets[region] = {
-            "dataset_train": dataset_train,
-            "dataset_val": dataset_val_full,
-            "dataset_test": dataset_test_full,
-            "dataset_train_full": dataset_train_full,
-            "window_size_points": window_size_points,
-            "sliding_stride_points": sliding_stride_points,
-            "full_spectrum_length": full_spectrum_length,
+        sw_cfg = {
+            "window_size_ev": region_override.get(
+                "window_size_ev", cfg.get("window_size_ev", 6.0)
+            ),
+            "sliding_stride_ev": region_override.get(
+                "sliding_stride_ev", cfg.get("sliding_stride_ev", 2.0)
+            ),
+            "window_size": region_override.get(
+                "window_size", cfg.get("window_size")
+            ),
+            "stride": region_override.get("stride", cfg.get("stride")),
         }
+        regional_datasets[region] = _build_split_dataset_bundle(
+            df_region, ary_intensity, ary_energy, use_sw, sw_cfg
+        )
 
     return regional_datasets
 
@@ -484,65 +498,17 @@ def create_unified_dataset(
             df_paired["region"].map(region_index_mapping)
         ).astype(int)
 
-    def _slice_rows(arr: np.ndarray, indices: np.ndarray) -> np.ndarray:
-        if len(indices) > 0:
-            return arr[indices]
-        return np.empty((0, arr.shape[1]), dtype=np.float32)
-
-    def _make_pair_ds(split_name: str) -> SpectrumPairDataset:
-        df_split = df_paired[df_paired["split"] == split_name]
-        x_idx = df_split["spectrum_index"].astype(int).to_numpy()
-        y_idx = df_split["target_spectrum_index"].astype(int).to_numpy()
-        return SpectrumPairDataset(
-            _slice_rows(ary_intensity, x_idx),
-            _slice_rows(ary_intensity, y_idx),
-            energy=_slice_rows(ary_energy, x_idx),
-            metadata=df_split.to_dict(orient="records"),
-        )
-
-    dataset_train_full = _make_pair_ds("train")
-    dataset_val_full = _make_pair_ds("val")
-    dataset_test_full = _make_pair_ds("test")
-
-    full_spectrum_length = (
-        int(dataset_train_full[0]["x"].shape[-1])
-        if len(dataset_train_full) > 0
-        else ary_intensity.shape[1]
+    sw_cfg = {
+        "window_size_ev": cfg.get("window_size_ev", 6.0),
+        "sliding_stride_ev": cfg.get("sliding_stride_ev", 2.0),
+        "window_size": cfg.get("window_size"),
+        "stride": cfg.get("stride"),
+    }
+    bundle = _build_split_dataset_bundle(
+        df_paired, ary_intensity, ary_energy, use_sw, sw_cfg
     )
-
-    if use_sw and len(dataset_train_full) > 0:
-        sample_energy_tensor = dataset_train_full[0].get("energy")
-        energy_grid = (
-            sample_energy_tensor.cpu().numpy().ravel()
-            if sample_energy_tensor is not None
-            else np.linspace(0.0, 10.0, full_spectrum_length)
-        )
-        sw_cfg = {
-            "window_size_ev": cfg.get("window_size_ev", 6.0),
-            "sliding_stride_ev": cfg.get("sliding_stride_ev", 2.0),
-            "window_size": cfg.get("window_size"),
-            "stride": cfg.get("stride"),
-        }
-        w_pts, s_pts = calculate_window_points(energy_grid, config=sw_cfg)
-        window_size_points = min(full_spectrum_length, max(3, w_pts))
-        sliding_stride_points = max(1, min(window_size_points, s_pts))
-        dataset_train: Dataset = SpectrumPatchDataset(
-            dataset_train_full,
-            window_size=window_size_points,
-            stride=sliding_stride_points,
-        )
-    else:
-        window_size_points = sliding_stride_points = full_spectrum_length
-        dataset_train = dataset_train_full
-
     return {
-        "dataset_train": dataset_train,
-        "dataset_val": dataset_val_full,
-        "dataset_test": dataset_test_full,
-        "dataset_train_full": dataset_train_full,
-        "window_size_points": window_size_points,
-        "sliding_stride_points": sliding_stride_points,
-        "full_spectrum_length": full_spectrum_length,
+        **bundle,
         "regions": regions,
         "region_index_mapping": region_index_mapping,
     }

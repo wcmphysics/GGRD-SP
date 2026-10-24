@@ -113,8 +113,7 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
             self.ary_intensity,
             self.ary_energy,
             self.meta_df,
-            plot_config={"show": False},
-            region="Ti2p",
+            plot_config={"region": "Ti2p", "show": False},
         )
         self.assertIsInstance(fig, plt.Figure)
         self.assertIn("Ti2p", ax_flux.get_ylabel())
@@ -133,15 +132,13 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         self.assertGreater(len(ax_intensity.lines), 0)
         plt.close(fig)
 
-    def test_region_argument_precedence(self) -> None:
-        """Test explicit region argument precedence over plot_config."""
-        # Explicit kwarg takes precedence over config
+    def test_region_in_plot_config_with_connect_lines(self) -> None:
+        """Test region in plot_config combined with connect_lines."""
         fig, (ax_flux, ax_intensity) = plot_flux_and_averaged_intensity_vs_time(
             self.ary_intensity,
             self.ary_energy,
             self.meta_df,
-            plot_config={"connect_lines": True, "region": "Al2p", "show": False},
-            region="Ti2p",
+            plot_config={"connect_lines": True, "region": "Ti2p", "show": False},
         )
         self.assertGreater(len(ax_flux.lines), 0)
         self.assertIn("Ti2p", ax_flux.get_ylabel())
@@ -231,7 +228,7 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
                 self.ary_intensity,
                 self.ary_energy,
                 self.meta_df,
-                region="NON_EXISTENT_REGION",
+                plot_config={"region": "NON_EXISTENT_REGION"},
             )
 
 

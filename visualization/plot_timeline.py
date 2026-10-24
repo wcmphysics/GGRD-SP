@@ -263,8 +263,6 @@ def _render_intensity_time_series(
     df_meta: pd.DataFrame,
     y_calc: Any,
     cfg: dict[str, Any],
-    region: str | None,
-    die: int | None,
     d_title: str,
     d_ylabel: str,
 ) -> tuple[plt.Figure, plt.Axes]:
@@ -272,13 +270,9 @@ def _render_intensity_time_series(
     if df_meta.empty:
         raise ValueError("df_meta cannot be empty")
     filts = dict(cfg.get("filters") or {})
-    r = region or cfg.get("region") or filts.get("region")
+    r = cfg.get("region") or filts.get("region")
     t_reg = str(r) if r is not None else None
-    d = (
-        die
-        if die is not None
-        else (cfg.get("die") if "die" in cfg else filts.get("die"))
-    )
+    d = cfg.get("die") if "die" in cfg else filts.get("die")
     t_die = int(d) if d is not None and str(d).isdigit() else d
     comb = {
         **filts,
@@ -363,9 +357,6 @@ def plot_max_intensity_vs_time(
     ary_intensity: np.ndarray,
     df_meta: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
-    *,
-    region: str | None = None,
-    die: int | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot maximum intensity over measurement time.
 
@@ -390,10 +381,6 @@ def plot_max_intensity_vs_time(
         - 'figsize' (tuple[float, float]): Dimensions (default (10, 5.5)).
         - 'ax' (plt.Axes | None): Existing matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
-    region : str | None, optional
-        Target spectral region. Precedence over plot_config['region'].
-    die : int | None, optional
-        Target wafer die index. Precedence over plot_config['die'].
 
     Returns
     -------
@@ -416,8 +403,6 @@ def plot_max_intensity_vs_time(
             ary_intensity[df["spectrum_index"].astype(int).values], axis=1
         ),
         cfg,
-        region,
-        die,
         f"Maximum Intensity vs. Time (hue={hue})",
         "Maximum Intensity (counts)",
     )
@@ -428,9 +413,6 @@ def plot_normalized_max_intensity_vs_time(
     df_meta: pd.DataFrame,
     ary_energy: np.ndarray | None = None,
     plot_config: dict[str, Any] | None = None,
-    *,
-    region: str | None = None,
-    die: int | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot normalized maximum intensity over measurement time.
 
@@ -459,10 +441,6 @@ def plot_normalized_max_intensity_vs_time(
         - 'figsize' (tuple[float, float]): Dimensions (default (10, 5.5)).
         - 'ax' (plt.Axes | None): Existing matplotlib Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
-    region : str | None, optional
-        Target spectral region. Precedence over plot_config['region'].
-    die : int | None, optional
-        Target wafer die index. Precedence over plot_config['die'].
 
     Returns
     -------
@@ -530,8 +508,6 @@ def plot_normalized_max_intensity_vs_time(
         df_meta,
         y_calc,
         cfg,
-        region,
-        die,
         f"Normalized Maximum Intensity vs. Time (hue={hue})",
         d_lbl,
     )
@@ -542,8 +518,6 @@ def plot_flux_and_averaged_intensity_vs_time(
     ary_energy: np.ndarray,
     df_meta: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
-    *,
-    region: str | None = None,
 ) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
     """Plot total flux and averaged intensity vs. measurement time.
 
@@ -566,6 +540,7 @@ def plot_flux_and_averaged_intensity_vs_time(
         Dictionary bundling options:
         - 'source_tool' (str | None): Source tool name (base color: black).
         - 'target_tool' (str | None): Target tool name (base color: red).
+        - 'region' (str | None): Target spectral region to filter.
         - 'connect_lines' (bool): Connect chronological points
           per tool and die group (default False).
         - 'die_groups' (dict[str, list[int]] | None): Mapping of 'center',
@@ -578,10 +553,6 @@ def plot_flux_and_averaged_intensity_vs_time(
         - 'figsize' (tuple[float, float]): Figure dimensions (default (10, 7)).
         - 'axes' (tuple[plt.Axes, plt.Axes] | None): Existing pair of Axes.
         - 'show' (bool): Whether to invoke plt.show() (default False).
-    region : str | None, optional
-        Target spectral region to filter. If None (default), aggregates across
-        all measured regions for the complete measurement. Precedence over
-        plot_config['region'].
 
     Returns
     -------
@@ -610,7 +581,7 @@ def plot_flux_and_averaged_intensity_vs_time(
     )
 
     cfg = plot_config or {}
-    t_reg = region if region is not None else cfg.get("region")
+    t_reg = cfg.get("region")
     work_df = df_meta.copy()
     if t_reg is not None:
         if "region" not in df_meta.columns:
