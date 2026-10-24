@@ -26,15 +26,15 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": -0.5,
-                "time_normalized": -1.0,
+                "total_flux_single_die_standardized": -0.5,
+                "time_standardized": -1.0,
             },
             {
                 "die": 5,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 1.25,
-                "time_normalized": 1.0,
+                "total_flux_single_die_standardized": 1.25,
+                "time_standardized": 1.0,
             },
         ]
 
@@ -45,27 +45,27 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIn("die", cond)
         self.assertIn("source_tool_index", cond)
         self.assertIn("target_tool_index", cond)
-        self.assertIn("total_flux_single_die_normalized", cond)
-        self.assertIn("time_normalized", cond)
+        self.assertIn("total_flux_single_die_standardized", cond)
+        self.assertIn("time_standardized", cond)
 
         self.assertEqual(cond["die"][0].item(), 0)
         self.assertEqual(cond["die"][1].item(), 5)
         self.assertEqual(cond["source_tool_index"][0].item(), 0)
         self.assertEqual(cond["target_tool_index"][0].item(), 1)
 
-        self.assertEqual(cond["total_flux_single_die_normalized"].shape, (2, 1))
-        self.assertEqual(cond["time_normalized"].shape, (2, 1))
+        self.assertEqual(cond["total_flux_single_die_standardized"].shape, (2, 1))
+        self.assertEqual(cond["time_standardized"].shape, (2, 1))
         self.assertAlmostEqual(
-            cond["total_flux_single_die_normalized"][0, 0].item(), -0.5, places=4
+            cond["total_flux_single_die_standardized"][0, 0].item(), -0.5, places=4
         )
         self.assertAlmostEqual(
-            cond["total_flux_single_die_normalized"][1, 0].item(), 1.25, places=4
+            cond["total_flux_single_die_standardized"][1, 0].item(), 1.25, places=4
         )
         self.assertAlmostEqual(
-            cond["time_normalized"][0, 0].item(), -1.0, places=4
+            cond["time_standardized"][0, 0].item(), -1.0, places=4
         )
         self.assertAlmostEqual(
-            cond["time_normalized"][1, 0].item(), 1.0, places=4
+            cond["time_standardized"][1, 0].item(), 1.0, places=4
         )
 
     def test_film_generator_identity_initialization(self) -> None:
@@ -76,8 +76,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 2,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.2,
-                "time_normalized": -0.3,
+                "total_flux_single_die_standardized": 0.2,
+                "time_standardized": -0.3,
             }
         ]
         cond = prepare_film_condition_tensor(metadata=meta)
@@ -113,8 +113,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.1 * i,
-                "time_normalized": -0.2 * i,
+                "total_flux_single_die_standardized": 0.1 * i,
+                "time_standardized": -0.2 * i,
             }
             for i in range(4)
         ]
@@ -153,8 +153,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i % 9,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": float(i) * 0.1,
-                "time_normalized": float(i) * 0.2,
+                "total_flux_single_die_standardized": float(i) * 0.1,
+                "time_standardized": float(i) * 0.2,
                 "spectrum_index": i,
             }
             for i in range(8)
@@ -187,15 +187,15 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 1,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": -0.4,
-                "time_normalized": 0.5,
+                "total_flux_single_die_standardized": -0.4,
+                "time_standardized": 0.5,
             },
             {
                 "die": 4,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.4,
-                "time_normalized": -0.5,
+                "total_flux_single_die_standardized": 0.4,
+                "time_standardized": -0.5,
             },
         ]
         cond = prepare_film_condition_tensor(
@@ -215,16 +215,16 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": [0, 1, 2],
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": [0.1, 0.2, 0.3],
-                "time_normalized": -0.5,
+                "total_flux_single_die_standardized": [0.1, 0.2, 0.3],
+                "time_standardized": -0.5,
             },
             config={"num_samples": 3},
         )
         self.assertEqual(cond1["die"].shape, (3,))
         self.assertEqual(cond1["source_tool_index"].shape, (3,))
         self.assertEqual(cond1["target_tool_index"].shape, (3,))
-        self.assertEqual(cond1["total_flux_single_die_normalized"].shape, (3, 1))
-        self.assertEqual(cond1["time_normalized"].shape, (3, 1))
+        self.assertEqual(cond1["total_flux_single_die_standardized"].shape, (3, 1))
+        self.assertEqual(cond1["time_standardized"].shape, (3, 1))
 
         # Pandas DataFrame input
         df = pd.DataFrame(
@@ -233,18 +233,18 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 3,
                     "source_tool_index": 0,
                     "target_tool_index": 1,
-                    "total_flux_single_die_normalized": 1.5,
-                    "time_normalized": -1.2,
+                    "total_flux_single_die_standardized": 1.5,
+                    "time_standardized": -1.2,
                 }
             ]
         )
         cond3 = prepare_film_condition_tensor(metadata=df)
         self.assertEqual(cond3["die"][0].item(), 3)
         self.assertAlmostEqual(
-            cond3["total_flux_single_die_normalized"][0, 0].item(), 1.5, places=4
+            cond3["total_flux_single_die_standardized"][0, 0].item(), 1.5, places=4
         )
         self.assertAlmostEqual(
-            cond3["time_normalized"][0, 0].item(), -1.2, places=4
+            cond3["time_standardized"][0, 0].item(), -1.2, places=4
         )
 
     def test_missing_metadata_fields_raise_loud_error(self) -> None:
@@ -255,14 +255,14 @@ class TestFiLMModulation(unittest.TestCase):
             "die": 0,
             "source_tool_index": 0,
             "target_tool_index": 1,
-            "total_flux_single_die_normalized": 0.0,
-            "time_normalized": 0.0,
+            "total_flux_single_die_standardized": 0.0,
+            "time_standardized": 0.0,
         }
         for field in (
             "source_tool_index",
             "target_tool_index",
-            "total_flux_single_die_normalized",
-            "time_normalized",
+            "total_flux_single_die_standardized",
+            "time_standardized",
         ):
             bad_meta = {k: v for k, v in base_meta.items() if k != field}
             with self.assertRaises(ValueError) as ctx:
@@ -302,12 +302,12 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 0,
                     "source_tool_index": 0,
                     "target_tool_index": 1,
-                    "time_normalized": 0.5,
+                    "time_standardized": 0.5,
                 }
             ],
             config={"encode_flux": False},
         )
-        self.assertNotIn("total_flux_single_die_normalized", cond_no_flux)
+        self.assertNotIn("total_flux_single_die_standardized", cond_no_flux)
         self.assertEqual(len(fg_no_flux(cond_no_flux)), 1)
 
         # Both flux and time off: 4 + 8 = 12
@@ -330,8 +330,8 @@ class TestFiLMModulation(unittest.TestCase):
                 {
                     "source_tool_index": 0,
                     "target_tool_index": 1,
-                    "total_flux_single_die_normalized": 0.5,
-                    "time_normalized": -0.2,
+                    "total_flux_single_die_standardized": 0.5,
+                    "time_standardized": -0.2,
                 }
             ],
             config={"encode_die": False},
@@ -348,8 +348,8 @@ class TestFiLMModulation(unittest.TestCase):
             metadata=[
                 {
                     "die": 3,
-                    "total_flux_single_die_normalized": 0.5,
-                    "time_normalized": -0.2,
+                    "total_flux_single_die_standardized": 0.5,
+                    "time_standardized": -0.2,
                 }
             ],
             config={"encode_tool": False},
@@ -400,8 +400,8 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 1,
                     "source_tool_index": 0,
                     "target_tool_index": 1,
-                    "total_flux_single_die_normalized": 0.0,
-                    "time_normalized": 0.0,
+                    "total_flux_single_die_standardized": 0.0,
+                    "time_standardized": 0.0,
                 }
             ]
             * 2,
@@ -429,8 +429,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 1,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             }
         ] * 2
         cond = prepare_film_condition_tensor(
@@ -461,8 +461,8 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": i,
                     "region": "Si2p",
                     "split": "test",
-                    "total_flux_single_die_normalized": 0.1 * i,
-                    "time_normalized": 0.0,
+                    "total_flux_single_die_standardized": 0.1 * i,
+                    "time_standardized": 0.0,
                 }
                 for i in range(2)
             ]
@@ -482,8 +482,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             }
         ]
         we = np.array([[100.0, 106.0]])
@@ -529,8 +529,8 @@ class TestFiLMModulation(unittest.TestCase):
                     "die": 0,
                     "source_tool_index": 0,
                     "target_tool_index": 1,
-                    "total_flux_single_die_normalized": 0.0,
-                    "time_normalized": 0.0,
+                    "total_flux_single_die_standardized": 0.0,
+                    "time_standardized": 0.0,
                 }
             ]
             * 2,
@@ -566,8 +566,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.1,
-                "time_normalized": -0.1,
+                "total_flux_single_die_standardized": 0.1,
+                "time_standardized": -0.1,
             }
         ] * 2
         we = torch.tensor([[70.0, 80.0], [75.0, 85.0]], dtype=torch.float32)
@@ -604,8 +604,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": i % 2,
                 "region": "Al2p",
                 "split": "test",
-                "total_flux_single_die_normalized": 0.1 * i,
-                "time_normalized": -0.2 * i,
+                "total_flux_single_die_standardized": 0.1 * i,
+                "time_standardized": -0.2 * i,
             }
             for i in range(4)
         ]
@@ -636,8 +636,8 @@ class TestFiLMModulation(unittest.TestCase):
         )
         self.assertEqual(pred_i.shape, (4, n_pts))
         self.assertEqual(pred_e.shape, (4, n_pts))
-        self.assertIn("total_flux_single_die_normalized", pred_df.columns)
-        self.assertIn("time_normalized", pred_df.columns)
+        self.assertIn("total_flux_single_die_standardized", pred_df.columns)
+        self.assertIn("time_standardized", pred_df.columns)
 
     def test_film_region_encoding(self) -> None:
         """Verify region index extraction and FiLM conditioning with regions."""
@@ -647,16 +647,16 @@ class TestFiLMModulation(unittest.TestCase):
                 "source_tool_index": 0,
                 "target_tool_index": 1,
                 "region_index": 2,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             },
             {
                 "die": 1,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
                 "region_index": 11,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             },
         ]
         cond = prepare_film_condition_tensor(
@@ -690,16 +690,16 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
                 "relative_intensity_single_region": 0.85,
             },
             {
                 "die": 1,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
                 "relative_intensity_single_region": 1.30,
             },
         ]
@@ -739,16 +739,16 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
                 "material": "NMG",
             },
             {
                 "die": 1,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
                 "material": "PMG",
             },
         ]
@@ -795,8 +795,8 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             }
         ]
         with self.assertRaises(ValueError) as ctx:
@@ -822,12 +822,12 @@ class TestFiLMModulation(unittest.TestCase):
                     "measurement_id": "NMG_M_J4_00000",
                     "die": 0,
                     "region": "Al2p",
-                    "total_flux_single_die_normalized": 1.25,
+                    "total_flux_single_die_standardized": 1.25,
                     "mean_intensity_single_region": 150.0,
                     "mean_intensity_single_die": 120.0,
                     "relative_intensity_single_region": 1.25,
                     "total_flux_single_die": 5000.0,
-                    "time_normalized": 0.5,
+                    "time_standardized": 0.5,
                 }
             ]
         )
@@ -839,13 +839,13 @@ class TestFiLMModulation(unittest.TestCase):
                 "n_points": 100,
             },
         )
-        self.assertIn("total_flux_single_die_normalized", pred_meta.columns)
+        self.assertIn("total_flux_single_die_standardized", pred_meta.columns)
         self.assertIn("mean_intensity_single_region", pred_meta.columns)
         self.assertIn("mean_intensity_single_die", pred_meta.columns)
         self.assertIn("relative_intensity_single_region", pred_meta.columns)
         self.assertIn("total_flux_single_die", pred_meta.columns)
         self.assertEqual(
-            pred_meta["total_flux_single_die_normalized"].iloc[0], 1.25
+            pred_meta["total_flux_single_die_standardized"].iloc[0], 1.25
         )
         self.assertEqual(
             pred_meta["mean_intensity_single_region"].iloc[0], 150.0
@@ -875,15 +875,15 @@ class TestFiLMModulation(unittest.TestCase):
                 "die": 0,
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.5,
-                "time_normalized": -0.2,
+                "total_flux_single_die_standardized": 0.5,
+                "time_standardized": -0.2,
             }
         ]
         cond = fg.prepare_condition_tensor(
             meta, energy_bounds=np.array([[100.0, 150.0]])
         )
         self.assertIn("die", cond)
-        self.assertIn("total_flux_single_die_normalized", cond)
+        self.assertIn("total_flux_single_die_standardized", cond)
         self.assertIn("energy_bounds", cond)
         self.assertEqual(cond["energy_bounds"].shape, (1, 2))
 

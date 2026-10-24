@@ -163,10 +163,10 @@ class TestCalculateFlux(unittest.TestCase):
             [150.0, 150.0, 150.0, 150.0],
             rtol=1e-5,
         )
-        # total_flux_single_die_normalized for unique dies:
+        # total_flux_single_die_standardized for unique dies:
         # [50.0, 100.0] -> [-1.0, 1.0]
         np.testing.assert_allclose(
-            df_res["total_flux_single_die_normalized"].to_numpy(),
+            df_res["total_flux_single_die_standardized"].to_numpy(),
             [-1.0, -1.0, 1.0, 1.0],
             rtol=1e-5,
         )
@@ -186,7 +186,7 @@ class TestCalculateFlux(unittest.TestCase):
                 identical_intensity, self.ary_energy[:2], meta
             )
         np.testing.assert_allclose(
-            res["total_flux_single_die_normalized"].to_numpy(),
+            res["total_flux_single_die_standardized"].to_numpy(),
             [0.0, 0.0],
             atol=1e-6,
         )
@@ -217,14 +217,14 @@ class TestCalculateFlux(unittest.TestCase):
             )
 
     def test_calculate_flux_unsplit_leaves_die_flux_normalized_nan(self) -> None:
-        """Verify total_flux_single_die_normalized is NaN when df_meta has
+        """Verify total_flux_single_die_standardized is NaN when df_meta has
         no 'split' column.
         """
         bad_meta = self.df_meta.drop(columns=["split"])
         res = calculate_flux_and_intensity(
             self.ary_intensity, self.ary_energy, bad_meta
         )
-        self.assertTrue(res["total_flux_single_die_normalized"].isna().all())
+        self.assertTrue(res["total_flux_single_die_standardized"].isna().all())
 
     def test_df_meta_immutability(self) -> None:
         """Verify original df_meta DataFrame is not mutated in-place."""
@@ -251,7 +251,7 @@ class TestCalculateFlux(unittest.TestCase):
             "total_flux_single_die",
             "mean_flux_across_dies_single_measurement",
             "total_flux_single_measurement",
-            "total_flux_single_die_normalized",
+            "total_flux_single_die_standardized",
         ]:
             self.assertIn(col, res.columns)
         self.assertEqual(len(res), 0)
@@ -340,7 +340,7 @@ class TestCalculateFlux(unittest.TestCase):
             "total_flux_single_die",
             "mean_flux_across_dies_single_measurement",
             "total_flux_single_measurement",
-            "total_flux_single_die_normalized",
+            "total_flux_single_die_standardized",
         ]:
             self.assertIn(col, meta_with_flux.columns)
             self.assertFalse(meta_with_flux[col].isna().any())
@@ -364,9 +364,9 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             ],
         })
         res = calculate_normalized_time(meta)
-        self.assertIn("time_normalized", res.columns)
+        self.assertIn("time_standardized", res.columns)
         np.testing.assert_allclose(
-            res["time_normalized"].to_numpy(),
+            res["time_standardized"].to_numpy(),
             [-1.0, -1.0, 1.0],
             rtol=1e-5,
         )
@@ -381,7 +381,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         with self.assertWarns(UserWarning):
             res = calculate_normalized_time(meta)
         np.testing.assert_allclose(
-            res["time_normalized"].to_numpy(), [0.0, 0.0], atol=1e-6
+            res["time_standardized"].to_numpy(), [0.0, 0.0], atol=1e-6
         )
 
     def test_missing_split_raises_key_error(self) -> None:
@@ -409,7 +409,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
         """Verify empty DataFrame handling and ValueError on invalid inputs."""
         empty = pd.DataFrame(columns=["measurement_id", "time"])
         res = calculate_normalized_time(empty)
-        self.assertIn("time_normalized", res.columns)
+        self.assertIn("time_standardized", res.columns)
         self.assertEqual(len(res), 0)
 
         with self.assertRaises(ValueError):
@@ -504,19 +504,19 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
         res = standardize_metadata_features(
             self.df_meta, config={"fit_split": "train"}
         )
-        self.assertIn("time_normalized", res.columns)
-        self.assertIn("total_flux_single_die_normalized", res.columns)
+        self.assertIn("time_standardized", res.columns)
+        self.assertIn("total_flux_single_die_standardized", res.columns)
 
         # Train dies are 10.0 and 20.0 -> mean 15.0, std 5.0
-        train_flux = res[res["split"] == "train"]["total_flux_single_die_normalized"].to_numpy()
+        train_flux = res[res["split"] == "train"]["total_flux_single_die_standardized"].to_numpy()
         np.testing.assert_allclose(train_flux, [-1.0, 1.0], atol=1e-5)
 
         # Val dies (30.0, 40.0) -> (30-15)/5 = 3.0, (40-15)/5 = 5.0
-        val_flux = res[res["split"] == "val"]["total_flux_single_die_normalized"].to_numpy()
+        val_flux = res[res["split"] == "val"]["total_flux_single_die_standardized"].to_numpy()
         np.testing.assert_allclose(val_flux, [3.0, 5.0], atol=1e-5)
 
         # Test dies (50.0, 60.0) -> (50-15)/5 = 7.0, (60-15)/5 = 9.0
-        test_flux = res[res["split"] == "test"]["total_flux_single_die_normalized"].to_numpy()
+        test_flux = res[res["split"] == "test"]["total_flux_single_die_standardized"].to_numpy()
         np.testing.assert_allclose(test_flux, [7.0, 9.0], atol=1e-5)
 
     def test_calculate_normalized_time_with_fit_split(self) -> None:
@@ -535,11 +535,11 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
         res = calculate_normalized_time(df, config={"fit_split": "train"})
         # Train timestamps: day 0 and day 2 -> mean day 1.
         # Diffs are -1 day and +1 day; std across train is 1 day (86400s).
-        train_t = res[res["split"] == "train"]["time_normalized"].to_numpy()
+        train_t = res[res["split"] == "train"]["time_standardized"].to_numpy()
         np.testing.assert_allclose(train_t, [-1.0, 1.0], atol=1e-5)
 
         # Test timestamp day 4 -> (4 - 1)/1 = 3.0
-        test_t = res[res["split"] == "test"]["time_normalized"].to_numpy()
+        test_t = res[res["split"] == "test"]["time_standardized"].to_numpy()
         np.testing.assert_allclose(test_t, [3.0], atol=1e-5)
 
     def test_missing_split_raises_key_error(self) -> None:

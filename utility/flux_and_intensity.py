@@ -87,7 +87,7 @@ def calculate_flux_and_intensity(
     6. 'total_flux_single_die': total sum of regional flux across that die.
     7. 'mean_flux_across_dies_single_measurement': average die flux in session.
     8. 'total_flux_single_measurement': total sum of die flux in that session.
-    9. 'total_flux_single_die_normalized': z-score standardized die flux.
+    9. 'total_flux_single_die_standardized': z-score standardized die flux.
 
     Parameters
     ----------
@@ -140,7 +140,7 @@ def calculate_flux_and_intensity(
         "total_flux_single_die",
         "mean_flux_across_dies_single_measurement",
         "total_flux_single_measurement",
-        "total_flux_single_die_normalized",
+        "total_flux_single_die_standardized",
     ]
     if df_res.empty:
         for col in appended_cols:
@@ -214,7 +214,7 @@ def calculate_flux_and_intensity(
         if "split" not in df_res.columns:
             raise KeyError(
                 "df_meta must contain 'split' column to compute "
-                "'total_flux_single_die_normalized'. Please run "
+                "'total_flux_single_die_standardized'. Please run "
                 "split_measurement_sessions before standardizing die flux."
             )
         if not (df_res["split"] == fit_split).any():
@@ -229,11 +229,11 @@ def calculate_flux_and_intensity(
         if flux_std == 0.0:
             warnings.warn(
                 f"Standard deviation of total_flux_single_die across '{fit_split}' "
-                "dies is 0.0; setting total_flux_single_die_normalized to 0.0."
+                "dies is 0.0; setting total_flux_single_die_standardized to 0.0."
             )
-            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_standardized"] = np.float32(0.0)
         else:
-            df_res["total_flux_single_die_normalized"] = (
+            df_res["total_flux_single_die_standardized"] = (
                 (df_res["total_flux_single_die"] - flux_mean) / flux_std
             ).astype(np.float32)
     elif "split" in df_res.columns and (df_res["split"] == "train").any():
@@ -244,15 +244,15 @@ def calculate_flux_and_intensity(
         if flux_std == 0.0:
             warnings.warn(
                 "Standard deviation of total_flux_single_die across 'train' "
-                "dies is 0.0; setting total_flux_single_die_normalized to 0.0."
+                "dies is 0.0; setting total_flux_single_die_standardized to 0.0."
             )
-            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_standardized"] = np.float32(0.0)
         else:
-            df_res["total_flux_single_die_normalized"] = (
+            df_res["total_flux_single_die_standardized"] = (
                 (df_res["total_flux_single_die"] - flux_mean) / flux_std
             ).astype(np.float32)
     else:
-        df_res["total_flux_single_die_normalized"] = pd.Series(
+        df_res["total_flux_single_die_standardized"] = pd.Series(
             np.nan, index=df_res.index, dtype=np.float32
         )
 
@@ -277,7 +277,7 @@ def calculate_normalized_time(
     Returns
     -------
     pd.DataFrame
-        New copy of df_meta with appended 'time_normalized' column.
+        New copy of df_meta with appended 'time_standardized' column.
 
     Raises
     ------
@@ -297,12 +297,12 @@ def calculate_normalized_time(
 
     df_res = df_meta.copy()
     if df_res.empty:
-        df_res["time_normalized"] = pd.Series(dtype=np.float32)
+        df_res["time_standardized"] = pd.Series(dtype=np.float32)
         return df_res
 
     if "split" not in df_res.columns:
         raise KeyError(
-            "df_meta must contain 'split' column to compute 'time_normalized'. "
+            "df_meta must contain 'split' column to compute 'time_standardized'. "
             "Please run split_measurement_sessions before standardizing measurement time."
         )
 
@@ -317,7 +317,7 @@ def calculate_normalized_time(
     if df_res["measurement_id"].isna().any() or df_res["time"].isna().any():
         raise ValueError(
             "Columns 'measurement_id' and 'time' in df_meta must not contain "
-            "null values when computing time_normalized."
+            "null values when computing time_standardized."
         )
 
     try:
@@ -340,11 +340,11 @@ def calculate_normalized_time(
     if std_sec == 0.0:
         warnings.warn(
             f"Standard deviation of measurement time differences across '{fit_split}' "
-            "sessions is 0.0; setting time_normalized to 0.0."
+            "sessions is 0.0; setting time_standardized to 0.0."
         )
-        df_res["time_normalized"] = np.float32(0.0)
+        df_res["time_standardized"] = np.float32(0.0)
     else:
-        df_res["time_normalized"] = (all_diff_sec / std_sec).astype(np.float32)
+        df_res["time_standardized"] = (all_diff_sec / std_sec).astype(np.float32)
 
     return df_res
 
@@ -353,8 +353,8 @@ def standardize_metadata_features(
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Standardize metadata features ('time_normalized' and
-    'total_flux_single_die_normalized') on train split without data leakage.
+    """Standardize metadata features ('time_standardized' and
+    'total_flux_single_die_standardized') on train split without data leakage.
 
     Parameters
     ----------
@@ -369,8 +369,8 @@ def standardize_metadata_features(
     Returns
     -------
     pd.DataFrame
-        New copy of df_meta with standardized 'time_normalized' and
-        'total_flux_single_die_normalized' columns.
+        New copy of df_meta with standardized 'time_standardized' and
+        'total_flux_single_die_standardized' columns.
 
     Raises
     ------
@@ -418,11 +418,11 @@ def standardize_metadata_features(
         if flux_std == 0.0:
             warnings.warn(
                 f"Standard deviation of {flux_col} across '{fit_split}' dies is 0.0; "
-                "setting total_flux_single_die_normalized to 0.0."
+                "setting total_flux_single_die_standardized to 0.0."
             )
-            df_res["total_flux_single_die_normalized"] = np.float32(0.0)
+            df_res["total_flux_single_die_standardized"] = np.float32(0.0)
         else:
-            df_res["total_flux_single_die_normalized"] = (
+            df_res["total_flux_single_die_standardized"] = (
                 (df_res[flux_col] - flux_mean) / flux_std
             ).astype(np.float32)
 

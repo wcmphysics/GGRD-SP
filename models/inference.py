@@ -158,8 +158,8 @@ def assemble_prediction_metadata(
         "total_flux_single_die",
         "mean_flux_across_dies_single_measurement",
         "total_flux_single_measurement",
-        "total_flux_single_die_normalized",
-        "time_normalized",
+        "total_flux_single_die_standardized",
+        "time_standardized",
     ]
 
     records: list[dict[str, Any]] = []

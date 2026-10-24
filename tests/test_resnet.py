@@ -221,8 +221,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
             "die": torch.tensor([0, 1]),
             "source_tool_index": torch.tensor([0, 0]),
             "target_tool_index": torch.tensor([1, 1]),
-            "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
-            "time_normalized": torch.tensor([[0.2], [-0.2]]),
+            "total_flux_single_die_standardized": torch.tensor([[0.5], [-0.5]]),
+            "time_standardized": torch.tensor([[0.2], [-0.2]]),
         }
 
     def test_requires_use_film_true(self) -> None:
@@ -344,8 +344,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             }
             for i in range(8)
         ]
@@ -393,8 +393,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.1,
-                "time_normalized": -0.1,
+                "total_flux_single_die_standardized": 0.1,
+                "time_standardized": -0.1,
             }
             for i in range(8)
         ]
@@ -436,8 +436,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "region": "Al2p",
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.0,
-                "time_normalized": 0.0,
+                "total_flux_single_die_standardized": 0.0,
+                "time_standardized": 0.0,
             }
             for i in range(4)
         ]
@@ -466,8 +466,8 @@ class TestResNet5L1D(unittest.TestCase):
             "die": torch.tensor([0, 1]),
             "source_tool_index": torch.tensor([0, 0]),
             "target_tool_index": torch.tensor([1, 1]),
-            "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
-            "time_normalized": torch.tensor([[0.2], [-0.2]]),
+            "total_flux_single_die_standardized": torch.tensor([[0.5], [-0.5]]),
+            "time_standardized": torch.tensor([[0.2], [-0.2]]),
         }
 
     def test_layer_count_and_channels(self) -> None:
@@ -535,8 +535,8 @@ class TestResNet5L1D(unittest.TestCase):
                 "region": "Al2p",
                 "source_tool_index": 0,
                 "target_tool_index": 1,
-                "total_flux_single_die_normalized": 0.1,
-                "time_normalized": -0.1,
+                "total_flux_single_die_standardized": 0.1,
+                "time_standardized": -0.1,
             }
             for i in range(8)
         ]

@@ -162,7 +162,7 @@ def prepare_film_condition_tensor(
         - 'encode_die' (bool): Include die index (default True).
         - 'encode_tool' (bool): Include tool indices (default True).
         - 'encode_flux' (bool): Include standardized die flux.
-        - 'encode_time' (bool): Include 'time_normalized'.
+        - 'encode_time' (bool): Include 'time_standardized'.
         - 'encode_energy' (bool): Include bounding energy (default False).
         - 'encode_relative_intensity' (bool): Include relative regional
           intensity.
@@ -184,8 +184,8 @@ def prepare_film_condition_tensor(
         - 'source_tool_index': LongTensor (B,) (if encode_tool=True)
         - 'target_tool_index': LongTensor (B,) (if encode_tool=True)
         - 'region': LongTensor (B,) (if encode_region=True)
-        - 'total_flux_single_die_normalized': FloatTensor (B, 1)
-        - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
+        - 'total_flux_single_die_standardized': FloatTensor (B, 1)
+        - 'time_standardized': FloatTensor (B, 1) (if encode_time=True)
         - 'relative_intensity_single_region': FloatTensor (B, 1)
         - 'element_multi_hot': FloatTensor (B, vocab_size)
         - 'energy_bounds': FloatTensor (B, 2) (if provided)
@@ -246,11 +246,11 @@ def prepare_film_condition_tensor(
 
     if encode_flux:
         flux_vals = _extract_meta_column(
-            meta, "total_flux_single_die_normalized", n
+            meta, "total_flux_single_die_standardized", n
         )
-        ret["total_flux_single_die_normalized"] = torch.tensor(
+        ret["total_flux_single_die_standardized"] = torch.tensor(
             [
-                _parse_required_float(x, "total_flux_single_die_normalized")
+                _parse_required_float(x, "total_flux_single_die_standardized")
                 for x in flux_vals
             ],
             dtype=torch.float32,
@@ -259,10 +259,10 @@ def prepare_film_condition_tensor(
 
     if encode_time:
         time_vals = [
-            _parse_required_float(x, "time_normalized")
-            for x in _extract_meta_column(meta, "time_normalized", n)
+            _parse_required_float(x, "time_standardized")
+            for x in _extract_meta_column(meta, "time_standardized", n)
         ]
-        ret["time_normalized"] = torch.tensor(
+        ret["time_standardized"] = torch.tensor(
             time_vals, dtype=torch.float32, device=device
         ).unsqueeze(-1)
 
@@ -394,7 +394,7 @@ class FiLMGenerator(nn.Module):
         - 'encode_region' (bool): Encode region identity (default False).
         - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
         - 'encode_flux' (bool): Encode standardized die flux (default True).
-        - 'encode_time' (bool): Encode 'time_normalized' (default True).
+        - 'encode_time' (bool): Encode 'time_standardized' (default True).
         - 'encode_relative_intensity' (bool): Encode relative regional
           intensity.
         - 'encode_elements' (bool): Encode material element multi-hot vector.
@@ -593,19 +593,19 @@ class FiLMGenerator(nn.Module):
                     reg_t = torch.clamp(reg_t, 0, max_allowed)
             feat_list.append(self.region_embedding(reg_t))
         if self.encode_flux:
-            flux_t = cond_dev.get("total_flux_single_die_normalized")
+            flux_t = cond_dev.get("total_flux_single_die_standardized")
             if flux_t is None:
                 raise KeyError(
-                    "FiLMGenerator expects 'total_flux_single_die_normalized' in "
+                    "FiLMGenerator expects 'total_flux_single_die_standardized' in "
                     "conditioning dictionary when encode_flux=True."
                 )
             feat_list.append(flux_t)
 
         if self.encode_time:
-            time_t = cond_dev.get("time_normalized")
+            time_t = cond_dev.get("time_standardized")
             if time_t is None:
                 raise KeyError(
-                    "FiLMGenerator expects 'time_normalized' in conditioning "
+                    "FiLMGenerator expects 'time_standardized' in conditioning "
                     "dictionary when encode_time=True."
                 )
             feat_list.append(time_t)

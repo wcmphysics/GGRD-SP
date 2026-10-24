@@ -82,8 +82,8 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
         else:
             tgt_indices.append(None)
     df_meta["target_spectrum_index"] = tgt_indices
-    df_meta["total_flux_single_die_normalized"] = 0.0
-    df_meta["time_normalized"] = 0.0
+    df_meta["total_flux_single_die_standardized"] = 0.0
+    df_meta["time_standardized"] = 0.0
 
     return ary_intensity, ary_energy, df_meta
 

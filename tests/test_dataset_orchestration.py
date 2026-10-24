@@ -44,8 +44,8 @@ class TestDatasetOrchestration(unittest.TestCase):
                     "region": "Al2p" if i % 2 == 0 else "Ti2p",
                     "region_index": 0 if i % 2 == 0 else 1,
                     "split": split,
-                    "total_flux_single_die_normalized": 0.0,
-                    "time_normalized": 0.0,
+                    "total_flux_single_die_standardized": 0.0,
+                    "time_standardized": 0.0,
                     "material": "NMG",
                 }
             )
@@ -62,8 +62,8 @@ class TestDatasetOrchestration(unittest.TestCase):
                     "region": "Al2p" if src_i % 2 == 0 else "Ti2p",
                     "region_index": 0 if src_i % 2 == 0 else 1,
                     "split": split,
-                    "total_flux_single_die_normalized": 0.0,
-                    "time_normalized": 0.0,
+                    "total_flux_single_die_standardized": 0.0,
+                    "time_standardized": 0.0,
                     "material": "NMG",
                 }
             )
