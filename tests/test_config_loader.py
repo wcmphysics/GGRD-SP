@@ -81,7 +81,7 @@ class TestConfigLoader(unittest.TestCase):
             )
 
     def test_extract_element_vocabulary_dynamic(self) -> None:
-        """Verify dynamic sorted vocabulary extraction supporting >14 elements."""
+        """Verify dynamic sorted vocabulary extraction supporting elements."""
         materials = {
             "MatA": ["Ti", "Al", "C", "O", "Cl", "Si", "Fe", "Cu"],
             "MatB": ["Zn", "Mo", "W", "Ni", "Ta", "Hf", "Ti"],
@@ -215,6 +215,7 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(resolved["film"]["use_film"])
         self.assertTrue(resolved["training"]["use_film"])
         self.assertEqual(resolved["data_generation"]["material"], "PMG")
+        self.assertEqual(resolved["pairing"]["material"], "PMG")
         self.assertEqual(resolved["quantification"]["material"], "PMG")
         self.assertEqual(resolved["training"]["train_config"]["l2_weight"], 5e-5)
 

@@ -229,6 +229,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(pairing, dict):
         pairing.setdefault("source_tool", source_tool)
         pairing.setdefault("target_tool", target_tool)
+        pairing.setdefault("material", material)
 
     # 5. Inject into splitting
     splitting = resolved.setdefault("splitting", {})
