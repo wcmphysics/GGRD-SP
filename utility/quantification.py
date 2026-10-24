@@ -928,8 +928,8 @@ def format_side_by_side_atomic_percentages(
             else:
                 overall_row[f"target_mean_{split}"] = np.nan
                 overall_row[f"target_std_{split}"] = np.nan
-                overall_row[f"pred_mean_{split}"] = np.nan
-                overall_row[f"pred_std_{split}"] = np.nan
+                overall_row[f"predicted_mean_{split}"] = np.nan
+                overall_row[f"predicted_std_{split}"] = np.nan
                 overall_row[f"diff_mean_{split}"] = np.nan
                 overall_row[f"diff_std_{split}"] = np.nan
                 overall_row[f"mae_{split}"] = mean_mae

@@ -211,19 +211,20 @@ def format_side_by_side_metrics(
 
     Produces a clean comparison table comparing model performance across
     configured splits ('train', 'test', etc.) and metrics ('norm_mse',
-    'peak_err%', 'max%err', etc.) for each spectral region, with columns
-    grouped by split.
+    'peak_error_percentage', 'max_error_percentage', etc.) for each spectral
+    region, with columns grouped by split.
 
     Parameters
     ----------
     df_per_sample : pd.DataFrame
         DataFrame of per-sample evaluation metrics containing 'region',
-        'split', 'normalized_mse', 'rmse', 'peak_err_pct', and 'max_err_pct'.
+        'split', 'normalized_mse', 'rmse', 'peak_error_percentage', and
+        'max_error_percentage'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'splits' (list[str]): Splits to display (default ['train', 'test']).
         - 'metrics' (list[str]): Metrics to display (default ['norm_mse',
-          'peak_err%', 'max%err']).
+          'peak_error_percentage', 'max_error_percentage']).
         - 'format_str' (bool): Format as 'mean ± std' string (default True).
 
     Returns
