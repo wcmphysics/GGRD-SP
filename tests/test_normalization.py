@@ -140,7 +140,7 @@ class TestNormalization(unittest.TestCase):
                     "die": 0,
                     "region": "Al2p",
                     "tool": "J4",
-                    "spectrum_index_target": 2,
+                    "target_spectrum_index": 2,
                 },
                 {
                     "spectrum_index": 1,
@@ -148,7 +148,7 @@ class TestNormalization(unittest.TestCase):
                     "die": 0,
                     "region": "Ti2p",
                     "tool": "J4",
-                    "spectrum_index_target": None,
+                    "target_spectrum_index": None,
                 },
                 {
                     "spectrum_index": 2,
@@ -156,7 +156,7 @@ class TestNormalization(unittest.TestCase):
                     "die": 0,
                     "region": "Al2p",
                     "tool": "H1",
-                    "spectrum_index_target": None,
+                    "target_spectrum_index": None,
                 },
                 {
                     "spectrum_index": 3,
@@ -164,7 +164,7 @@ class TestNormalization(unittest.TestCase):
                     "die": 0,
                     "region": "Ti2p",
                     "tool": "H1",
-                    "spectrum_index_target": None,
+                    "target_spectrum_index": None,
                 },
             ]
         )

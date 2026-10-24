@@ -715,7 +715,7 @@ def calculate_atomic_percentage_split_statistics(
         .drop_duplicates()
     )
     src_target_map = (
-        df_meta_orig[["measurement_id", "measurement_id_target"]]
+        df_meta_orig[["measurement_id", "target_measurement_id"]]
         .dropna()
         .drop_duplicates()
         .rename(columns={"measurement_id": "source_measurement_id"})
@@ -743,7 +743,7 @@ def calculate_atomic_percentage_split_statistics(
     for _, map_row in session_mapping.iterrows():
         p_id = str(map_row["measurement_id"])
         s_id = str(map_row["source_measurement_id"])
-        t_id = str(map_row["measurement_id_target"])
+        t_id = str(map_row["target_measurement_id"])
         split_val = str(map_row["split"])
 
         sub_p = df_per_die_pred[

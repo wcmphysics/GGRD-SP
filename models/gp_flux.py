@@ -479,11 +479,11 @@ def run_gp_flux_pipeline(
     src_cfg, tgt_cfg = cfg.get("source_tool"), cfg.get("target_tool")
     if src_cfg and tgt_cfg:
         tools_to_run = [str(src_cfg), str(tgt_cfg)]
-    elif "tool_target" in df_meta.columns and df_meta["tool_target"].dropna().any():
-        paired_rows = df_meta[df_meta["tool_target"].notna()]
+    elif "target_tool" in df_meta.columns and df_meta["target_tool"].dropna().any():
+        paired_rows = df_meta[df_meta["target_tool"].notna()]
         tools_to_run = [
             str(paired_rows["tool"].iloc[0]),
-            str(paired_rows["tool_target"].iloc[0]),
+            str(paired_rows["target_tool"].iloc[0]),
         ]
     else:
         tools_to_run = list(df_meta["tool"].dropna().unique())[:2]

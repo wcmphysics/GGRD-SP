@@ -88,7 +88,7 @@ def _parse_tool_index(val: Any, field_name: str) -> int:
     if val is None or pd.isna(val):
         raise ValueError(
             f"Metadata field '{field_name}' is missing or null. "
-            "Please ensure 'tool_index' and 'tool_target_index' are "
+            "Please ensure 'source_tool_index' and 'target_tool_index' are "
             "populated in df_meta."
         )
     try:
@@ -155,7 +155,7 @@ def prepare_film_condition_tensor(
     Parameters
     ----------
     metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
-        Sample metadata with 'die', 'tool_index', 'tool_target_index',
+        Sample metadata with 'die', 'source_tool_index', 'target_tool_index',
         and (when enabled) flux, time, relative intensity, and material.
     config : dict[str, Any] | None, optional
         Optional configuration containing:
@@ -181,8 +181,8 @@ def prepare_film_condition_tensor(
     dict[str, torch.Tensor]
         Dictionary with conditioning tensor features:
         - 'die': LongTensor (B,) (if encode_die=True)
-        - 'tool_src': LongTensor (B,) (if encode_tool=True)
-        - 'tool_tgt': LongTensor (B,) (if encode_tool=True)
+        - 'source_tool_index': LongTensor (B,) (if encode_tool=True)
+        - 'target_tool_index': LongTensor (B,) (if encode_tool=True)
         - 'region': LongTensor (B,) (if encode_region=True)
         - 'total_flux_single_die_normalized': FloatTensor (B, 1)
         - 'time_normalized': FloatTensor (B, 1) (if encode_time=True)
@@ -230,15 +230,19 @@ def prepare_film_condition_tensor(
 
     if encode_tool:
         t_src = [
-            _parse_tool_index(x, "tool_index")
-            for x in _extract_meta_column(meta, "tool_index", n)
+            _parse_tool_index(x, "source_tool_index")
+            for x in _extract_meta_column(meta, "source_tool_index", n)
         ]
         t_tgt = [
-            _parse_tool_index(x, "tool_target_index")
-            for x in _extract_meta_column(meta, "tool_target_index", n)
+            _parse_tool_index(x, "target_tool_index")
+            for x in _extract_meta_column(meta, "target_tool_index", n)
         ]
-        ret["tool_src"] = torch.tensor(t_src, dtype=torch.long, device=device)
-        ret["tool_tgt"] = torch.tensor(t_tgt, dtype=torch.long, device=device)
+        ret["source_tool_index"] = torch.tensor(
+            t_src, dtype=torch.long, device=device
+        )
+        ret["target_tool_index"] = torch.tensor(
+            t_tgt, dtype=torch.long, device=device
+        )
 
     if encode_flux:
         flux_vals = _extract_meta_column(
@@ -554,13 +558,16 @@ class FiLMGenerator(nn.Module):
             feat_list.append(self.die_embedding(cond_dev["die"]))
 
         if self.encode_tool:
-            if "tool_src" not in cond_dev or "tool_tgt" not in cond_dev:
+            if (
+                "source_tool_index" not in cond_dev
+                or "target_tool_index" not in cond_dev
+            ):
                 raise KeyError(
-                    "FiLMGenerator expects 'tool_src' and 'tool_tgt' in "
+                    "FiLMGenerator expects 'source_tool_index' and 'target_tool_index' in "
                     "conditioning dictionary when encode_tool=True."
                 )
-            feat_list.append(self.tool_embedding(cond_dev["tool_src"]))
-            feat_list.append(self.tool_embedding(cond_dev["tool_tgt"]))
+            feat_list.append(self.tool_embedding(cond_dev["source_tool_index"]))
+            feat_list.append(self.tool_embedding(cond_dev["target_tool_index"]))
 
         if self.encode_region:
             reg_t = cond_dev.get("region")

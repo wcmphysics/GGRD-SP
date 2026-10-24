@@ -58,10 +58,10 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     }
     tgt_tool_map = {m: "J5" for m in tgt_map}
 
-    df_meta["measurement_id_target"] = df_meta["measurement_id"].map(tgt_map)
-    df_meta["tool_target"] = df_meta["measurement_id"].map(tgt_tool_map)
-    df_meta["tool_index"] = df_meta["tool"].map({"J4": 0, "J5": 1})
-    df_meta["tool_target_index"] = df_meta["tool_target"].map(
+    df_meta["target_measurement_id"] = df_meta["measurement_id"].map(tgt_map)
+    df_meta["target_tool"] = df_meta["measurement_id"].map(tgt_tool_map)
+    df_meta["source_tool_index"] = df_meta["tool"].map({"J4": 0, "J5": 1})
+    df_meta["target_tool_index"] = df_meta["target_tool"].map(
         {"J4": 0, "J5": 1}
     )
 
@@ -74,14 +74,14 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     }
     tgt_indices = []
     for _, r in df_meta.iterrows():
-        tgt_mid = r["measurement_id_target"]
+        tgt_mid = r["target_measurement_id"]
         if pd.notna(tgt_mid):
             tgt_indices.append(
                 tgt_lookup.get((str(tgt_mid), int(r["die"]), str(r["region"])))
             )
         else:
             tgt_indices.append(None)
-    df_meta["spectrum_index_target"] = tgt_indices
+    df_meta["target_spectrum_index"] = tgt_indices
     df_meta["total_flux_single_die_normalized"] = 0.0
     df_meta["time_normalized"] = 0.0
 

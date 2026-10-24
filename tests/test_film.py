@@ -24,15 +24,15 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": -0.5,
                 "time_normalized": -1.0,
             },
             {
                 "die": 5,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 1.25,
                 "time_normalized": 1.0,
             },
@@ -43,15 +43,15 @@ class TestFiLMModulation(unittest.TestCase):
         )
 
         self.assertIn("die", cond)
-        self.assertIn("tool_src", cond)
-        self.assertIn("tool_tgt", cond)
+        self.assertIn("source_tool_index", cond)
+        self.assertIn("target_tool_index", cond)
         self.assertIn("total_flux_single_die_normalized", cond)
         self.assertIn("time_normalized", cond)
 
         self.assertEqual(cond["die"][0].item(), 0)
         self.assertEqual(cond["die"][1].item(), 5)
-        self.assertEqual(cond["tool_src"][0].item(), 0)
-        self.assertEqual(cond["tool_tgt"][0].item(), 1)
+        self.assertEqual(cond["source_tool_index"][0].item(), 0)
+        self.assertEqual(cond["target_tool_index"][0].item(), 1)
 
         self.assertEqual(cond["total_flux_single_die_normalized"].shape, (2, 1))
         self.assertEqual(cond["time_normalized"].shape, (2, 1))
@@ -74,8 +74,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 2,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.2,
                 "time_normalized": -0.3,
             }
@@ -111,8 +111,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": i,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.1 * i,
                 "time_normalized": -0.2 * i,
             }
@@ -151,8 +151,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": i % 9,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": float(i) * 0.1,
                 "time_normalized": float(i) * 0.2,
                 "spectrum_index": i,
@@ -185,15 +185,15 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 1,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": -0.4,
                 "time_normalized": 0.5,
             },
             {
                 "die": 4,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.4,
                 "time_normalized": -0.5,
             },
@@ -213,16 +213,16 @@ class TestFiLMModulation(unittest.TestCase):
         cond1 = prepare_film_condition_tensor(
             metadata={
                 "die": [0, 1, 2],
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": [0.1, 0.2, 0.3],
                 "time_normalized": -0.5,
             },
             config={"num_samples": 3},
         )
         self.assertEqual(cond1["die"].shape, (3,))
-        self.assertEqual(cond1["tool_src"].shape, (3,))
-        self.assertEqual(cond1["tool_tgt"].shape, (3,))
+        self.assertEqual(cond1["source_tool_index"].shape, (3,))
+        self.assertEqual(cond1["target_tool_index"].shape, (3,))
         self.assertEqual(cond1["total_flux_single_die_normalized"].shape, (3, 1))
         self.assertEqual(cond1["time_normalized"].shape, (3, 1))
 
@@ -231,8 +231,8 @@ class TestFiLMModulation(unittest.TestCase):
             [
                 {
                     "die": 3,
-                    "tool_index": 0,
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool_index": 1,
                     "total_flux_single_die_normalized": 1.5,
                     "time_normalized": -1.2,
                 }
@@ -253,14 +253,14 @@ class TestFiLMModulation(unittest.TestCase):
         """
         base_meta = {
             "die": 0,
-            "tool_index": 0,
-            "tool_target_index": 1,
+            "source_tool_index": 0,
+            "target_tool_index": 1,
             "total_flux_single_die_normalized": 0.0,
             "time_normalized": 0.0,
         }
         for field in (
-            "tool_index",
-            "tool_target_index",
+            "source_tool_index",
+            "target_tool_index",
             "total_flux_single_die_normalized",
             "time_normalized",
         ):
@@ -300,8 +300,8 @@ class TestFiLMModulation(unittest.TestCase):
             metadata=[
                 {
                     "die": 0,
-                    "tool_index": 0,
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool_index": 1,
                     "time_normalized": 0.5,
                 }
             ],
@@ -316,7 +316,7 @@ class TestFiLMModulation(unittest.TestCase):
         )
         self.assertEqual(fg_neither.mlp[0].in_features, 12)
         cond_neither = prepare_film_condition_tensor(
-            metadata=[{"die": 0, "tool_index": 0, "tool_target_index": 1}],
+            metadata=[{"die": 0, "source_tool_index": 0, "target_tool_index": 1}],
             config={"encode_flux": False, "encode_time": False},
         )
         self.assertEqual(len(fg_neither(cond_neither)), 1)
@@ -328,8 +328,8 @@ class TestFiLMModulation(unittest.TestCase):
         cond_no_die = prepare_film_condition_tensor(
             metadata=[
                 {
-                    "tool_index": 0,
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool_index": 1,
                     "total_flux_single_die_normalized": 0.5,
                     "time_normalized": -0.2,
                 }
@@ -354,8 +354,8 @@ class TestFiLMModulation(unittest.TestCase):
             ],
             config={"encode_tool": False},
         )
-        self.assertNotIn("tool_src", cond_no_tool)
-        self.assertNotIn("tool_tgt", cond_no_tool)
+        self.assertNotIn("source_tool_index", cond_no_tool)
+        self.assertNotIn("target_tool_index", cond_no_tool)
         mods_no_tool = fg_no_tool(cond_no_tool)
         self.assertEqual(len(mods_no_tool), 1)
 
@@ -398,8 +398,8 @@ class TestFiLMModulation(unittest.TestCase):
             metadata=[
                 {
                     "die": 1,
-                    "tool_index": 0,
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool_index": 1,
                     "total_flux_single_die_normalized": 0.0,
                     "time_normalized": 0.0,
                 }
@@ -427,8 +427,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 1,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
@@ -455,9 +455,9 @@ class TestFiLMModulation(unittest.TestCase):
                     "spectrum_index": i,
                     "measurement_id": f"NMG_M_J4_{i:05d}",
                     "tool": "J4",
-                    "tool_index": 0,
-                    "tool_target": "H1",
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool": "H1",
+                    "target_tool_index": 1,
                     "die": i,
                     "region": "Si2p",
                     "split": "test",
@@ -480,8 +480,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
@@ -527,8 +527,8 @@ class TestFiLMModulation(unittest.TestCase):
             metadata=[
                 {
                     "die": 0,
-                    "tool_index": 0,
-                    "tool_target_index": 1,
+                    "source_tool_index": 0,
+                    "target_tool_index": 1,
                     "total_flux_single_die_normalized": 0.0,
                     "time_normalized": 0.0,
                 }
@@ -564,8 +564,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }
@@ -598,9 +598,9 @@ class TestFiLMModulation(unittest.TestCase):
                 "spectrum_index": i,
                 "measurement_id": f"NMG_M_J4_{i:05d}",
                 "tool": "J4",
-                "tool_index": 0,
-                "tool_target": "H1",
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool": "H1",
+                "target_tool_index": 1,
                 "die": i % 2,
                 "region": "Al2p",
                 "split": "test",
@@ -644,16 +644,16 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "region_index": 2,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             },
             {
                 "die": 1,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "region_index": 11,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
@@ -688,16 +688,16 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
                 "relative_intensity_single_region": 0.85,
             },
             {
                 "die": 1,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
                 "relative_intensity_single_region": 1.30,
@@ -737,16 +737,16 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
                 "material": "NMG",
             },
             {
                 "die": 1,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
                 "material": "PMG",
@@ -793,8 +793,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
@@ -873,8 +873,8 @@ class TestFiLMModulation(unittest.TestCase):
         meta = [
             {
                 "die": 0,
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.5,
                 "time_normalized": -0.2,
             }

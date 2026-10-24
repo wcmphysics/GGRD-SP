@@ -25,7 +25,7 @@ class TestEvaluationMetrics(unittest.TestCase):
                 "tool": "J4",
                 "region": "Al2p",
                 "die": 0,
-                "measurement_id_target": "M_TGT",
+                "target_measurement_id": "M_TGT",
             },
             {
                 "spectrum_index": 1,
@@ -33,7 +33,7 @@ class TestEvaluationMetrics(unittest.TestCase):
                 "tool": "H1",
                 "region": "Al2p",
                 "die": 0,
-                "measurement_id_target": np.nan,
+                "target_measurement_id": np.nan,
             },
         ])
         self.meta_pred = pd.DataFrame([

@@ -247,8 +247,8 @@ def plot_pairing_timeline(df_meta: pd.DataFrame, plot_config: dict[str, Any] | N
     Parameters
     ----------
     df_meta : pd.DataFrame
-        Metadata DataFrame with pairing columns ('tool_target',
-        'measurement_id_target', 'time_target', 'time_diff_hours').
+        Metadata DataFrame with pairing columns ('target_tool',
+        'target_measurement_id', 'target_time', 'time_diff_hours').
     plot_config : dict[str, Any] | None, optional
         Dictionary bundling plotting options:
         - 'source_tool' (str): Name of the source tool (default 'J4').
@@ -279,7 +279,7 @@ def plot_pairing_timeline(df_meta: pd.DataFrame, plot_config: dict[str, Any] | N
     _check_meta(df_meta, {"tool", "measurement_id", "time"})
     cfg, df = plot_config or {}, df_meta.copy()
     src_tool, tgt_tool = cfg.get("source_tool", "J4"), cfg.get("target_tool", "J5")
-    for col in ("time", "time_target"):
+    for col in ("time", "target_time"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col])
     src_df = df[df["tool"] == src_tool].drop_duplicates("measurement_id").sort_values("time")
@@ -289,15 +289,15 @@ def plot_pairing_timeline(df_meta: pd.DataFrame, plot_config: dict[str, Any] | N
     fig, ax = _prepare_canvas(cfg.get("ax"), figsize=(10, 4.5))
     if not (all_times := pd.concat([src_df["time"], tgt_df["time"]]).dropna()).empty:
         ax.hlines([1.0, 0.0], all_times.min(), all_times.max(), colors="gray", linestyles=":", alpha=0.5)
-    s_tgt = (src_df.dropna(subset=["measurement_id_target", "time_target"])
-             if {"measurement_id_target", "time_target"}.issubset(src_df.columns) else pd.DataFrame())
+    s_tgt = (src_df.dropna(subset=["target_measurement_id", "target_time"])
+             if {"target_measurement_id", "target_time"}.issubset(src_df.columns) else pd.DataFrame())
     paired_src, paired_tgt = (set(s_tgt.get("measurement_id", []).astype(str)),
-                              set(s_tgt.get("measurement_id_target", []).astype(str)))
+                              set(s_tgt.get("target_measurement_id", []).astype(str)))
     for _, r in s_tgt.iterrows():
-        ax.plot([r["time"], r["time_target"]], [1.0, 0.0], color="tab:purple", alpha=0.7, lw=1.5)
+        ax.plot([r["time"], r["target_time"]], [1.0, 0.0], color="tab:purple", alpha=0.7, lw=1.5)
         diff_h = r.get("time_diff_hours")
         ax.annotate(f"{diff_h:.1f}h" if pd.notna(diff_h) else "",
-                    (r["time"] + (r["time_target"] - r["time"]) / 2, 0.5),
+                    (r["time"] + (r["target_time"] - r["time"]) / 2, 0.5),
                     textcoords="offset points", xytext=(0, 4), ha="center", fontsize=8, color="darkmagenta")
     for sub, y_pos, t_name, p_ids, col in [(src_df, 1.0, src_tool, paired_src, "tab:blue"),
                                            (tgt_df, 0.0, tgt_tool, paired_tgt, "tab:green")]:
@@ -668,8 +668,8 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
         cands = ([str(c) for c in (cfg.get("session_splits") or {}).get("test", [])] or
                  (list(meta_orig[meta_orig["split"].astype(str).str.lower() == "test"]["measurement_id"].astype(str))
                   if "split" in meta_orig else []) or
-                 (list(meta_orig.dropna(subset=["measurement_id_target"])["measurement_id"].astype(str))
-                  if "measurement_id_target" in meta_orig else []))
+                 (list(meta_orig.dropna(subset=["target_measurement_id"])["measurement_id"].astype(str))
+                  if "target_measurement_id" in meta_orig else []))
         if not (meas_id := next((c for c in (cands or list(p_ids)) if c in p_ids), None)):
             raise ValueError("No paired source measurements found in df_meta_orig.")
     src_rows = meta_orig[(meta_orig["measurement_id"] == meas_id) & (meta_orig["die"] == die)]
@@ -689,7 +689,7 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
             raise ValueError(f"No regions found for source measurement '{meas_id}', die={die}.")
         fig, axes, axes_to_use = _setup_subplot_grid(len(regions), max_cols=3, figsize=cfg.get("figsize"))
         ax_res = None
-    tgt_m = str(src_rows.iloc[0].get("measurement_id_target", ""))
+    tgt_m = str(src_rows.iloc[0].get("target_measurement_id", ""))
     t_sub = meta_orig[(meta_orig["measurement_id"] == tgt_m) & (meta_orig["die"] == die)]
     p_sub = meta_pred[(meta_pred["source_measurement_id"] == meas_id) & (meta_pred["die"] == die)]
     plotted = 0
@@ -703,7 +703,7 @@ def plot_prediction_comparison(data_original: tuple[np.ndarray, np.ndarray, pd.D
             continue
         tgt_r, pred_r = tgt_m_df.iloc[0], pred_m_df.iloc[0]
         i_s, i_t, i_p = int(reg_src["spectrum_index"]), int(tgt_r["spectrum_index"]), int(pred_r["spectrum_index"])
-        src_t, tgt_t = str(reg_src.get("tool", "Tool")), str(reg_src.get("tool_target", "TargetTool"))
+        src_t, tgt_t = str(reg_src.get("tool", "Tool")), str(reg_src.get("target_tool", "TargetTool"))
         for e, i, lbl, c, ls, lw in [
             (ary_e_orig[i_s], ary_i_orig[i_s], f"Source ({src_t})" if not is_single else f"Source Measured ({src_t})",
              "black", "-", 1.5),
@@ -829,16 +829,16 @@ def plot_regional_spectrum_distribution(
         for r in meta_orig.itertuples()
     }
     src_target_map: dict[int, str] = {
-        int(r.spectrum_index): str(r.measurement_id_target)
+        int(r.spectrum_index): str(r.target_measurement_id)
         for r in meta_orig.itertuples()
-        if hasattr(r, "measurement_id_target") and pd.notna(r.measurement_id_target)
+        if hasattr(r, "target_measurement_id") and pd.notna(r.target_measurement_id)
     }
     src_by_meas_die_reg: dict[tuple[str, int, str], str] = {
         (str(r.measurement_id), int(r.die), str(r.region)): str(
-            r.measurement_id_target
+            r.target_measurement_id
         )
         for r in meta_orig.itertuples()
-        if hasattr(r, "measurement_id_target") and pd.notna(r.measurement_id_target)
+        if hasattr(r, "target_measurement_id") and pd.notna(r.target_measurement_id)
     }
 
     # Group matched triplets (src_idx, tgt_idx, pred_idx) by region
@@ -1446,10 +1446,10 @@ def plot_flux_and_averaged_intensity_vs_time(ary_intensity: np.ndarray, ary_ener
     agg["die_group"] = agg["die"].map(lambda d: die_to_group.get(d, "donut"))
 
     u_tools = list(pd.Series(agg["tool"].dropna().unique()))
-    p_s = df_meta.dropna(subset=["tool_target"]) if "tool_target" in df_meta else pd.DataFrame()
+    p_s = df_meta.dropna(subset=["target_tool"]) if "target_tool" in df_meta else pd.DataFrame()
     s_tool = cfg.get("source_tool") or (p_s["tool"].iloc[0] if not p_s.empty else (u_tools[0] if u_tools else None))
     t_tool = (cfg.get("target_tool") or
-              (p_s["tool_target"].iloc[0] if not p_s.empty else (u_tools[1] if len(u_tools) > 1 else None)))
+              (p_s["target_tool"].iloc[0] if not p_s.empty else (u_tools[1] if len(u_tools) > 1 else None)))
     pal = {**dict(zip(u_tools, ["tab:blue", "tab:green", "tab:purple", "tab:orange"])),
            **(cfg.get("tool_base_colors") or cfg.get("palette") or {})}
     pal.update({t: c for t, c in [(s_tool, "black"), (t_tool, "red")]

@@ -104,8 +104,8 @@ class TestTrainingAndInference(unittest.TestCase):
                 "die": 0,
                 "region": "Al2p",
                 "split": "test",
-                "measurement_id_target": f"NMG_M_H1_{i:05d}",
-                "tool_target": "H1",
+                "target_measurement_id": f"NMG_M_H1_{i:05d}",
+                "target_tool": "H1",
             }
             for i in range(4)
         ])
@@ -219,8 +219,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def setUp(self) -> None:
         self.cond = {
             "die": torch.tensor([0, 1]),
-            "tool_src": torch.tensor([0, 0]),
-            "tool_tgt": torch.tensor([1, 1]),
+            "source_tool_index": torch.tensor([0, 0]),
+            "target_tool_index": torch.tensor([1, 1]),
             "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
             "time_normalized": torch.tensor([[0.2], [-0.2]]),
         }
@@ -342,8 +342,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "tool": "J4",
                 "die": 0,
                 "region": "Al2p",
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
@@ -391,8 +391,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "tool": "J4",
                 "die": 0,
                 "region": "Al2p",
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }
@@ -434,8 +434,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 "tool": "J4",
                 "die": 0,
                 "region": "Al2p",
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.0,
                 "time_normalized": 0.0,
             }
@@ -464,8 +464,8 @@ class TestResNet5L1D(unittest.TestCase):
     def setUp(self) -> None:
         self.cond = {
             "die": torch.tensor([0, 1]),
-            "tool_src": torch.tensor([0, 0]),
-            "tool_tgt": torch.tensor([1, 1]),
+            "source_tool_index": torch.tensor([0, 0]),
+            "target_tool_index": torch.tensor([1, 1]),
             "total_flux_single_die_normalized": torch.tensor([[0.5], [-0.5]]),
             "time_normalized": torch.tensor([[0.2], [-0.2]]),
         }
@@ -533,8 +533,8 @@ class TestResNet5L1D(unittest.TestCase):
                 "tool": "J4",
                 "die": 0,
                 "region": "Al2p",
-                "tool_index": 0,
-                "tool_target_index": 1,
+                "source_tool_index": 0,
+                "target_tool_index": 1,
                 "total_flux_single_die_normalized": 0.1,
                 "time_normalized": -0.1,
             }

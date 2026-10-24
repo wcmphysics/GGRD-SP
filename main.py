@@ -72,20 +72,20 @@ def main() -> None:
     source_tool = str(config["pairing"]["source_tool"])
     df_source_tool = df_meta[df_meta["tool"] == source_tool]
     print(
-        f"Paired sessions: {df_source_tool['measurement_id_target'].dropna().nunique()}"
+        f"Paired sessions: {df_source_tool['target_measurement_id'].dropna().nunique()}"
         f"/{df_source_tool['measurement_id'].nunique()}"
     )
 
     # Establish fixed tool mapping indices
     unique_tools = sorted(
         set(df_meta["tool"].dropna().astype(str).unique())
-        | set(df_meta["tool_target"].dropna().astype(str).unique())
+        | set(df_meta["target_tool"].dropna().astype(str).unique())
     )
     tool_index_mapping = {
         tool_name: tool_index for tool_index, tool_name in enumerate(unique_tools)
     }
-    df_meta["tool_index"] = df_meta["tool"].map(tool_index_mapping)
-    df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_index_mapping)
+    df_meta["source_tool_index"] = df_meta["tool"].map(tool_index_mapping)
+    df_meta["target_tool_index"] = df_meta["target_tool"].map(tool_index_mapping)
     config["training"]["num_tools"] = len(tool_index_mapping)
 
     # Establish fixed region mapping indices

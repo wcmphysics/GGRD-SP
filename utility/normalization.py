@@ -52,7 +52,7 @@ def normalize_spectral_data(
         2D binding energy array of shape (N_total, N_points).
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'measurement_id', 'die', and
-        'spectrum_index' (and 'spectrum_index_target' for
+        'spectrum_index' (and 'target_spectrum_index' for
         'by_regional_max_intensity_of_source').
     config : dict[str, Any] | None, optional
         Configuration dictionary:
@@ -126,16 +126,16 @@ def normalize_spectral_data(
                 ary_norm[idx] = ary_norm[idx] / scale
 
     elif norm_mode == "by_regional_max_intensity_of_source":
-        if "spectrum_index_target" not in df_meta.columns:
+        if "target_spectrum_index" not in df_meta.columns:
             raise ValueError(
                 "normalization_mode='by_regional_max_intensity_of_source' "
-                "requires paired metadata containing 'spectrum_index_target'. "
+                "requires paired metadata containing 'target_spectrum_index'. "
                 "Run pairing before normalization."
             )
-        paired_mask = df_meta["spectrum_index_target"].notna()
+        paired_mask = df_meta["target_spectrum_index"].notna()
         for _, row in df_meta[paired_mask].iterrows():
             src_idx = int(row["spectrum_index"])
-            tgt_idx = int(row["spectrum_index_target"])
+            tgt_idx = int(row["target_spectrum_index"])
             if 0 <= src_idx < n_total and 0 <= tgt_idx < n_total:
                 raw_scale = float(np.max(np.abs(ary_intensity[src_idx])))
                 ctx = f"source spectrum index {src_idx} (region '{row.get('region', 'unknown')}')"

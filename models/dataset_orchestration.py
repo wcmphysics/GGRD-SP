@@ -34,7 +34,7 @@ def create_regional_datasets(
     ----------
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'split', 'region', 'spectrum_index',
-        and 'spectrum_index_target' columns.
+        and 'target_spectrum_index' columns.
     ary_intensity : np.ndarray
         2D array of measured intensities of shape (N_total, N_points).
     ary_energy : np.ndarray
@@ -72,7 +72,7 @@ def create_regional_datasets(
 
     regions = cfg.get("regions")
     if regions is None:
-        paired_mask = df_meta["measurement_id_target"].notna()
+        paired_mask = df_meta["target_measurement_id"].notna()
         if source_tool is not None:
             paired_mask = paired_mask & (df_meta["tool"] == str(source_tool))
         regions = sorted(
@@ -119,12 +119,12 @@ def create_regional_datasets(
 
         cond = (
             (df_meta["region"] == region)
-            & df_meta["measurement_id_target"].notna()
+            & df_meta["target_measurement_id"].notna()
         )
         if source_tool is not None:
             cond = cond & (df_meta["tool"] == str(source_tool))
         if target_tool is not None:
-            cond = cond & (df_meta["tool_target"] == str(target_tool))
+            cond = cond & (df_meta["target_tool"] == str(target_tool))
 
         df_region = df_meta[cond]
         if df_region.empty:
@@ -133,7 +133,7 @@ def create_regional_datasets(
         def _make_pair_ds(split_name: str) -> SpectrumPairDataset:
             df_split = df_region[df_region["split"] == split_name]
             x_idx = df_split["spectrum_index"].astype(int).to_numpy()
-            y_idx = df_split["spectrum_index_target"].astype(int).to_numpy()
+            y_idx = df_split["target_spectrum_index"].astype(int).to_numpy()
             return SpectrumPairDataset(
                 _slice_rows(ary_intensity, x_idx),
                 _slice_rows(ary_intensity, y_idx),
@@ -212,7 +212,7 @@ def create_unified_dataset(
     ----------
     df_meta : pd.DataFrame
         Metadata DataFrame containing 'split', 'region', 'spectrum_index',
-        and 'spectrum_index_target' columns.
+        and 'target_spectrum_index' columns.
     ary_intensity : np.ndarray
         2D array of measured intensities of shape (N_total, N_points).
     ary_energy : np.ndarray
@@ -250,12 +250,12 @@ def create_unified_dataset(
     target_tool = cfg.get("target_tool")
     use_sw = bool(cfg.get("use_sliding_window", False))
 
-    paired_mask = df_meta["measurement_id_target"].notna()
+    paired_mask = df_meta["target_measurement_id"].notna()
     if source_tool is not None:
         paired_mask = paired_mask & (df_meta["tool"] == str(source_tool))
     if target_tool is not None:
         paired_mask = (
-            paired_mask & (df_meta["tool_target"] == str(target_tool))
+            paired_mask & (df_meta["target_tool"] == str(target_tool))
         )
 
     regions = cfg.get("regions")
@@ -290,7 +290,7 @@ def create_unified_dataset(
     def _make_pair_ds(split_name: str) -> SpectrumPairDataset:
         df_split = df_paired[df_paired["split"] == split_name]
         x_idx = df_split["spectrum_index"].astype(int).to_numpy()
-        y_idx = df_split["spectrum_index_target"].astype(int).to_numpy()
+        y_idx = df_split["target_spectrum_index"].astype(int).to_numpy()
         return SpectrumPairDataset(
             _slice_rows(ary_intensity, x_idx),
             _slice_rows(ary_intensity, y_idx),

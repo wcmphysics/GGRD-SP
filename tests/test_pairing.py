@@ -35,34 +35,34 @@ class TestPairing(unittest.TestCase):
         paired_df = pair_source_target_spectra(self.meta_df)
 
         expected_new_cols = {
-            "tool_target",
-            "measurement_id_target",
-            "spectrum_index_target",
-            "time_target",
+            "target_tool",
+            "target_measurement_id",
+            "target_spectrum_index",
+            "target_time",
             "time_diff_hours",
         }
         self.assertTrue(expected_new_cols.issubset(set(paired_df.columns)))
 
-        # Source rows must have tool_target == "J5"
+        # Source rows must have target_tool == "J5"
         src_mask = paired_df["tool"] == "J4"
-        self.assertTrue((paired_df.loc[src_mask, "tool_target"] == "J5").all())
+        self.assertTrue((paired_df.loc[src_mask, "target_tool"] == "J5").all())
 
-        # Non-source rows must have tool_target NA/None
+        # Non-source rows must have target_tool NA/None
         non_src_mask = paired_df["tool"] != "J4"
-        self.assertTrue(paired_df.loc[non_src_mask, "tool_target"].isna().all())
+        self.assertTrue(paired_df.loc[non_src_mask, "target_tool"].isna().all())
 
         # Check strictly 1-to-1 session mapping among paired source sessions
         paired_src_sessions = (
-            paired_df[src_mask & paired_df["measurement_id_target"].notna()][
-                ["measurement_id", "measurement_id_target", "time_diff_hours"]
+            paired_df[src_mask & paired_df["target_measurement_id"].notna()][
+                ["measurement_id", "target_measurement_id", "time_diff_hours"]
             ]
             .drop_duplicates(subset=["measurement_id"])
         )
 
         # No duplicate target sessions
         self.assertEqual(
-            len(paired_src_sessions["measurement_id_target"]),
-            paired_src_sessions["measurement_id_target"].nunique(),
+            len(paired_src_sessions["target_measurement_id"]),
+            paired_src_sessions["target_measurement_id"].nunique(),
             "Violation: multiple source sessions mapped to the same target session!",
         )
 
@@ -72,29 +72,29 @@ class TestPairing(unittest.TestCase):
             "Violation: time difference exceeds threshold!",
         )
 
-        # Verify t7_code_target matches t7_code for all paired source sessions
-        if "t7_code" in paired_df.columns and "t7_code_target" in paired_df.columns:
-            paired_src = paired_df[src_mask & paired_df["measurement_id_target"].notna()]
+        # Verify target_t7_code matches t7_code for all paired source sessions
+        if "t7_code" in paired_df.columns and "target_t7_code" in paired_df.columns:
+            paired_src = paired_df[src_mask & paired_df["target_measurement_id"].notna()]
             self.assertTrue(
-                (paired_src["t7_code"] == paired_src["t7_code_target"]).all(),
+                (paired_src["t7_code"] == paired_src["target_t7_code"]).all(),
                 "Violation: paired source and target measurements have different t7_code!",
             )
 
     def test_die_and_region_consistency(self) -> None:
-        """Verify paired spectrum_index_target preserves exact die and region correspondence."""
+        """Verify paired target_spectrum_index preserves exact die and region correspondence."""
         paired_df = pair_source_target_spectra(self.meta_df)
         paired_rows = paired_df[
-            (paired_df["tool"] == "J4") & paired_df["spectrum_index_target"].notna()
+            (paired_df["tool"] == "J4") & paired_df["target_spectrum_index"].notna()
         ]
 
         self.assertFalse(paired_rows.empty)
 
         for _, src_row in paired_rows.iterrows():
-            tgt_idx = int(src_row["spectrum_index_target"])
+            tgt_idx = int(src_row["target_spectrum_index"])
             tgt_row = self.meta_df.loc[tgt_idx]
 
             self.assertEqual(tgt_row["tool"], "J5")
-            self.assertEqual(tgt_row["measurement_id"], src_row["measurement_id_target"])
+            self.assertEqual(tgt_row["measurement_id"], src_row["target_measurement_id"])
             self.assertEqual(tgt_row["die"], src_row["die"])
             self.assertEqual(tgt_row["region"], src_row["region"])
 
@@ -104,30 +104,30 @@ class TestPairing(unittest.TestCase):
         src_mask = paired_df["tool"] == "J4"
 
         paired_sessions = (
-            paired_df[src_mask & paired_df["measurement_id_target"].notna()][
-                ["measurement_id", "measurement_id_target"]
+            paired_df[src_mask & paired_df["target_measurement_id"].notna()][
+                ["measurement_id", "target_measurement_id"]
             ]
             .drop_duplicates(subset=["measurement_id"])
         )
 
         self.assertEqual(
-            len(paired_sessions["measurement_id_target"]),
-            paired_sessions["measurement_id_target"].nunique(),
+            len(paired_sessions["target_measurement_id"]),
+            paired_sessions["target_measurement_id"].nunique(),
         )
 
     def test_zero_matches_under_tight_threshold(self) -> None:
-        """Verify small threshold produces 0 pairs while maintaining tool_target for source rows."""
+        """Verify small threshold produces 0 pairs while maintaining target_tool for source rows."""
         paired_df = pair_source_target_spectra(
             self.meta_df,
             config={"time_threshold_hours": 0.0001},
         )
         src_mask = paired_df["tool"] == "J4"
 
-        # tool_target must still be 'J5'
-        self.assertTrue((paired_df.loc[src_mask, "tool_target"] == "J5").all())
+        # target_tool must still be 'J5'
+        self.assertTrue((paired_df.loc[src_mask, "target_tool"] == "J5").all())
         # All target measurement IDs should be NA
-        self.assertTrue(paired_df.loc[src_mask, "measurement_id_target"].isna().all())
-        self.assertTrue(paired_df.loc[src_mask, "spectrum_index_target"].isna().all())
+        self.assertTrue(paired_df.loc[src_mask, "target_measurement_id"].isna().all())
+        self.assertTrue(paired_df.loc[src_mask, "target_spectrum_index"].isna().all())
 
     def test_synthetic_collision_scenario(self) -> None:
         """Verify 1-to-1 mapping when two source sessions compete for the same closest target."""
@@ -171,19 +171,19 @@ class TestPairing(unittest.TestCase):
         # Optimal pairing
         paired_opt = pair_source_target_spectra(df, config={"time_threshold_hours": 5.0})
         assigned_targets = (
-            paired_opt[paired_opt["tool"] == "J4"]["measurement_id_target"].dropna().tolist()
+            paired_opt[paired_opt["tool"] == "J4"]["target_measurement_id"].dropna().tolist()
         )
 
         # Target can only be assigned ONCE (1-to-1)
         self.assertEqual(len(assigned_targets), 1)
         self.assertEqual(assigned_targets[0], "M_J5_01")
 
-        # The other source row remains unassigned but retains tool_target = 'J5'
+        # The other source row remains unassigned but retains target_tool = 'J5'
         unassigned_row = paired_opt[
-            (paired_opt["tool"] == "J4") & paired_opt["measurement_id_target"].isna()
+            (paired_opt["tool"] == "J4") & paired_opt["target_measurement_id"].isna()
         ]
         self.assertEqual(len(unassigned_row), 1)
-        self.assertEqual(unassigned_row["tool_target"].iloc[0], "J5")
+        self.assertEqual(unassigned_row["target_tool"].iloc[0], "J5")
 
     def test_invalid_configs_raise(self) -> None:
         """Verify validation errors for bad arguments."""
@@ -208,10 +208,10 @@ class TestPairing(unittest.TestCase):
 
         self.assertEqual(len(paired_df), len(sliced_df))
         self.assertListEqual(list(paired_df.index), list(sliced_df.index))
-        # Ensure source rows have tool_target populated without NaN index mismatch
+        # Ensure source rows have target_tool populated without NaN index mismatch
         src_mask = paired_df["tool"] == "J4"
         if src_mask.any():
-            self.assertTrue((paired_df.loc[src_mask, "tool_target"] == "J5").all())
+            self.assertTrue((paired_df.loc[src_mask, "target_tool"] == "J5").all())
 
     def test_multi_material_isolation(self) -> None:
         """Verify measurements are only paired within the same material."""
@@ -253,8 +253,8 @@ class TestPairing(unittest.TestCase):
 
         # M_J4_A should pair with M_J5_A (same material), NOT M_J5_B (different material)
         src_row = paired[paired["measurement_id"] == "M_J4_A"].iloc[0]
-        self.assertEqual(src_row["measurement_id_target"], "M_J5_A")
-        self.assertEqual(src_row["spectrum_index_target"], 2)
+        self.assertEqual(src_row["target_measurement_id"], "M_J5_A")
+        self.assertEqual(src_row["target_spectrum_index"], 2)
 
     def test_t7_code_isolation(self) -> None:
         """Verify measurements are only paired with target sessions sharing the same t7_code."""
@@ -299,9 +299,9 @@ class TestPairing(unittest.TestCase):
 
         # M_J4_1 must pair with M_J5_1 (same t7_code), NOT M_J5_2 (different t7_code despite closer time)
         src_row = paired[paired["measurement_id"] == "M_J4_1"].iloc[0]
-        self.assertEqual(src_row["measurement_id_target"], "M_J5_1")
-        self.assertEqual(src_row["spectrum_index_target"], 2)
-        self.assertEqual(src_row["t7_code_target"], "T7_001")
+        self.assertEqual(src_row["target_measurement_id"], "M_J5_1")
+        self.assertEqual(src_row["target_spectrum_index"], 2)
+        self.assertEqual(src_row["target_t7_code"], "T7_001")
 
         # When match_t7_code is disabled, closer session M_J5_2 is selected
         paired_unconstrained = pair_source_target_spectra(
@@ -310,7 +310,7 @@ class TestPairing(unittest.TestCase):
         src_unconstrained = paired_unconstrained[
             paired_unconstrained["measurement_id"] == "M_J4_1"
         ].iloc[0]
-        self.assertEqual(src_unconstrained["measurement_id_target"], "M_J5_2")
+        self.assertEqual(src_unconstrained["target_measurement_id"], "M_J5_2")
 
     def test_t7_code_null_handling(self) -> None:
         """Verify measurements with null/unassigned t7_code can pair together."""
@@ -338,7 +338,7 @@ class TestPairing(unittest.TestCase):
         df = pd.DataFrame(data)
         paired = pair_source_target_spectra(df)
         src_row = paired[paired["measurement_id"] == "M_J4_null"].iloc[0]
-        self.assertEqual(src_row["measurement_id_target"], "M_J5_null")
+        self.assertEqual(src_row["target_measurement_id"], "M_J5_null")
 
     def test_timezone_aware_timestamps(self) -> None:
         """Verify pairing and timeline visualization handle timezone-aware timestamps."""
@@ -363,7 +363,7 @@ class TestPairing(unittest.TestCase):
         df = pd.DataFrame(data)
         paired = pair_source_target_spectra(df)
         src_row = paired[paired["tool"] == "J4"].iloc[0]
-        self.assertEqual(src_row["measurement_id_target"], "M2")
+        self.assertEqual(src_row["target_measurement_id"], "M2")
         self.assertAlmostEqual(src_row["time_diff_hours"], 0.0, places=3)
 
         # Ensure plot also works with tz-aware timestamps
@@ -444,11 +444,11 @@ class TestPairingVisualization(unittest.TestCase):
         with self.assertRaises(KeyError):
             plot_pairing_timeline(pd.DataFrame({"dummy": [1, 2]}))
 
-    def test_plot_pairing_timeline_with_string_time_target(self) -> None:
-        """Verify string format in time_target column is cleanly converted without error."""
+    def test_plot_pairing_timeline_with_string_target_time(self) -> None:
+        """Verify string format in target_time column is cleanly converted without error."""
         df_str = self.paired_df.copy()
-        if "time_target" in df_str.columns:
-            df_str["time_target"] = df_str["time_target"].astype(str)
+        if "target_time" in df_str.columns:
+            df_str["target_time"] = df_str["target_time"].astype(str)
         fig, ax = plot_pairing_timeline(df_str, plot_config={"show": False})
         self.assertIsNotNone(fig)
 

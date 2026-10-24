@@ -168,6 +168,7 @@ def assemble_prediction_metadata(
             "spectrum_index": idx,
             "material": getattr(r, "material", "NMG"),
             "tool": target_tool,
+            "target_tool": target_tool,
             "measurement_id": format_predicted_measurement_id(
                 str(r.measurement_id), source_tool, target_tool
             ),
@@ -229,7 +230,7 @@ def predict_spectra(
             m, "shortcut_film_gen", None
         )
         meta = [
-            {**r, "tool_target": target_tool}
+            {**r, "target_tool": target_tool}
             for r in sub_df.to_dict("records")
         ]
         return film_gen.prepare_condition_tensor(

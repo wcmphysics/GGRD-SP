@@ -26,8 +26,8 @@ class TestSplitting(unittest.TestCase):
                             "tool": "J4",
                             "die": die,
                             "region": reg,
-                            "measurement_id_target": meas_tgt,
-                            "tool_target": "J5",
+                            "target_measurement_id": meas_tgt,
+                            "target_tool": "J5",
                         }
                     )
         # Add 1 unpaired measurement session
@@ -39,8 +39,8 @@ class TestSplitting(unittest.TestCase):
                     "tool": "J4",
                     "die": die,
                     "region": "Al2p",
-                    "measurement_id_target": None,
-                    "tool_target": None,
+                    "target_measurement_id": None,
+                    "target_tool": None,
                 }
             )
         self.df_meta = pd.DataFrame(records)

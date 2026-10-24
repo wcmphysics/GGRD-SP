@@ -532,8 +532,8 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
         # Build mock original and predicted datasets
         meta_orig = self.meta_df.copy()
         # Pair measurement M_J4_00000 with M_J5_00000 and M_J4_00001 with M_J5_00001
-        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00000", "measurement_id_target"] = "NMG_M_J5_00000"
-        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00001", "measurement_id_target"] = "NMG_M_J5_00001"
+        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00000", "target_measurement_id"] = "NMG_M_J5_00000"
+        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00001", "target_measurement_id"] = "NMG_M_J5_00001"
 
         meta_pred = meta_orig[meta_orig["tool"] == "J4"].copy()
         meta_pred["source_measurement_id"] = meta_pred["measurement_id"]
@@ -596,7 +596,7 @@ class TestAtomicPercentageSplitStatistics(unittest.TestCase):
     def test_split_statistics_empty_splits_warns(self) -> None:
         """Verify warning when requested split is not present in data."""
         meta_orig = self.meta_df.copy()
-        meta_orig["measurement_id_target"] = "NMG_M_J5_00000"
+        meta_orig["target_measurement_id"] = "NMG_M_J5_00000"
         meta_pred = meta_orig[meta_orig["tool"] == "J4"].copy()
         meta_pred["source_measurement_id"] = meta_pred["measurement_id"]
         meta_pred["measurement_id"] = "NMG_P_J4J5_00000"

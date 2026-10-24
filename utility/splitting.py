@@ -19,7 +19,7 @@ def split_measurement_sessions(
     Parameters
     ----------
     df_meta : pd.DataFrame
-        Metadata DataFrame with 'measurement_id' and 'measurement_id_target'.
+        Metadata DataFrame with 'measurement_id' and 'target_measurement_id'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'method': 'random' (default) or 'direct'.
@@ -48,11 +48,11 @@ def split_measurement_sessions(
     seed: int | None = cfg.get("seed", None)
 
     # Filter paired rows
-    condition = df_meta["measurement_id_target"].notna()
+    condition = df_meta["target_measurement_id"].notna()
     if source_tool is not None:
         condition = condition & (df_meta["tool"] == str(source_tool))
     if target_tool is not None:
-        condition = condition & (df_meta["tool_target"] == str(target_tool))
+        condition = condition & (df_meta["target_tool"] == str(target_tool))
 
     paired_df = df_meta[condition]
     if paired_df.empty:
@@ -62,11 +62,11 @@ def split_measurement_sessions(
 
     # Build 1-to-1 measurement mapping: source_meas_id -> target_meas_id
     meas_pairs = (
-        paired_df[["measurement_id", "measurement_id_target"]]
+        paired_df[["measurement_id", "target_measurement_id"]]
         .drop_duplicates()
     )
     measurement_mapping: dict[str, str] = {
-        str(row["measurement_id"]): str(row["measurement_id_target"])
+        str(row["measurement_id"]): str(row["target_measurement_id"])
         for _, row in meas_pairs.iterrows()
     }
     source_sessions = np.array(sorted(measurement_mapping.keys()))

@@ -29,7 +29,7 @@ class TestVisualizationDispatcher(unittest.TestCase):
                     "spectrum_index": i,
                     "measurement_id": f"M_{i}",
                     "tool": "J4" if i < 2 else "J5",
-                    "tool_target": "J5" if i < 2 else "J4",
+                    "target_tool": "J5" if i < 2 else "J4",
                     "time": f"2026-01-01 0{i}:00:00",
                     "die": 0,
                     "region": "Al2p",

@@ -217,9 +217,9 @@ def pair_source_target_spectra(
     - If t7_code is present, enforces identical t7_code for paired sessions.
     - Adheres to a configurable time threshold (default 12 hours).
     - Appends target pairing information to the metadata DataFrame:
-      'tool_target', 'measurement_id_target', 'spectrum_index_target',
-      'time_target', 'time_diff_hours', and 't7_code_target' (if present).
-    - For source tool rows, 'tool_target' is always populated with the target
+      'target_tool', 'target_measurement_id', 'target_spectrum_index',
+      'target_time', 'time_diff_hours', and 'target_t7_code' (if present).
+    - For source tool rows, 'target_tool' is always populated with the target
       tool name, even if no matching target session was found.
 
     Parameters
@@ -376,19 +376,19 @@ def pair_source_target_spectra(
             col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
 
     idx = result_df.index
-    result_df["tool_target"] = pd.Series(col_tool, index=idx, dtype="object")
-    result_df["measurement_id_target"] = pd.Series(
+    result_df["target_tool"] = pd.Series(col_tool, index=idx, dtype="object")
+    result_df["target_measurement_id"] = pd.Series(
         col_meas, index=idx, dtype="object"
     )
-    result_df["spectrum_index_target"] = pd.Series(
+    result_df["target_spectrum_index"] = pd.Series(
         col_spec, index=idx, dtype="Int64"
     )
-    result_df["time_target"] = pd.to_datetime(pd.Series(col_time, index=idx))
+    result_df["target_time"] = pd.to_datetime(pd.Series(col_time, index=idx))
     result_df["time_diff_hours"] = pd.Series(
         col_diff, index=idx, dtype="float64"
     )
     if "t7_code" in result_df.columns:
-        result_df["t7_code_target"] = pd.Series(
+        result_df["target_t7_code"] = pd.Series(
             col_t7, index=idx, dtype="object"
         )
 

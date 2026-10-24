@@ -67,18 +67,18 @@ def calculate_prediction_metrics(
             & (df_meta_orig["region"] == region)
             & (df_meta_orig["die"] == die)
         ]
-        if src_match.empty or pd.isna(src_match["measurement_id_target"].iloc[0]):
+        if src_match.empty or pd.isna(src_match["target_measurement_id"].iloc[0]):
             continue
 
         src_row = src_match.iloc[0]
-        tgt_meas_id = str(src_row["measurement_id_target"])
+        tgt_meas_id = str(src_row["target_measurement_id"])
 
-        # Use spectrum_index_target directly from df_meta if available
+        # Use target_spectrum_index directly from df_meta if available
         if (
-            "spectrum_index_target" in src_match.columns
-            and pd.notna(src_row["spectrum_index_target"])
+            "target_spectrum_index" in src_match.columns
+            and pd.notna(src_row["target_spectrum_index"])
         ):
-            tgt_idx = int(src_row["spectrum_index_target"])
+            tgt_idx = int(src_row["target_spectrum_index"])
         else:
             tgt_match = df_meta_orig[
                 (df_meta_orig["measurement_id"] == tgt_meas_id)

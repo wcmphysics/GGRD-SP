@@ -52,11 +52,11 @@ class TestOrchestrationPipeline(unittest.TestCase):
         )
         unique_tools = sorted(
             set(df_meta["tool"].dropna().astype(str).unique())
-            | set(df_meta["tool_target"].dropna().astype(str).unique())
+            | set(df_meta["target_tool"].dropna().astype(str).unique())
         )
         tool_map = {tool_name: idx for idx, tool_name in enumerate(unique_tools)}
-        df_meta["tool_index"] = df_meta["tool"].map(tool_map)
-        df_meta["tool_target_index"] = df_meta["tool_target"].map(tool_map)
+        df_meta["source_tool_index"] = df_meta["tool"].map(tool_map)
+        df_meta["target_tool_index"] = df_meta["target_tool"].map(tool_map)
 
         cls.ary_intensity = ary_i
         cls.ary_energy = ary_e
