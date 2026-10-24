@@ -204,6 +204,20 @@ class TestConfigLoader(unittest.TestCase):
             resolved["bayesian_opt"]["l2_bounds"], tuple
         )
 
+    def test_single_source_of_truth_propagation(self) -> None:
+        """Verify global.use_film, global.material, and cost.l2_weight."""
+        raw = load_yaml("config/config.yaml")
+        raw["global"]["use_film"] = True
+        raw["global"]["material"] = "PMG"
+        raw["cost"]["l2_weight"] = 5e-5
+        resolved = resolve_pipeline_config(raw)
+
+        self.assertTrue(resolved["film"]["use_film"])
+        self.assertTrue(resolved["training"]["use_film"])
+        self.assertEqual(resolved["data_generation"]["material"], "PMG")
+        self.assertEqual(resolved["quantification"]["material"], "PMG")
+        self.assertEqual(resolved["training"]["train_config"]["l2_weight"], 5e-5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -442,9 +442,13 @@ def train_model_region(
         model = instantiate_model(model_type, seq_len=seq_len, config=cfg)
     model = model.to(device)
 
-    criterion = cfg.get("criterion") or SpectralLoss(
-        config={**cfg, "l2_weight": l2_weight}
-    )
+    passed_criterion = cfg.get("criterion")
+    if passed_criterion is not None:
+        criterion = copy.copy(passed_criterion)
+        if "l2_weight" in cfg and hasattr(criterion, "l2_weight"):
+            criterion.l2_weight = l2_weight
+    else:
+        criterion = SpectralLoss(config={**cfg, "l2_weight": l2_weight})
     if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
         shortcut_lr = learning_rate * relative_learning_rate
         if shortcut_lr < min_learning_rate:

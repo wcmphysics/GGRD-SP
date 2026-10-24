@@ -18,6 +18,7 @@ materials:
       - Si
 
 global:
+  material: "NMG"
   model_type: "resnet"
   use_sliding_window: false
   use_film: false
@@ -28,7 +29,6 @@ global:
   sample_measurement_id: "NMG_M_J4_00000"
 
 data_generation:
-  material: "NMG"
   regions:
     - "Al2p"
     - "Ti2p"
@@ -135,7 +135,6 @@ noise_plot:
     - "example_spectrum"
 
 film:
-  use_film: false
   encode_die: true
   encode_tool: true
   encode_flux: true
@@ -175,7 +174,6 @@ training:
     learning_rate: 0.0001
     depth: 3
     kernel_size: 9
-    l2_weight: 0.000001
     use_learning_rate_scheduler: true
     learning_rate_reduce_factor: 0.9
     learning_rate_scheduler_patience: 10
@@ -203,7 +201,6 @@ metrics_report:
     - "max_error_percentage"
 
 quantification:
-  material: "NMG"
   rsf_table:
     C1s: 1.000
     Al2p: 0.537

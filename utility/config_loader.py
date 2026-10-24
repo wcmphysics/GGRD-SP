@@ -211,9 +211,18 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
     )
 
-    # 3. Extract regions
-    data_gen = resolved.get("data_generation", {})
-    regions = data_gen.get("regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"])
+    # 3. Extract regions and propagate global material into data_generation
+    data_gen = resolved.setdefault("data_generation", {})
+    material = str(
+        global_cfg.get("material", data_gen.get("material", "NMG"))
+        if isinstance(data_gen, dict)
+        else global_cfg.get("material", "NMG")
+    )
+    if isinstance(data_gen, dict):
+        data_gen.setdefault("material", material)
+        regions = data_gen.get("regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"])
+    else:
+        regions = ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
 
     # 4. Inject into pairing
     pairing = resolved.setdefault("pairing", {})
@@ -267,12 +276,17 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
             bo["l2_bounds"] = tuple(l2_b)
 
     # 10. Inject into training
+    cost = resolved.get("cost", {})
     training = resolved.setdefault("training", {})
     if isinstance(training, dict):
         training.setdefault("model_type", model_type)
         training.setdefault("unified_model", unified_model)
         training.setdefault("use_film", film.get("use_film", use_film))
         training.setdefault("film_config", film)
+        if isinstance(cost, dict) and "l2_weight" in cost:
+            train_cfg = training.setdefault("train_config", {})
+            if isinstance(train_cfg, dict):
+                train_cfg.setdefault("l2_weight", cost["l2_weight"])
 
     # 11. Inject into prediction
     prediction = resolved.setdefault("prediction", {})
@@ -282,8 +296,11 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         prediction.setdefault("film_config", film)
 
     # 12. Inject into metrics_report
-    cost = resolved.get("cost", {})
-    norm_by_max = cost.get("normalized_by_target_max", True)
+    norm_by_max = (
+        cost.get("normalized_by_target_max", True)
+        if isinstance(cost, dict)
+        else True
+    )
     metrics_rep = resolved.setdefault("metrics_report", {})
     if isinstance(metrics_rep, dict):
         metrics_rep.setdefault("normalized_by_target_max", norm_by_max)
@@ -308,7 +325,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     # 14. Inject into quantification and metrics_report
     quant = resolved.setdefault("quantification", {})
     if isinstance(quant, dict):
-        quant.setdefault("material", global_cfg.get("material", "NMG"))
+        quant.setdefault("material", material)
         rsf_tbl = quant.get("rsf_table")
         if rsf_tbl and isinstance(metrics_rep, dict):
             metrics_quant = metrics_rep.setdefault("quantification_config", {})
