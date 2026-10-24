@@ -17,6 +17,7 @@ The codes will be composed of the following key stages
    - the meta data dataframe `df_meta` serves as a body to carry information for all spectra and will be enriched by other information later
 2. Pairing source and target spectra
    - allow users to specify source tool (`source_tool`) and target tool (`target_tool`) in config
+   - allow filtering by material (`pairing.material`): `'all'` pairs within each material separately, or a specific material name pairs only that material
    - for every measurement in the source tool, we find/map a measurement from the target tool
    - this source to target mapping is 1-to-1 (no multiple source measurement is linked to the same target measurement)
    - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accordingly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement)
@@ -176,19 +177,20 @@ The codes will be composed of the following key stages
 1. **Virtual Environment:** Always execute Python commands using the local environment at `\.venv\Scripts\python.exe`.
 2. **File Structure:** 
    - Main python body: `main.py`
-   - Core ML models and utilities belong in the `models/` and `utility/` folders.
+   - Core ML models, utilities, and plotting modules belong in the `models/`, `utility/`, and `visualization/` folders.
 3. **Code Style:** Use strict PEP-8 formatting. Include type hints and concise docstrings for all new functions.
 4. **Autonomous Commits and Pushing:**
    - Once a feature request, plan, or review iteration is approved, autonomously commit and push the changes without asking for separate micro-permissions on commit messages.
    - Follow standard Conventional Commits format (e.g. `feat:`, `fix:`, `test:`, `docs:`) and always display the created commit hashes and messages in your final summary for transparency.
 5. **Commit Size:** When the change is more than 50 lines, try to separate the commits and so one commit is readable and will not be flooded with changes.
 6. **Modular Functionality:** 
-   - Implement new features in a strictly modular fashion inside dedicated modules within `models/` or `utility/`.
+   - Implement new features in a strictly modular fashion inside dedicated modules within `models/`, `utility/`, or `visualization/`.
    - New functionality must be encapsulated as callable functions or classes ready for import by `main.py`, avoiding unsolicited edits or side effects to `main.py` or other existing modules.
    - Try to minimize coupling between modules so editing one is less likely to break the others.
    - Encapsulate internal functions that will not or should not be used by other modules.
+   - Do not leave dead backward-compatibility facade modules when consolidating or decomposing modules.
 7. **Clean Function Interfaces (Parameter Packaging):**
-   - If a function requires 5 or more parameters (>= 5), bundle them into a readable configuration dictionary (e.g., `config: dict[str, Any]`).
+   - If a public function requires 5 or more parameters (>= 5), bundle them into a readable configuration dictionary. Internal helper functions (whose names start with `_`) are exempt and may accept 5 or more parameters.
    - Dictionaries are strongly preferred by default for readability and simplicity. A dedicated dataclass should only be used when there is a clear, tangible advantage over a dictionary (such as complex nested hierarchies or strict validation requirements).
 8. **Existing Code Modifications & Safeguards:**
    - When modifying existing code is required, briefly state what will change in your explanation. Once given the go-ahead, proceed through implementation, testing, and commits without redundant confirmation rounds.
@@ -224,6 +226,13 @@ The codes will be composed of the following key stages
      the invalid key and what canonical keys are expected.
    - Validate required keys directly: missing required keys must raise an
      informative exception specifying which required keys are missing.
+   - Single Source of Truth in `config/config.yaml`: Shared pipeline settings
+     (`material`, `model_type`, `use_sliding_window`, `use_film`,
+     `unified_model`, `source_tool`, `target_tool`, `example_region`,
+     `sample_measurement_id`) must be defined once under `global:` (and
+     `l2_weight` once under `cost:`) and propagated to stage sub-configs via
+     `resolve_pipeline_config`, never duplicated with conflicting defaults in
+     stage sections.
    - Canonical Variable & Column Naming Rules:
       1. Prefix Style for Pairing & Tool Context: Always use `source_*` and
          `target_*` prefixes in paired context (e.g., `source_tool`, `target_tool`,
