@@ -25,6 +25,7 @@ from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
 )
+from utility.preprocessing import preprocess
 from utility.splitting import split_measurement_sessions
 from utility.patching import (
     calculate_window_points,
@@ -70,6 +71,7 @@ __all__ = [
     "pair_source_target_spectra",
     "get_default_pairing_config",
     "split_measurement_sessions",
+    "preprocess",
     # Quantification
     "calculate_shirley_background",
     "determine_shirley_endpoints",
