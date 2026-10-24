@@ -126,6 +126,25 @@ class TestPreprocessing(unittest.TestCase):
         self.assertNotIn("time_standardized", df_out.columns)
         self.assertEqual(len(tool_map), 1)
 
+    def test_preprocess_missing_required_columns(self) -> None:
+        """Verify ValueError is raised when required columns are missing."""
+        for col in ["spectrum_index", "measurement_id", "die", "region", "tool"]:
+            df_missing = self.df_meta.drop(columns=[col])
+            with self.assertRaises(ValueError) as ctx:
+                preprocess(self.ary_intensity, self.ary_energy, df_missing)
+            self.assertIn("missing required columns", str(ctx.exception))
+
+    def test_preprocess_custom_fit_split(self) -> None:
+        """Verify continuous feature standardization uses custom fit_split."""
+        df_out, _, _ = preprocess(
+            self.ary_intensity,
+            self.ary_energy,
+            self.df_meta,
+            config={"fit_split": "val"},
+        )
+        self.assertIn("time_standardized", df_out.columns)
+        self.assertIn("total_flux_single_die_standardized", df_out.columns)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,13 @@ def preprocess(
         - region_index_mapping: Dictionary mapping region names to integer IDs.
     """
     cfg = config or {}
+    required_cols = ["spectrum_index", "measurement_id", "die", "region", "tool"]
+    missing_cols = [c for c in required_cols if c not in df_meta.columns]
+    if missing_cols:
+        raise ValueError(
+            f"df_meta missing required columns for preprocessing: {missing_cols}"
+        )
+
     df_res = df_meta.copy()
 
     # 1. Calculate physical flux and intensity metrics
@@ -87,7 +94,15 @@ def preprocess(
 
     # 4. Standardize continuous metadata features if split is present
     if "split" in df_res.columns and df_res["split"].notna().any():
-        fit_split = str(cfg.get("fit_split", "train"))
+        fit_split = str(
+            cfg.get("fit_split")
+            or (
+                cfg.get("preprocessing", {}).get("fit_split")
+                if isinstance(cfg.get("preprocessing"), dict)
+                else None
+            )
+            or "train"
+        )
         df_res = standardize_metadata_features(
             df_res, config={"fit_split": fit_split}
         )
