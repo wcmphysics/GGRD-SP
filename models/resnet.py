@@ -167,32 +167,26 @@ class ResNet1D(nn.Module):
           conditioning (default False).
     """
 
-    def __init__(
-        self, n_points: int, config: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
         super().__init__()
+        
         cfg = config if config is not None else {}
         self.n_points = int(n_points)
+        
+        # validatet config and inputs
         _validate_required_resnet_keys(cfg)
-        max_allowed_k = validate_common_model_config(
-            cfg,
-            self.n_points,
-            (),
-            ("ResNet1D", ""),
-        )
-
+        max_allowed_k = validate_common_model_config(cfg, self.n_points, (), ("ResNet1D", ""),)
         resnet_channel = validate_positive_int(cfg["resnet_channel"], "resnet_channel")
         kernel_size = validate_odd_kernel_size(cfg["kernel_size"], max_allowed=max_allowed_k)
-
         dropout = float(cfg["dropout"])
         use_batch_norm = bool(cfg["use_batch_norm"])
         padding_mode = str(cfg["padding_mode"])
         self.use_film = bool(cfg["use_film"])
         self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
-
         self.num_layers = _validate_layer_count(int(cfg.get("num_layers", 3)))
         num_hidden = self.num_layers - 1
 
+        # setup neural-layer components (hidden and output CNNs, activation, dropout, film)
         self.hidden_convs, self.hidden_bns = _build_hidden_conv_and_norm_layers(
             num_hidden,
             resnet_channel,
@@ -200,22 +194,13 @@ class ResNet1D(nn.Module):
             padding_mode,
             use_batch_norm,
         )
-        self.conv_out = build_conv1d_layer(
-            (resnet_channel, 1), kernel_size, padding_mode=padding_mode
-        )
-
+        self.conv_out = build_conv1d_layer((resnet_channel, 1), kernel_size, padding_mode=padding_mode)
         self.activation = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.film_gen = (FiLMGenerator([resnet_channel] * num_hidden, config=cfg) if self.use_film else None)
 
-        self.film_gen = (
-            FiLMGenerator([resnet_channel] * num_hidden, config=cfg)
-            if self.use_film
-            else None
-        )
-
-    def _get_film_modulations(
-        self, cond: dict[str, torch.Tensor] | torch.Tensor | None
-    ) -> list[tuple[torch.Tensor, torch.Tensor]] | None:
+    def _get_film_modulations(self, cond: dict[str, torch.Tensor] | torch.Tensor | None
+                             ) -> list[tuple[torch.Tensor, torch.Tensor]] | None:
         """Compute FiLM modulation parameters from metadata condition vector.
 
         Returns None early if FiLM is disabled, condition is absent, or the
@@ -225,22 +210,15 @@ class ResNet1D(nn.Module):
             return None
         return self.film_gen(cond)
 
-    def _forward_delta(
-        self,
-        x: torch.Tensor,
-        film_modulations: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
-    ) -> torch.Tensor:
+    def _forward_delta(self, x: torch.Tensor, 
+                       film_modulations: list[tuple[torch.Tensor, torch.Tensor]] | None = None,) -> torch.Tensor:
         """Execute the convolutional residual branch Delta(x)."""
         hidden_features = x
-        for layer_index, (conv_layer, batch_norm_layer) in enumerate(
-            zip(self.hidden_convs, self.hidden_bns)
-        ):
+        for layer_index, (conv_layer, batch_norm_layer) in enumerate(zip(self.hidden_convs, self.hidden_bns)):
             hidden_features = batch_norm_layer(conv_layer(hidden_features))
             if film_modulations is not None:
                 gamma, beta = film_modulations[layer_index]
-                hidden_features = (
-                    gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1)
-                )
+                hidden_features = (gamma.unsqueeze(-1) * hidden_features + beta.unsqueeze(-1))
             hidden_features = self.dropout(self.activation(hidden_features))
 
         return self.conv_out(hidden_features)
