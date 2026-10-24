@@ -14,12 +14,14 @@ from models.dataset import (
     SpectrumPairDataset,
     SpectrumPatchDataset,
     create_dataloaders,
-)
-from models.dataset_orchestration import (
     create_regional_datasets,
     create_unified_dataset,
 )
 from models.deeplabv3 import DeepLabV3
+from models.factory import (
+    MODEL_CLASS_MAP,
+    instantiate_model,
+)
 from models.film import FiLMGenerator, prepare_film_condition_tensor
 from models.layers import SafeBatchNorm1d, SafeReflectionPad1d
 from models.gp_flux import (
@@ -48,7 +50,6 @@ from models.noise_analysis import (
     trace_gp_hyperparameter_convergence,
 )
 from models.orchestration import (
-    instantiate_model,
     perform_model_training_and_bayesian_optimization,
 )
 from models.resnet import ResNet1D, ResNet5L1D, ResNetScaledShort1D
