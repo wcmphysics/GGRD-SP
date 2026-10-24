@@ -229,6 +229,11 @@ training:
     unet_channel: 16
     deeplabv3_backbone_channel: 32
     deeplabv3_aspp_channel: 32
+    dropout: 0.0
+    use_batch_norm: true
+    padding_mode: "reflect"
+    use_film: false
+    energy_scale_ev: 1000.0
   region_configs:
     Al2p:
       batch_size: 16
