@@ -124,7 +124,7 @@ The codes will be composed of the following key stages
          - 1D Atrous Spatial Pyramid Pooling (ASPP) network capturing multi-scale context through parallel dilated convolutions
    - Feature-wise Linear Modulation (FiLM):
       - dynamically modulates intermediate convolutional feature maps: h' = gamma(c) * h + beta(c)
-      - multi-attribute condition vector c encodes: die index, source tool index, target tool index, standardized measurement time, standardized source die flux, region index, relative intensity, patch energy bounds normalized by `energy_scale_ev`, and material element multi-hot vector without target leakage
+      - multi-attribute condition vector c encodes: die index, source tool index, target tool index, standardized measurement time, standardized source die flux, region index, relative intensity, energy bounds normalized by `energy_scale_ev` (patch bounds when sliding window is used, regional bounds when not), and material element multi-hot vector without target leakage
    - Hyperparameter search via Ax Bayesian Optimization:
       - tunes learning rate, L2 regularization weight, batch size, convolutional kernel size, channel capacities, network depth, and sliding window parameters
       - employs ReduceLROnPlateau or CosineAnnealingLR schedulers and validation early stopping
@@ -188,7 +188,7 @@ The codes will be composed of the following key stages
    - New functionality must be encapsulated as callable functions or classes ready for import by `main.py`, avoiding unsolicited edits or side effects to `main.py` or other existing modules.
    - Try to minimize coupling between modules so editing one is less likely to break the others.
    - Encapsulate internal functions that will not or should not be used by other modules.
-   - Do not leave dead backward-compatibility facade modules when consolidating or decomposing modules.
+   - Do not leave dead backward-compatibility facade modules or intra-module re-exports when consolidating or decomposing modules.
 7. **Clean Function Interfaces (Parameter Packaging):**
    - If a public function requires 5 or more parameters (>= 5), bundle them into a readable configuration dictionary. Internal helper functions (whose names start with `_`) are exempt and may accept 5 or more parameters.
    - Dictionaries are strongly preferred by default for readability and simplicity. A dedicated dataclass should only be used when there is a clear, tangible advantage over a dictionary (such as complex nested hierarchies or strict validation requirements).
