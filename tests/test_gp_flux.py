@@ -36,7 +36,7 @@ class TestSigmoidStepKernel(unittest.TestCase):
         """Verify step kernel evaluation shape, symmetry, and bounds."""
         kern = SigmoidStepKernel(step_time=5.0, steepness=2.0)
         x = torch.tensor([[1.0], [5.0], [9.0]], dtype=torch.float32)
-        k_mat = kern(x, x).evaluate()
+        k_mat = kern(x, x).to_dense()
 
         self.assertEqual(k_mat.shape, (3, 3))
         # Symmetry check
@@ -53,7 +53,7 @@ class TestSigmoidStepKernel(unittest.TestCase):
         """Verify diag=True matches diagonal of full covariance evaluation."""
         kern = SigmoidStepKernel(step_time=4.0, steepness=1.5)
         x = torch.tensor([[2.0], [4.0], [6.0]], dtype=torch.float32)
-        full_diag = torch.diagonal(kern(x, x).evaluate())
+        full_diag = torch.diagonal(kern(x, x).to_dense())
         fast_diag = kern(x, x, diag=True)
         np.testing.assert_allclose(
             fast_diag.detach().numpy(),
@@ -85,7 +85,7 @@ class TestBuildCompositeKernel(unittest.TestCase):
             }
             kernel = build_composite_kernel(cfg)
             x = torch.tensor([[1.0, 0], [5.0, 1]], dtype=torch.float32)
-            cov = kernel(x, x).evaluate()
+            cov = kernel(x, x).to_dense()
             self.assertEqual(cov.shape, (2, 2))
 
     def test_kernel_without_jump(self) -> None:
@@ -98,7 +98,7 @@ class TestBuildCompositeKernel(unittest.TestCase):
         }
         kernel = build_composite_kernel(cfg)
         x = torch.tensor([[1.0, 0.0], [3.0, 1.0]], dtype=torch.float32)
-        cov = kernel(x, x).evaluate()
+        cov = kernel(x, x).to_dense()
         self.assertEqual(cov.shape, (2, 2))
 
 
