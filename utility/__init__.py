@@ -27,6 +27,10 @@ from utility.pairing import (
 )
 from utility.preprocessing import preprocess
 from utility.reporting import format_split_comparison_table
+from utility.shirley import (
+    calculate_shirley_background,
+    determine_shirley_endpoints,
+)
 from utility.splitting import split_measurement_sessions
 from utility.patching import (
     calculate_window_points,
@@ -42,8 +46,6 @@ from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
     calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
-    calculate_shirley_background,
-    determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
     load_rsf_table,

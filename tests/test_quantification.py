@@ -36,6 +36,20 @@ class TestQuantification(unittest.TestCase):
         }
         cls.ary_int, cls.ary_ene, cls.meta_df = generate_pseudo_measurements(config)
 
+    def test_shirley_module_exports(self) -> None:
+        """Verify Shirley routines are exportable from utility.shirley."""
+        from utility.shirley import (
+            calculate_shirley_background as calc_bg,
+            determine_shirley_endpoints as det_ep,
+        )
+        from utility import (
+            calculate_shirley_background as u_calc_bg,
+            determine_shirley_endpoints as u_det_ep,
+        )
+
+        self.assertIs(calc_bg, u_calc_bg)
+        self.assertIs(det_ep, u_det_ep)
+
     def test_shirley_flat_spectrum_zero_area(self) -> None:
         """Verify flat spectrum produces flat background and 0 net area."""
         energy = np.linspace(100, 110, 50)
