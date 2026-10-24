@@ -66,7 +66,12 @@ def preprocess(
     df_res = df_meta.copy()
 
     # 1. Calculate physical flux and intensity metrics
-    df_res = calculate_flux_and_intensity(ary_intensity, ary_energy, df_res)
+    df_res = calculate_flux_and_intensity(
+        ary_intensity,
+        ary_energy,
+        df_res,
+        config={"standardize_die_flux": False},
+    )
 
     # 2. Establish fixed tool index mapping
     source_tools = set(df_res["tool"].dropna().astype(str).unique())

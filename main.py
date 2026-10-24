@@ -82,12 +82,9 @@ def main() -> None:
     # STAGE 4: PRE-PROCESSING
     # =========================================================================
     print("\n=== Stage 4: Pre-processing ===")
-    df_meta, tool_index_mapping, region_index_mapping = utility.preprocess(
-        ary_intensity, ary_energy, df_meta, config={"fit_split": "train"}
+    df_meta, _, _ = utility.preprocess(
+        ary_intensity, ary_energy, df_meta, config=config
     )
-    config["training"]["num_tools"] = len(tool_index_mapping)
-    config["training"]["region_index_mapping"] = region_index_mapping
-    config["prediction"]["region_index_mapping"] = region_index_mapping
 
     print(
         f"Calculated spectral metrics: "

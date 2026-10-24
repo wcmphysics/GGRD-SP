@@ -14,7 +14,7 @@ from utility.evaluation import (
 )
 from utility.flux_and_intensity import (
     calculate_flux_and_intensity,
-    calculate_normalized_time,
+    calculate_standardized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
     standardize_metadata_features,
@@ -64,7 +64,7 @@ __all__ = [
     "get_default_measurement_config",
     # Flux & Intensity
     "calculate_flux_and_intensity",
-    "calculate_normalized_time",
+    "calculate_standardized_time",
     "standardize_metadata_features",
     "integrate_spectral_flux",
     "trapezoid_integral",

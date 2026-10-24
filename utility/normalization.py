@@ -18,22 +18,22 @@ _VALID_NORMALIZATION_MODES = (
 )
 
 
-def _check_and_clamp_scale(
-    scale: float,
+def _clamp_scales(
+    scales: np.ndarray,
     eps: float,
-    context: str,
-) -> float:
-    """Check scale against eps, issuing a warning if scale <= eps."""
-    if scale <= eps:
+    mode: str,
+) -> np.ndarray:
+    """Clamp scale vector to eps and emit a warning if any scale <= eps."""
+    low_mask = scales <= eps
+    if np.any(low_mask):
         warnings.warn(
-            f"Normalization scale {scale:.4e} for {context} is <= eps "
-            f"({eps:.4e}). Intensity values may be near zero or unphysical. "
+            f"Normalization scale <= eps ({eps:.4e}) encountered in "
+            f"{int(np.sum(low_mask))} spectra for mode '{mode}'. "
             "Clamping scale to eps.",
             UserWarning,
             stacklevel=3,
         )
-        return eps
-    return scale
+    return np.maximum(scales, eps).astype(np.float32)[:, None]
 
 
 def normalize_spectral_data(
@@ -89,17 +89,23 @@ def normalize_spectral_data(
         return ary_norm, ary_energy, df_meta
 
     n_total = len(ary_norm)
+    valid_df = df_meta[
+        (df_meta["spectrum_index"] >= 0) & (df_meta["spectrum_index"] < n_total)
+    ]
+    if valid_df.empty:
+        return ary_norm, ary_energy, df_meta
+    idx = valid_df["spectrum_index"].to_numpy(dtype=int)
 
     if norm_mode == "by_total_flux_single_die":
         flux_map = compute_die_total_flux(df_meta, ary_intensity, ary_energy)
-        for _, row in df_meta.iterrows():
-            idx = int(row["spectrum_index"])
-            if 0 <= idx < n_total:
-                key = (str(row["measurement_id"]), int(row["die"]))
-                raw_scale = float(flux_map.get(key, 0.0))
-                ctx = f"session '{row['measurement_id']}', die {row['die']}"
-                scale = _check_and_clamp_scale(raw_scale, eps, ctx)
-                ary_norm[idx] = ary_norm[idx] / scale
+        raw_scales = np.array(
+            [
+                float(flux_map.get((str(m), int(d)), 0.0))
+                for m, d in zip(valid_df["measurement_id"], valid_df["die"])
+            ],
+            dtype=np.float64,
+        )
+        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
 
     elif norm_mode == "by_mean_intensity_single_die":
         if "mean_intensity_single_die" not in df_meta.columns:
@@ -108,22 +114,14 @@ def normalize_spectral_data(
                 "'mean_intensity_single_die' in df_meta. Please run "
                 "calculate_flux_and_intensity before normalization."
             )
-        for _, row in df_meta.iterrows():
-            idx = int(row["spectrum_index"])
-            if 0 <= idx < n_total:
-                raw_scale = float(row["mean_intensity_single_die"])
-                ctx = f"spectrum index {idx} (session '{row['measurement_id']}', die {row['die']})"
-                scale = _check_and_clamp_scale(raw_scale, eps, ctx)
-                ary_norm[idx] = ary_norm[idx] / scale
+        raw_scales = valid_df["mean_intensity_single_die"].to_numpy(
+            dtype=np.float64
+        )
+        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
 
     elif norm_mode == "by_regional_max_intensity":
-        for _, row in df_meta.iterrows():
-            idx = int(row["spectrum_index"])
-            if 0 <= idx < n_total:
-                raw_scale = float(np.max(np.abs(ary_intensity[idx])))
-                ctx = f"spectrum index {idx} (region '{row.get('region', 'unknown')}')"
-                scale = _check_and_clamp_scale(raw_scale, eps, ctx)
-                ary_norm[idx] = ary_norm[idx] / scale
+        raw_scales = np.max(np.abs(ary_intensity[idx]), axis=1)
+        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
 
     elif norm_mode == "by_regional_max_intensity_of_source":
         if "target_spectrum_index" not in df_meta.columns:
@@ -132,15 +130,17 @@ def normalize_spectral_data(
                 "requires paired metadata containing 'target_spectrum_index'. "
                 "Run pairing before normalization."
             )
-        paired_mask = df_meta["target_spectrum_index"].notna()
-        for _, row in df_meta[paired_mask].iterrows():
-            src_idx = int(row["spectrum_index"])
-            tgt_idx = int(row["target_spectrum_index"])
-            if 0 <= src_idx < n_total and 0 <= tgt_idx < n_total:
-                raw_scale = float(np.max(np.abs(ary_intensity[src_idx])))
-                ctx = f"source spectrum index {src_idx} (region '{row.get('region', 'unknown')}')"
-                scale = _check_and_clamp_scale(raw_scale, eps, ctx)
-                ary_norm[src_idx] = ary_norm[src_idx] / scale
-                ary_norm[tgt_idx] = ary_norm[tgt_idx] / scale
+        paired = valid_df[valid_df["target_spectrum_index"].notna()]
+        paired = paired[
+            (paired["target_spectrum_index"] >= 0)
+            & (paired["target_spectrum_index"] < n_total)
+        ]
+        if not paired.empty:
+            src_idx = paired["spectrum_index"].to_numpy(dtype=int)
+            tgt_idx = paired["target_spectrum_index"].to_numpy(dtype=int)
+            raw_scales = np.max(np.abs(ary_intensity[src_idx]), axis=1)
+            scales = _clamp_scales(raw_scales, eps, norm_mode)
+            ary_norm[src_idx] /= scales
+            ary_norm[tgt_idx] /= scales
 
     return ary_norm, ary_energy, df_meta

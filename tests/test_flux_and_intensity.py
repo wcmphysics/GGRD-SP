@@ -9,7 +9,7 @@ import pandas as pd
 
 from utility.flux_and_intensity import (
     calculate_flux_and_intensity,
-    calculate_normalized_time,
+    calculate_standardized_time,
     compute_die_total_flux,
     integrate_spectral_flux,
     standardize_metadata_features,
@@ -347,10 +347,10 @@ class TestCalculateFlux(unittest.TestCase):
         self.assertTrue((meta_with_flux["total_flux_single_region"] > 0).all())
 
 
-class TestCalculateNormalizedTime(unittest.TestCase):
-    """Test suite for calculate_normalized_time in utility.flux."""
+class TestCalculateStandardizedTime(unittest.TestCase):
+    """Test suite for calculate_standardized_time in utility.flux."""
 
-    def test_normalized_time_across_unique_measurements(self) -> None:
+    def test_standardized_time_across_unique_measurements(self) -> None:
         """Verify z-score standardization across unique measurement sessions."""
         # m1 has 2 rows, m2 has 1 row -> unique times are 00:00 and 02:00
         # mean = 01:00, diff = [-3600s, +3600s], std = 3600s -> [-1.0, +1.0]
@@ -363,7 +363,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
                 "2026-01-01 02:00:00",
             ],
         })
-        res = calculate_normalized_time(meta)
+        res = calculate_standardized_time(meta)
         self.assertIn("time_standardized", res.columns)
         np.testing.assert_allclose(
             res["time_standardized"].to_numpy(),
@@ -379,7 +379,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             "time": ["2026-01-01 00:00:00", "2026-01-01 00:00:00"],
         })
         with self.assertWarns(UserWarning):
-            res = calculate_normalized_time(meta)
+            res = calculate_standardized_time(meta)
         np.testing.assert_allclose(
             res["time_standardized"].to_numpy(), [0.0, 0.0], atol=1e-6
         )
@@ -391,7 +391,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             "time": ["2026-01-01 00:00:00", "2026-01-02 00:00:00"],
         })
         with self.assertRaises(KeyError):
-            calculate_normalized_time(meta)
+            calculate_standardized_time(meta)
 
     def test_invalid_fit_split_raises_value_error(self) -> None:
         """Verify ValueError is raised when fit_split is absent from
@@ -403,22 +403,22 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             "time": ["2026-01-01 00:00:00", "2026-01-02 00:00:00"],
         })
         with self.assertRaises(ValueError):
-            calculate_normalized_time(meta, config={"fit_split": "train"})
+            calculate_standardized_time(meta, config={"fit_split": "train"})
 
     def test_empty_and_invalid_time_inputs(self) -> None:
         """Verify empty DataFrame handling and ValueError on invalid inputs."""
         empty = pd.DataFrame(columns=["measurement_id", "time"])
-        res = calculate_normalized_time(empty)
+        res = calculate_standardized_time(empty)
         self.assertIn("time_standardized", res.columns)
         self.assertEqual(len(res), 0)
 
         with self.assertRaises(ValueError):
-            calculate_normalized_time(
+            calculate_standardized_time(
                 pd.DataFrame({"measurement_id": ["m1"], "split": ["train"]})
             )
 
         with self.assertRaises(ValueError):
-            calculate_normalized_time(
+            calculate_standardized_time(
                 pd.DataFrame({
                     "measurement_id": ["m1"],
                     "split": ["train"],
@@ -427,7 +427,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             )
 
         with self.assertRaises(ValueError):
-            calculate_normalized_time(
+            calculate_standardized_time(
                 pd.DataFrame({
                     "measurement_id": [None],
                     "split": ["train"],
@@ -436,7 +436,7 @@ class TestCalculateNormalizedTime(unittest.TestCase):
             )
 
         with self.assertRaises(ValueError):
-            calculate_normalized_time(
+            calculate_standardized_time(
                 pd.DataFrame({
                     "measurement_id": ["m1"],
                     "split": ["train"],
@@ -519,8 +519,8 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
         test_flux = res[res["split"] == "test"]["total_flux_single_die_standardized"].to_numpy()
         np.testing.assert_allclose(test_flux, [7.0, 9.0], atol=1e-5)
 
-    def test_calculate_normalized_time_with_fit_split(self) -> None:
-        """Verify calculate_normalized_time fits timestamps strictly on
+    def test_calculate_standardized_time_with_fit_split(self) -> None:
+        """Verify calculate_standardized_time fits timestamps strictly on
         train sessions.
         """
         df = pd.DataFrame({
@@ -532,7 +532,7 @@ class TestStandardizeMetadataFeatures(unittest.TestCase):
                 "2026-01-05 00:00:00",
             ],
         })
-        res = calculate_normalized_time(df, config={"fit_split": "train"})
+        res = calculate_standardized_time(df, config={"fit_split": "train"})
         # Train timestamps: day 0 and day 2 -> mean day 1.
         # Diffs are -1 day and +1 day; std across train is 1 day (86400s).
         train_t = res[res["split"] == "train"]["time_standardized"].to_numpy()
