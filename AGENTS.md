@@ -26,10 +26,10 @@ The codes will be composed of the following key stages
    - this source to target mapping is 1-to-1 (no multiple source measurement is linked to the same target measurement)
    - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accordingly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement)
    - the time difference between source and target measurement should be lower than a user-specified threshold (`time_threshold_hours`, default to 12 hours), utilizing optimal bipartite matching or greedy temporal matching
-   - pairing information is stored in the meta data dataframe (add columns like `tool_target`, `measurement_id_target`, `spectrum_index_target`, `time_target`, `time_diff_hours`)
+   - pairing information is stored in the meta data dataframe (add columns like `target_tool`, `target_measurement_id`, `target_spectrum_index`, `target_time`, `time_diff_hours`, `target_t7_code`)
    - establish canonical zero-based integer indexing for neural network categorical conditioning:
-      - `tool_index`: integer index mapping for source tool
-      - `tool_target_index`: integer index mapping for target tool
+      - `source_tool_index`: integer index mapping for source tool
+      - `target_tool_index`: integer index mapping for target tool
       - `region_index`: integer index mapping for each regional spectrum
 3. Normalization of spectral data
    - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
@@ -51,7 +51,7 @@ The codes will be composed of the following key stages
    - configurable seed for random splitting (default to None)
    - split for direct assignment takes in a dictionary with keys `train`, `val`, and `test` and their values are a list of measurement ids. Check must be made to verify one measurement only appears in one group and the 3 groups take all paired measurements
    - output a session partition dictionary `session_splits` and dictionary `measurement_mapping` with keys being the measurement id from the paired source tool and values being the corresponding paired measurement id from target tool
-   - metadata feature standardization (`standardize_metadata_features`): standardizes continuous conditioning variables (`time_normalized`, `total_flux_single_die_standardized`) with mean and standard deviation fitted strictly on the `train` split to prevent information leakage
+   - metadata feature standardization (`standardize_metadata_features`): standardizes continuous conditioning variables (`time_standardized`, `total_flux_single_die_standardized`) with mean and standard deviation fitted strictly on the `train` split to prevent information leakage
 5. Gaussian Process die flux modeling
    - need a dedicated config for this part (`gp_flux`)
    - models tool intensity drift, aging, and baseline shifts in die flux over time using exact Gaussian Process regression (GPyTorch)
@@ -59,7 +59,7 @@ The codes will be composed of the following key stages
       1. continuous temporal covariance (RBF or Matérn kernel) capturing smooth drift
       2. learnable sigmoid step kernel (`SigmoidStepKernel`): k(t1, t2) = sigma_jump^2 * sigmoid(s * (t1 - t0)) * sigmoid(s * (t2 - t0)), with learnable transition time t0 and steepness s capturing abrupt tool maintenance baseline shifts
       3. categorical die index covariance modeling inter-die spatial correlations across the sample holder
-   - evaluates Mean Absolute Error (MAE) and Mean Absolute Percentage Error (MAPE%) across train, val, and test partitions for source and target tools
+   - evaluates Mean Absolute Error (MAE) and Mean Absolute Percentage Error (`mape_train_percentage`, `mape_val_percentage`, `mape_test_percentage`) across train, val, and test partitions for source and target tools
 6. Data set and data loader definition (with sliding window patch augmentation)
    - define dataset and data loader in this part
    - supports two equal first-class paradigms for dataset organization:
@@ -136,8 +136,8 @@ The codes will be composed of the following key stages
    - dedicated configuration section (`metrics_report`)
    - computes numerical metrics comparing predicted spectra against ground truth target spectra per sample and aggregated per region:
       - Normalized MSE and Raw RMSE
-      - Peak Relative Error % (`peak_err%`): relative error at the ground truth peak maximum location
-      - Maximum Absolute Error % (`max%err`): maximum point-wise relative deviation across the regional spectrum
+      - Peak Relative Error Percentage (`peak_error_percentage`): relative error percentage at the ground truth peak maximum location
+      - Maximum Absolute Error Percentage (`max_error_percentage`): maximum point-wise relative percentage deviation across the regional spectrum
    - formats structured side-by-side comparison tables across train and test partitions
 12. Calculation of atomic percentage for elements by area integration (Quantification)
    - dedicated configuration section (`quantification`)
@@ -148,7 +148,7 @@ The codes will be composed of the following key stages
    - integrate net peak areas via numerical trapezoidal integration after background removal
    - relative sensitivity factors (RSF) are read strictly from `quantification.rsf_table` in `config/config.yaml`
    - normalize scaled areas row-wise to 100% atomic percentage per measurement session and die
-   - evaluate Mean Absolute Error (MAE) and base MAE between source, target, and predicted atomic percentages across splits and elements
+   - evaluate Mean Absolute Error (MAE) and base MAE between source, target, and predicted atomic percentages (`source_atomic_percentage`, `target_atomic_percentage`, `predicted_atomic_percentage`) across splits and elements
 13. Diagnostic visualization dispatching
    - dedicated configuration section (`visualization`)
    - centralized dispatching module driven by boolean toggles in YAML config
@@ -222,6 +222,25 @@ The codes will be composed of the following key stages
      the invalid key and what canonical keys are expected.
    - Validate required keys directly: missing required keys must raise an
      informative exception specifying which required keys are missing.
+   - Canonical Variable & Column Naming Rules:
+      1. Prefix Style for Pairing & Tool Context: Always use `source_*` and
+         `target_*` prefixes in paired context (e.g., `source_tool`, `target_tool`,
+         `source_tool_index`, `target_tool_index`, `target_measurement_id`,
+         `target_spectrum_index`, `target_time`, `target_t7_code`). Do not use
+         ambiguous suffix styles like `tool_target` or `measurement_id_target`.
+      2. Feature Standardization: Continuous metadata features standardized via
+         z-score must be named with `*_standardized` (e.g., `time_standardized`,
+         `total_flux_single_die_standardized`), reserving `normalize_*`
+         strictly for spectral intensity scaling.
+      3. Prediction Variables: Use full `predicted_*` instead of abbreviated
+         `pred_` (e.g., `predicted_flux`, `predicted_atomic_percentage`,
+         `predicted_measurement_id`, `predicted_mean`, `predicted_std`).
+      4. Percentage Metrics: Always use full `percentage` instead of `%` or
+         `_pct` in column names and metric dictionary keys (e.g.,
+         `peak_error_percentage`, `max_error_percentage`, `mape_train_percentage`,
+         `source_atomic_percentage`, `target_atomic_percentage`,
+         `predicted_atomic_percentage`, `diff_atomic_percentage`,
+         `abs_diff_atomic_percentage`, `base_abs_diff_atomic_percentage`).
 
 # Code Modification Rules (CRITICAL - Strictly Enforced)
 1. **Surgical Edits Only (Minimal Diff)**:
