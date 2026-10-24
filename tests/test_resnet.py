@@ -14,8 +14,21 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, create_dataloaders
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.resnet import ResNet1D, ResNet5L1D, ResNetScaledShort1D
+from models.resnet import REQUIRED_RESNET_KEYS, ResNet1D, ResNet5L1D, ResNetScaledShort1D
 from models.trainer import evaluate, instantiate_model, train_model_region
+
+_DEFAULT_RESNET_FIXED_CONFIG = {
+    "dropout": 0.0,
+    "use_batch_norm": True,
+    "padding_mode": "reflect",
+    "use_film": False,
+}
+
+_DEFAULT_RESNET_TEST_CONFIG = {
+    "resnet_channel": 16,
+    "kernel_size": 5,
+    **_DEFAULT_RESNET_FIXED_CONFIG,
+}
 
 
 class TestResNet1D(unittest.TestCase):
@@ -23,14 +36,15 @@ class TestResNet1D(unittest.TestCase):
 
     def test_cnn_forward_shape_2d_raises(self) -> None:
         """Test that 2D tensor input raises ValueError."""
-        model = ResNet1D(n_points=100, config={"resnet_channel": 16, "kernel_size": 5})
+        model = ResNet1D(n_points=100, config=_DEFAULT_RESNET_TEST_CONFIG)
         x = torch.randn(8, 100)
         with self.assertRaises(ValueError):
             model(x)
 
     def test_cnn_forward_shape_3d(self) -> None:
         """Test forward pass with 3D tensor input (batch, 1, n_points)."""
-        model = ResNet1D(n_points=80, config={"resnet_channel": 8, "kernel_size": 3})
+        cfg = {**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3}
+        model = ResNet1D(n_points=80, config=cfg)
         x = torch.randn(4, 1, 80)
         out = model(x)
         self.assertEqual(out.shape, (4, 1, 80))
@@ -40,19 +54,45 @@ class TestResNet1D(unittest.TestCase):
         raises ValueError.
         """
         with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={"kernel_size": 4})
+            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 4})
         with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={"kernel_size": 0})
+            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 0})
         with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={"kernel_size": -3})
+            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": -3})
         with self.assertRaises(ValueError):
-            ResNet1D(n_points=5, config={"kernel_size": 7})
+            ResNet1D(n_points=5, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 7})
+
+    def test_missing_required_keys_raises_key_error(self) -> None:
+        """Test that omitting required configuration keys raises KeyError."""
+        with self.assertRaises(KeyError):
+            ResNet1D(n_points=50, config=None)
+        with self.assertRaises(KeyError):
+            ResNet1D(n_points=50, config={})
+        for key in REQUIRED_RESNET_KEYS:
+            incomplete_cfg = {
+                k: v for k, v in _DEFAULT_RESNET_TEST_CONFIG.items() if k != key
+            }
+            with self.assertRaises(KeyError):
+                ResNet1D(n_points=50, config=incomplete_cfg)
+
+    def test_extra_keys_in_config_are_ignored(self) -> None:
+        """Test that extra non-architecture keys are safely ignored."""
+        cfg = {
+            **_DEFAULT_RESNET_TEST_CONFIG,
+            "epochs": 100,
+            "batch_size": 16,
+            "learning_rate": 1e-4,
+            "arbitrary_extra_param": "ignored_value",
+        }
+        model = ResNet1D(n_points=50, config=cfg)
+        self.assertIsInstance(model, ResNet1D)
 
     def test_l2_regularization_targets_weights_only(self) -> None:
         """Test that L2 weight penalty only targets conv weights, not biases or
         BatchNorm.
         """
-        model = ResNet1D(n_points=50, config={"resnet_channel": 8, "kernel_size": 3})
+        cfg = {**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3}
+        model = ResNet1D(n_points=50, config=cfg)
         l2_reg = model.get_l2_regularization()
         self.assertIsInstance(l2_reg, torch.Tensor)
         self.assertGreater(l2_reg.item(), 0.0)
@@ -117,7 +157,10 @@ class TestTrainingAndInference(unittest.TestCase):
         of l2_weight.
         """
         _, val_loader = create_dataloaders(self.train_ds, self.val_ds, config={"batch_size": 4})
-        model = ResNet1D(n_points=50, config={"resnet_channel": 8, "kernel_size": 3})
+        model = ResNet1D(
+            n_points=50,
+            config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3},
+        )
 
         crit_zero_l2 = SpectralLoss({"l2_weight": 0.0})
         crit_large_l2 = SpectralLoss({"l2_weight": 10.0})
@@ -133,6 +176,7 @@ class TestTrainingAndInference(unittest.TestCase):
             self.train_ds,
             self.val_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet",
                 "epochs": 5,
                 "batch_size": 8,
@@ -169,6 +213,7 @@ class TestTrainingAndInference(unittest.TestCase):
             self.train_ds,
             self.val_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet",
                 "epochs": 2,
                 "batch_size": 8,
@@ -196,6 +241,7 @@ class TestTrainingAndInference(unittest.TestCase):
             self.train_ds,
             self.val_ds,
             config={
+                **_DEFAULT_RESNET_FIXED_CONFIG,
                 "model_type": "resnet",
                 "num_trials": 2,
                 "epochs_per_trial": 2,
@@ -227,14 +273,18 @@ class TestResNetScaledShort1D(unittest.TestCase):
 
     def test_requires_use_film_true(self) -> None:
         """Verify ValueError when use_film is not explicitly enabled."""
-        with self.assertRaises(ValueError):
+        with self.assertRaises(KeyError):
             ResNetScaledShort1D(n_points=50)
         with self.assertRaises(ValueError):
-            ResNetScaledShort1D(n_points=50, config={"use_film": False})
+            ResNetScaledShort1D(
+                n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": False}
+            )
 
     def test_requires_cond_in_forward(self) -> None:
         """Verify ValueError when forward is called without metadata dict."""
-        model = ResNetScaledShort1D(n_points=50, config={"use_film": True})
+        model = ResNetScaledShort1D(
+            n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": True}
+        )
         x = torch.randn(2, 1, 50)
         with self.assertRaises(ValueError):
             model(x)
@@ -247,7 +297,12 @@ class TestResNetScaledShort1D(unittest.TestCase):
         """Verify initial shortcut scaling factor is exactly 1.0."""
         model = ResNetScaledShort1D(
             n_points=50,
-            config={"use_film": True, "resnet_channel": 8, "kernel_size": 3},
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "use_film": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
         )
         x = torch.randn(2, 1, 50)
         out = model(x, self.cond)
@@ -260,7 +315,12 @@ class TestResNetScaledShort1D(unittest.TestCase):
         """Verify warning is emitted and gamma_out clamped when negative."""
         model = ResNetScaledShort1D(
             n_points=50,
-            config={"use_film": True, "resnet_channel": 8, "kernel_size": 3},
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "use_film": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+            },
         )
         with torch.no_grad():
             model.shortcut_film_gen.gamma_projs[0].bias.fill_(-5.0)
@@ -283,6 +343,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
         model_no_internal = ResNetScaledShort1D(
             n_points=50,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
                 "film_internal_layers": False,
                 "resnet_channel": 8,
@@ -299,6 +360,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
         model_with_internal = ResNetScaledShort1D(
             n_points=50,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
                 "film_internal_layers": True,
                 "resnet_channel": 8,
@@ -314,6 +376,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
         model = ResNetScaledShort1D(
             n_points=30,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
                 "use_sliding_window": True,
                 "encode_energy": True,
@@ -327,7 +390,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_instantiate_model_registration(self) -> None:
         """Verify instantiate_model supports 'resnet_scaled_short'."""
         model = instantiate_model(
-            "resnet_scaled_short", 50, {"use_film": True}
+            "resnet_scaled_short", 50, {**_DEFAULT_RESNET_TEST_CONFIG, "use_film": True}
         )
         self.assertIsInstance(model, ResNetScaledShort1D)
 
@@ -356,6 +419,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 train_ds,
                 train_ds,
                 config={
+                    **_DEFAULT_RESNET_TEST_CONFIG,
                     "model_type": "resnet_scaled_short",
                     "use_film": True,
                     "relative_learning_rate": -0.5,
@@ -366,6 +430,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
             train_ds,
             train_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet_scaled_short",
                 "use_film": True,
                 "epochs": 2,
@@ -403,6 +468,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
             train_ds,
             train_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet_scaled_short",
                 "use_film": True,
                 "use_sliding_window": True,
@@ -448,6 +514,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 train_ds,
                 train_ds,
                 config={
+                    **_DEFAULT_RESNET_TEST_CONFIG,
                     "model_type": "resnet_scaled_short",
                     "use_film": True,
                     "learning_rate": 1e-3,
@@ -474,7 +541,7 @@ class TestResNet5L1D(unittest.TestCase):
         """Verify 5 Conv1d layers and 4 hidden BatchNorm layers."""
         model = ResNet5L1D(
             n_points=50,
-            config={"resnet_channel": 16, "kernel_size": 3},
+            config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 16, "kernel_size": 3},
         )
         def _get_conv(layer: nn.Module) -> nn.Conv1d:
             return next(m for m in layer.modules() if isinstance(m, nn.Conv1d))
@@ -493,7 +560,7 @@ class TestResNet5L1D(unittest.TestCase):
         """Verify forward pass output shape matches input (B, 1, N)."""
         model = ResNet5L1D(
             n_points=40,
-            config={"resnet_channel": 8, "kernel_size": 3},
+            config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3},
         )
         x = torch.randn(4, 1, 40)
         out = model(x)
@@ -504,6 +571,7 @@ class TestResNet5L1D(unittest.TestCase):
         model = ResNet5L1D(
             n_points=40,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
                 "kernel_size": 3,
                 "use_film": True,
@@ -517,8 +585,8 @@ class TestResNet5L1D(unittest.TestCase):
 
     def test_instantiate_model_resnet_5l(self) -> None:
         """Verify instantiate_model supports 'resnet_5L' and 'resnet_5l'."""
-        m1 = instantiate_model("resnet_5L", 50)
-        m2 = instantiate_model("resnet_5l", 50)
+        m1 = instantiate_model("resnet_5L", 50, _DEFAULT_RESNET_TEST_CONFIG)
+        m2 = instantiate_model("resnet_5l", 50, _DEFAULT_RESNET_TEST_CONFIG)
         self.assertIsInstance(m1, ResNet5L1D)
         self.assertIsInstance(m2, ResNet5L1D)
 
@@ -545,6 +613,7 @@ class TestResNet5L1D(unittest.TestCase):
             train_ds,
             train_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet_5L",
                 "use_film": True,
                 "epochs": 2,
@@ -572,6 +641,7 @@ class TestResNet5L1D(unittest.TestCase):
             train_ds,
             train_ds,
             config={
+                **_DEFAULT_RESNET_FIXED_CONFIG,
                 "model_type": "resnet_5L",
                 "num_trials": 2,
                 "epochs_per_trial": 2,
