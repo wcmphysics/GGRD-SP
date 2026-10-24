@@ -11,6 +11,8 @@ from visualization.plot_evaluation import (
     plot_regional_spectrum_distribution,
 )
 from visualization.plot_noise_analysis import (
+    plot_denoise_atomic_percentage_mae,
+    plot_denoise_spectrum_comparison,
     plot_gp_hyperparameter_convergence,
     plot_spectral_noise_analysis,
 )
@@ -36,6 +38,8 @@ from visualization.plot_training import plot_training_history
 __all__ = [
     "DEFAULT_PLOT_TOGGLES",
     "dispatch_visualizations",
+    "plot_denoise_atomic_percentage_mae",
+    "plot_denoise_spectrum_comparison",
     "plot_gp_hyperparameter_convergence",
     "plot_spectral_noise_analysis",
     "plot_atomic_percentage_distributions",

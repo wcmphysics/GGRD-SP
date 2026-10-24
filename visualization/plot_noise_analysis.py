@@ -1,4 +1,4 @@
-"""Plots for the Gaussian-process spectral noise analysis results."""
+"""Plots for spectral noise analysis and denoising comparisons."""
 
 from __future__ import annotations
 
@@ -8,9 +8,16 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib.figure import Figure
 
-from models.noise_analysis import trace_gp_hyperparameter_convergence
+from denoise import trace_gp_hyperparameter_convergence
+from visualization.common import (
+    _finalize_plot,
+    _finish_fig,
+    _prepare_canvas,
+    _setup_subplot_grid,
+)
 
 AVAILABLE_NOISE_PLOTS: tuple[str, ...] = (
     "noise_vs_time",
@@ -386,3 +393,252 @@ def plot_gp_hyperparameter_convergence(
         plt.show()
 
     return fig
+
+
+def plot_denoise_spectrum_comparison(
+    ary_energy: np.ndarray,
+    intensity_pair: tuple[np.ndarray, np.ndarray],
+    df_meta: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[Figure, Any]:
+    """Plot non-denoised vs. denoised spectra across all regions for a session.
+
+    Renders non-denoised spectra in solid black and denoised spectra in dashed
+    dark pink across all regions of a selected measurement session (defaulting
+    to the first available training measurement).
+
+    Parameters
+    ----------
+    ary_energy : np.ndarray
+        2D array of binding energies in eV of shape (N_total, N_points).
+    intensity_pair : tuple[np.ndarray, np.ndarray]
+        Tuple of (ary_intensity_non_denoised, ary_intensity_denoised).
+    df_meta : pd.DataFrame
+        Metadata DataFrame containing 'spectrum_index', 'measurement_id',
+        'die', and 'region'.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary of plotting options:
+        - 'measurement_id' (str | None): Session to plot (defaults to first
+          available 'train' session).
+        - 'die' (int): Die index to plot (default 0).
+        - 'invert_x' (bool): Invert energy axis per XPS convention (default
+          True).
+        - 'save_path' (str | None): Optional file path to save the figure.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[Figure, Any]
+        Tuple of (Figure, Axes array).
+    """
+    if not (isinstance(intensity_pair, tuple) and len(intensity_pair) == 2):
+        raise ValueError(
+            "intensity_pair must be a 2-tuple of "
+            "(ary_intensity_non_denoised, ary_intensity_denoised)."
+        )
+    ary_non_denoised, ary_denoised = intensity_pair
+    if df_meta.empty:
+        raise ValueError("df_meta is empty.")
+
+    cfg = plot_config or {}
+    die = int(cfg.get("die", 0))
+    subset_die = df_meta[df_meta["die"] == die]
+    if subset_die.empty:
+        raise ValueError(f"No spectra found in df_meta for die={die}.")
+
+    meas_id = cfg.get("measurement_id")
+    if meas_id is None:
+        if "split" in subset_die.columns:
+            train_rows = subset_die[subset_die["split"] == "train"]
+            if not train_rows.empty:
+                meas_id = str(train_rows["measurement_id"].iloc[0])
+        if meas_id is None:
+            meas_id = str(subset_die["measurement_id"].iloc[0])
+
+    session_rows = subset_die[subset_die["measurement_id"] == str(meas_id)]
+    if session_rows.empty:
+        raise ValueError(
+            f"No spectra found for measurement_id={meas_id!r}, die={die}."
+        )
+
+    regions = list(session_rows["region"].unique())
+    fig, axes, axes_flat = _setup_subplot_grid(
+        len(regions), max_cols=3, col_w=5.0, row_h=3.8
+    )
+
+    for idx, region_name in enumerate(regions):
+        ax = axes_flat[idx]
+        reg_row = session_rows[session_rows["region"] == region_name].iloc[0]
+        spec_idx = int(reg_row["spectrum_index"])
+        energy_grid = ary_energy[spec_idx]
+        raw_curve = ary_non_denoised[spec_idx]
+        den_curve = ary_denoised[spec_idx]
+
+        ax.plot(
+            energy_grid,
+            raw_curve,
+            color="black",
+            linestyle="-",
+            linewidth=1.5,
+            label="Non-denoised",
+        )
+        ax.plot(
+            energy_grid,
+            den_curve,
+            color="#C71585",
+            linestyle="--",
+            linewidth=1.7,
+            label="Denoised",
+        )
+        ax.legend(loc="best", fontsize="x-small")
+        _finalize_plot(
+            ax,
+            title=f"Region: {region_name}",
+            xlabel="Binding Energy (eV)",
+            ylabel="Intensity (counts / a.u.)",
+            invert_x=bool(cfg.get("invert_x", True)),
+            grid_alpha=0.5,
+        )
+
+    fig.suptitle(
+        f"Non-Denoised vs. Denoised Spectra | {meas_id} (Die {die})",
+        fontsize=13,
+        fontweight="bold",
+    )
+    if cfg.get("save_path"):
+        save_path = str(cfg["save_path"])
+        dir_name = os.path.dirname(os.path.abspath(save_path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        fig.savefig(save_path, dpi=150)
+    _finish_fig(fig, cfg)
+    return fig, axes
+
+
+def plot_denoise_atomic_percentage_mae(
+    df_denoise_atomic_samples: pd.DataFrame,
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[Figure, plt.Axes]:
+    """Plot box plot of atomic percentage MAE (Denoised vs. Non-Denoised).
+
+    Draws regional box plots of ``abs_diff_atomic_percentage`` across all
+    evaluated dies and sessions, with mean and standard deviation annotated for
+    each region.
+
+    Parameters
+    ----------
+    df_denoise_atomic_samples : pd.DataFrame
+        Sample-level DataFrame returned by
+        ``compare_denoised_atomic_percentages`` containing 'region' and
+        'abs_diff_atomic_percentage'.
+    plot_config : dict[str, Any] | None, optional
+        Dictionary of plotting options:
+        - 'figsize' (tuple[float, float]): Figure size (default (9, 5.5)).
+        - 'title' (str | None): Custom plot title.
+        - 'save_path' (str | None): Optional file path to save the figure.
+        - 'show' (bool): Whether to invoke plt.show() (default False).
+
+    Returns
+    -------
+    tuple[Figure, plt.Axes]
+        Tuple of (Figure, Axes).
+    """
+    if df_denoise_atomic_samples.empty:
+        raise ValueError("df_denoise_atomic_samples is empty.")
+    required_cols = {"region", "abs_diff_atomic_percentage"}
+    missing = required_cols - set(df_denoise_atomic_samples.columns)
+    if missing:
+        raise KeyError(
+            f"df_denoise_atomic_samples missing required columns: "
+            f"{sorted(missing)}."
+        )
+
+    cfg = plot_config or {}
+    df = df_denoise_atomic_samples.copy()
+    regions = list(df["region"].unique())
+    fig, ax = _prepare_canvas(
+        cfg.get("ax"), cfg.get("figsize", (9.0, 5.5)), 1, 1
+    )
+
+    sns.boxplot(
+        data=df,
+        x="region",
+        y="abs_diff_atomic_percentage",
+        order=regions,
+        ax=ax,
+        color="#8ecae6",
+        width=0.5,
+        showfliers=False,
+        boxprops={"alpha": 0.75, "edgecolor": "#023047"},
+    )
+    sns.stripplot(
+        data=df,
+        x="region",
+        y="abs_diff_atomic_percentage",
+        order=regions,
+        ax=ax,
+        color="#023047",
+        alpha=0.55,
+        size=4,
+        jitter=0.18,
+    )
+
+    max_y = float(df["abs_diff_atomic_percentage"].max())
+    for idx, region_name in enumerate(regions):
+        vals = df.loc[
+            df["region"] == region_name, "abs_diff_atomic_percentage"
+        ].to_numpy(dtype=float)
+        if vals.size == 0:
+            continue
+        mean_val = float(np.mean(vals))
+        std_val = float(np.std(vals, ddof=1)) if vals.size > 1 else 0.0
+        top_pos = max(float(np.max(vals)), mean_val + std_val)
+        max_y = max(max_y, top_pos)
+
+        ax.errorbar(
+            idx,
+            mean_val,
+            yerr=[[min(mean_val, std_val)], [std_val]],
+            fmt="o",
+            color="#d81b60",
+            ecolor="#d81b60",
+            elinewidth=1.8,
+            capsize=4.5,
+            markersize=6,
+            zorder=5,
+            label="Mean ± Std (MAE)" if idx == 0 else None,
+        )
+        ax.text(
+            idx,
+            top_pos + max(0.02 * max_y, 0.005),
+            f"{mean_val:.3f}%\n±{std_val:.3f}%",
+            ha="center",
+            va="bottom",
+            fontsize=8.5,
+            fontweight="bold",
+            color="#023047",
+            zorder=6,
+        )
+
+    ax.set_ylim(0.0, max_y * 1.28 + 0.02)
+    ax.legend(loc="upper right", fontsize=9)
+    plot_title = cfg.get(
+        "title",
+        "Atomic % MAE by Region (Denoised vs. Non-Denoised Spectra)",
+    )
+    _finalize_plot(
+        ax,
+        title=plot_title,
+        xlabel="Region",
+        ylabel="Absolute Error |Denoised - Non-Denoised| (at. %)",
+        invert_x=False,
+        grid_alpha=0.5,
+    )
+    if cfg.get("save_path"):
+        save_path = str(cfg["save_path"])
+        dir_name = os.path.dirname(os.path.abspath(save_path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        fig.savefig(save_path, dpi=150)
+    _finish_fig(fig, cfg)
+    return fig, ax

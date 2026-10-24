@@ -14,6 +14,8 @@ from visualization.plot_evaluation import (
     plot_regional_spectrum_distribution,
 )
 from visualization.plot_noise_analysis import (
+    plot_denoise_atomic_percentage_mae,
+    plot_denoise_spectrum_comparison,
     plot_gp_hyperparameter_convergence,
     plot_spectral_noise_analysis,
 )
@@ -51,6 +53,8 @@ DEFAULT_PLOT_TOGGLES: dict[str, bool] = {
     "atomic_percentage_distributions": True,
     "atomic_percentage_mae": True,
     "sliding_window_slices": True,
+    "denoise_spectrum_comparison": True,
+    "denoise_atomic_percentage_mae": True,
 }
 
 
@@ -322,5 +326,32 @@ def dispatch_visualizations(
                 plot_config={"region": example_region},
             )
             rendered.append("sliding_window_slices")
+
+    # 16. Denoised vs. Non-Denoised Spectrum Comparison
+    denoise_pair = pipeline_data.get("denoise_intensity_pair")
+    if (
+        plot_toggles.get("denoise_spectrum_comparison")
+        and denoise_pair is not None
+        and ary_energy is not None
+        and df_meta is not None
+    ):
+        denoise_plot_cfg = cfg.get("denoise_plot_config") or {}
+        plot_denoise_spectrum_comparison(
+            ary_energy,
+            denoise_pair,
+            df_meta,
+            plot_config={"die": die, **denoise_plot_cfg},
+        )
+        rendered.append("denoise_spectrum_comparison")
+
+    # 17. Denoised vs. Non-Denoised Atomic Percentage MAE Box Plot
+    df_denoise_at = pipeline_data.get("df_denoise_atomic_samples")
+    if (
+        plot_toggles.get("denoise_atomic_percentage_mae")
+        and df_denoise_at is not None
+        and not df_denoise_at.empty
+    ):
+        plot_denoise_atomic_percentage_mae(df_denoise_at)
+        rendered.append("denoise_atomic_percentage_mae")
 
     return rendered
