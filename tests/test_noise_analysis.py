@@ -1,4 +1,4 @@
-"""Unit tests for models.noise_analysis and visualization.plot_noise_analysis."""
+"""Unit tests for denoise package and visualization.plot_noise_analysis."""
 
 from __future__ import annotations
 
@@ -12,13 +12,20 @@ import pandas as pd
 
 matplotlib.use("Agg")  # Non-interactive backend for testing
 
-from models.noise_analysis import (
+from denoise import (
+    compare_denoised_atomic_percentages,
     create_mean_and_confidence_curves,
+    denoise_regional_spectra,
+    denoise_spectrum_fourier,
+    denoise_spectrum_savgol,
+    denoise_spectrum_wavelet,
     fit_regional_spectrum_by_gp,
     perform_spectral_noise_analysis,
     trace_gp_hyperparameter_convergence,
 )
 from visualization.plot_noise_analysis import (
+    plot_denoise_atomic_percentage_mae,
+    plot_denoise_spectrum_comparison,
     plot_gp_hyperparameter_convergence,
     plot_spectral_noise_analysis,
 )
@@ -29,7 +36,7 @@ _FAST = {"training": {"num_iterations": 60, "learning_rate": 0.1}, "show_progres
 def _make_data(
     noise_levels: dict[str, float], n_points: int = 120, seed: int = 0
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Build canonical arrays: 2 regions x 2 dies, 2 measurements with splits."""
+    """Build canonical arrays: 2 regions x 2 dies, 2 split measurements."""
     rng = np.random.default_rng(seed)
     rows, intensity, energy = [], [], []
     for m_idx, (split, tool) in enumerate([("train", "J4"), ("test", "J5"), (None, "J4")]):
@@ -214,7 +221,7 @@ class TestNoisePlots(unittest.TestCase):
             self.assertGreater(os.path.getsize(save_file), 1000)
 
     def test_plot_gp_hyperparameter_convergence_defensive_errors(self) -> None:
-        """Verify defensive error checking in plot_gp_hyperparameter_convergence."""
+        """Verify defensive error checking in GP convergence plot."""
         ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.1})
         with self.assertRaises(ValueError):
             plot_gp_hyperparameter_convergence("not a tuple")  # type: ignore
@@ -234,6 +241,183 @@ class TestNoisePlots(unittest.TestCase):
             plot_gp_hyperparameter_convergence(
                 (ary_i, ary_e, df_meta),
                 {"regions": ["nonexistent_region"]},
+            )
+
+    def test_denoise_comparison_plots(self) -> None:
+        """Verify spectrum overlay and atomic percentage MAE box plots."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.08, "O1s": 0.08})
+        df_meta["material"] = "NMG"
+        _, ary_raw, ary_den = denoise_regional_spectra(
+            ary_i,
+            ary_e,
+            df_meta,
+            {"regions": ["Ti2p"], "method": "savgol"},
+        )
+        fig_spec, axes = plot_denoise_spectrum_comparison(
+            ary_e, (ary_raw, ary_den), df_meta, {"die": 0}
+        )
+        self.assertIsInstance(fig_spec, matplotlib.figure.Figure)
+        lines = axes.ravel()[0].get_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0].get_color(), "black")
+        self.assertEqual(lines[1].get_color(), "#C71585")
+        self.assertEqual(lines[1].get_linestyle(), "--")
+
+        df_samples, df_summary = compare_denoised_atomic_percentages(
+            ary_e, (ary_raw, ary_den), df_meta
+        )
+        self.assertFalse(df_samples.empty)
+        self.assertFalse(df_summary.empty)
+        fig_box, ax_box = plot_denoise_atomic_percentage_mae(df_samples)
+        self.assertIsInstance(fig_box, matplotlib.figure.Figure)
+        self.assertIsNotNone(ax_box)
+        matplotlib.pyplot.close("all")
+
+
+class TestDenoiseTechniquesAndOrchestration(unittest.TestCase):
+    """Tests for SavGol, Wavelet, Fourier, and denoise orchestration."""
+
+    def test_savgol_wavelet_fourier_single_spectrum(self) -> None:
+        """Verify all deterministic techniques reduce noise and estimate SNR."""
+        rng = np.random.default_rng(42)
+        energy = np.linspace(450.0, 470.0, 100)
+        clean = 100.0 + 500.0 * np.exp(-((energy - 460.0) ** 2) / (2 * 1.5**2))
+        noisy = clean + rng.normal(0.0, 20.0, energy.size)
+        raw_rmse = float(np.sqrt(np.mean((noisy - clean) ** 2)))
+
+        # 1. Savitzky-Golay
+        sig_sg, conf_sg, (sigma_sg, snr_sg, win_ev) = denoise_spectrum_savgol(
+            energy, noisy, {"window_length": 11, "polynomial_order": 3}
+        )
+        self.assertLess(
+            float(np.sqrt(np.mean((sig_sg - clean) ** 2))), raw_rmse
+        )
+        self.assertEqual(conf_sg.shape, energy.shape)
+        self.assertGreater(sigma_sg, 0.0)
+        self.assertGreater(snr_sg, 5.0)
+        self.assertGreater(win_ev, 0.0)
+
+        # 2. Wavelet (Stationary & Discrete, Universal & Bayes)
+        for transform_type in ("stationary", "discrete"):
+            for threshold_rule in ("universal", "bayes"):
+                sig_wv, _, (sigma_wv, snr_wv, _) = denoise_spectrum_wavelet(
+                    energy,
+                    noisy,
+                    {
+                        "transform_type": transform_type,
+                        "wavelet_name": "sym4",
+                        "decomposition_level": 2,
+                        "threshold_rule": threshold_rule,
+                    },
+                )
+                self.assertLess(
+                    float(np.sqrt(np.mean((sig_wv - clean) ** 2))), raw_rmse
+                )
+                self.assertGreater(sigma_wv, 0.0)
+                self.assertGreater(snr_wv, 5.0)
+
+        # 3. Fourier (DCT & Butterworth)
+        for filter_type in ("dct", "butterworth"):
+            sig_ft, _, (sigma_ft, snr_ft, _) = denoise_spectrum_fourier(
+                energy,
+                noisy,
+                {"filter_type": filter_type, "cutoff_ratio": 0.25},
+            )
+            self.assertLess(
+                float(np.sqrt(np.mean((sig_ft - clean) ** 2))), raw_rmse
+            )
+            self.assertGreater(sigma_ft, 0.0)
+            self.assertGreater(snr_ft, 5.0)
+
+    def test_noise_analysis_with_all_methods(self) -> None:
+        """Verify perform_spectral_noise_analysis supports all 4 methods."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.02, "O1s": 0.2})
+        for method in ("savgol", "wavelet", "fourier"):
+            sig, noise, df_out = perform_spectral_noise_analysis(
+                ary_i,
+                ary_e,
+                df_meta,
+                {"method": method, "show_progress": False},
+            )
+            self.assertEqual(sig.shape, (8, 120))
+            self.assertEqual(noise.shape, (8, 120))
+            analysed = df_out[df_out["noise_analysis_index"].notna()]
+            by_reg = analysed.groupby("region")[["gp_noise_sigma", "gp_snr"]].mean()
+            self.assertGreater(
+                by_reg.loc["O1s", "gp_noise_sigma"],
+                by_reg.loc["Ti2p", "gp_noise_sigma"],
+            )
+            self.assertLess(
+                by_reg.loc["O1s", "gp_snr"], by_reg.loc["Ti2p", "gp_snr"]
+            )
+
+    def test_denoise_regional_spectra_and_apply_flag(self) -> None:
+        """Verify deep-copy safety, selective filtering, and apply_denoise."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.1, "O1s": 0.1})
+        raw_backup = ary_i.copy()
+
+        # Case 1: apply_denoise=False -> active matches raw, den modifies Ti2p
+        active_false, non_den, den = denoise_regional_spectra(
+            ary_i,
+            ary_e,
+            df_meta,
+            {
+                "apply_denoise": False,
+                "regions": ["Ti2p"],
+                "apply_to": "source",
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "method": "savgol",
+                "region_configs": {
+                    "Ti2p": {
+                        "method": "fourier",
+                        "fourier": {"filter_type": "dct", "cutoff_ratio": 0.3},
+                    }
+                },
+            },
+        )
+        np.testing.assert_array_equal(ary_i, raw_backup)
+        np.testing.assert_array_equal(non_den, raw_backup)
+        np.testing.assert_array_equal(active_false, raw_backup)
+
+        # O1s rows and J5 rows must be untouched in 'den'
+        untouched_mask = (df_meta["region"] == "O1s") | (df_meta["tool"] == "J5")
+        untouched_idx = df_meta.loc[untouched_mask, "spectrum_index"].to_numpy()
+        np.testing.assert_array_equal(den[untouched_idx], raw_backup[untouched_idx])
+
+        # Ti2p rows on J4 (both paired M0 and unpaired M2) must be denoised
+        touched_mask = (df_meta["region"] == "Ti2p") & (df_meta["tool"] == "J4")
+        touched_idx = df_meta.loc[touched_mask, "spectrum_index"].to_numpy()
+        self.assertFalse(
+            np.allclose(den[touched_idx], raw_backup[touched_idx])
+        )
+
+        # Case 2: apply_denoise=True -> active matches denoised array
+        active_true, _, den_true = denoise_regional_spectra(
+            ary_i,
+            ary_e,
+            df_meta,
+            {"apply_denoise": True, "regions": ["Ti2p"], "method": "wavelet"},
+        )
+        np.testing.assert_array_equal(active_true, den_true)
+        np.testing.assert_array_equal(ary_i, raw_backup)
+
+    def test_denoise_config_validation_errors(self) -> None:
+        """Verify informative errors on invalid denoise configurations."""
+        ary_i, ary_e, df_meta = _make_data({"Ti2p": 0.05, "O1s": 0.05})
+        with self.assertRaisesRegex(ValueError, "odd integer"):
+            denoise_spectrum_savgol(ary_e[0], ary_i[0], {"window_length": 10})
+        with self.assertRaisesRegex(ValueError, "Invalid transform_type"):
+            denoise_spectrum_wavelet(
+                ary_e[0], ary_i[0], {"transform_type": "swt"}
+            )
+        with self.assertRaisesRegex(ValueError, "cutoff_ratio"):
+            denoise_spectrum_fourier(
+                ary_e[0], ary_i[0], {"cutoff_ratio": 1.5}
+            )
+        with self.assertRaisesRegex(ValueError, "not found in df_meta"):
+            denoise_regional_spectra(
+                ary_i, ary_e, df_meta, {"regions": ["Cl2p"]}
             )
 
 

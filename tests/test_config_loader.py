@@ -114,6 +114,7 @@ class TestConfigLoader(unittest.TestCase):
             "dataset",
             "cost",
             "noise_analysis",
+            "denoise",
             "noise_plot",
             "film",
             "bayesian_opt",
@@ -208,12 +209,15 @@ class TestConfigLoader(unittest.TestCase):
         """Verify global.use_film, global.material, and cost.l2_weight."""
         raw = load_yaml("config/config.yaml")
         raw["global"]["use_film"] = True
+        raw["global"]["apply_denoise"] = True
         raw["global"]["material"] = "PMG"
         raw["cost"]["l2_weight"] = 5e-5
         resolved = resolve_pipeline_config(raw)
 
         self.assertTrue(resolved["film"]["use_film"])
         self.assertTrue(resolved["training"]["use_film"])
+        self.assertTrue(resolved["denoise"]["apply_denoise"])
+        self.assertEqual(resolved["denoise"]["material"], "PMG")
         self.assertEqual(resolved["data_generation"]["material"], "PMG")
         self.assertEqual(resolved["pairing"]["material"], "PMG")
         self.assertEqual(resolved["quantification"]["material"], "PMG")

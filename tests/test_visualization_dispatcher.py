@@ -108,9 +108,43 @@ class TestVisualizationDispatcher(unittest.TestCase):
             "atomic_percentage_distributions",
             "atomic_percentage_mae",
             "sliding_window_slices",
+            "denoise_spectrum_comparison",
+            "denoise_atomic_percentage_mae",
         ]
         for k in expected_keys:
             self.assertIn(k, DEFAULT_PLOT_TOGGLES)
+
+    @patch("visualization.dispatcher.plot_denoise_atomic_percentage_mae")
+    @patch("visualization.dispatcher.plot_denoise_spectrum_comparison")
+    def test_denoise_plots_dispatched(
+        self,
+        mock_denoise_spec: unittest.mock.MagicMock,
+        mock_denoise_at: unittest.mock.MagicMock,
+    ) -> None:
+        """Verify denoise comparison plots dispatch when toggles active."""
+        data = {
+            **self.pipeline_data,
+            "denoise_intensity_pair": (self.ary_intensity, self.ary_intensity),
+            "df_denoise_atomic_samples": pd.DataFrame(
+                {"region": ["Al2p"], "abs_diff_atomic_percentage": [0.1]}
+            ),
+        }
+        cfg = {
+            "show_plots": True,
+            "plots": {
+                k: k
+                in (
+                    "denoise_spectrum_comparison",
+                    "denoise_atomic_percentage_mae",
+                )
+                for k in DEFAULT_PLOT_TOGGLES
+            },
+        }
+        rendered = dispatch_visualizations(data, config=cfg)
+        self.assertIn("denoise_spectrum_comparison", rendered)
+        self.assertIn("denoise_atomic_percentage_mae", rendered)
+        mock_denoise_spec.assert_called_once()
+        mock_denoise_at.assert_called_once()
 
 
 if __name__ == "__main__":
