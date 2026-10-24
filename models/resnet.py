@@ -39,9 +39,7 @@ def _validate_layer_count(num_layers: int) -> int:
     Raises ValueError if num_layers < 2 (cannot form a residual block).
     """
     if num_layers < 2:
-        raise ValueError(
-            f"ResNet1D num_layers must be >= 2, got {num_layers}."
-        )
+        raise ValueError(f"ResNet1D num_layers must be >= 2, got {num_layers}.")
     return num_layers
 
 
@@ -57,18 +55,16 @@ def _build_hidden_conv_and_norm_layers(
     Iterates through hidden layers, mapping 1 input channel to resnet_channel
     at layer 0 and preserving resnet_channel across all subsequent layers.
     """
-    hidden_convs = nn.ModuleList([
-        build_conv1d_layer(
-            (1 if i == 0 else resnet_channel, resnet_channel),
-            kernel_size,
-            padding_mode=padding_mode,
-        )
-        for i in range(num_hidden)
-    ])
-    hidden_bns = nn.ModuleList([
-        nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
-        for _ in range(num_hidden)
-    ])
+    hidden_convs = [build_conv1d_layer(channels = (1 if i == 0 else resnet_channel, resnet_channel),
+                                       kernel_size = kernel_size,
+                                       padding_mode = padding_mode,) 
+                    for i in range(num_hidden)]
+    hidden_convs = nn.ModuleList(hidden_convs)
+        
+    hidden_bns = [nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
+                  for _ in range(num_hidden)]
+    hidden_bns = nn.ModuleList(hidden_bns)
+    
     return hidden_convs, hidden_bns
 
 
@@ -175,12 +171,8 @@ class ResNet1D(nn.Module):
             ),
         )
 
-        resnet_channel = validate_positive_int(
-            cfg.get("resnet_channel", 32), "resnet_channel"
-        )
-        kernel_size = validate_odd_kernel_size(
-            cfg.get("kernel_size", 5), max_allowed=max_allowed_k
-        )
+        resnet_channel = validate_positive_int(cfg.get("resnet_channel", 32), "resnet_channel")
+        kernel_size =    validate_odd_kernel_size(cfg.get("kernel_size", 5), max_allowed=max_allowed_k)
 
         dropout = float(cfg.get("dropout", 0.0))
         use_batch_norm = bool(cfg.get("use_batch_norm", True))
