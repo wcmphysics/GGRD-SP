@@ -183,7 +183,7 @@ The codes will be composed of the following key stages
 2. **File Structure:** 
    - Main python body: `main.py`
    - Core ML models, denoising/noise analysis, utilities, and plotting modules belong in the `models/`, `denoise/`, `utility/`, and `visualization/` folders.
-3. **Code Style:** Use strict PEP-8 formatting. Include type hints and concise docstrings for all new functions.
+3. **Code Style:** Use strict PEP-8 formatting with two exception: one coding line cannot exceed 120 characters and one comment or docstring line cannot exceed 80 characters. Include type hints and concise docstrings for all new functions. 
 4. **Autonomous Commits and Pushing:**
    - Once a feature request, plan, or review iteration is approved, autonomously commit and push the changes without asking for separate micro-permissions on commit messages.
    - Follow standard Conventional Commits format (e.g. `feat:`, `fix:`, `test:`, `docs:`) and always display the created commit hashes and messages in your final summary for transparency.
@@ -214,9 +214,8 @@ The codes will be composed of the following key stages
       2. DO NOT package coding lines into another module as it is merely moving lines to somewhere else rather than cutting down lines. 
       3. DO NOT rename variables to shorten the line counts. Variable names should be easy to understand for reader. 
       4. DO NOT just use `;` to put different lines into one line. This is not cutting down lines.
-      5. One coding line cannot exceed 120 characters. One comment or docstring line cannot exceed 80 characters.
-      6. Note that comment and docstring lines are not counted. Exploit this to ensure code clarity and readability when reducing code lines.
-      7. Comment lines and docstring should still be complete and comprehensive. No need to remove them unless explicitly requested.
+      5. Note that comment and docstring lines are not counted. Exploit this to ensure code clarity and readability when reducing code lines.
+      6. Comment lines and docstring should still be complete and comprehensive. No need to remove them unless explicitly requested.
    - Ask me anything if there is something unclear to you
    - Always Propose your plans first for me to review. Only implement the plan if I approve
 12. **Strict Canonical Configurations & Comprehensive Variable Naming:**
