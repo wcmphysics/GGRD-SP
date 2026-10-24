@@ -21,6 +21,15 @@ from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.splitting import split_measurement_sessions
 
+_DEFAULT_RESNET_TEST_CONFIG = {
+    "resnet_channel": 8,
+    "kernel_size": 3,
+    "dropout": 0.0,
+    "use_batch_norm": True,
+    "padding_mode": "reflect",
+    "use_film": False,
+}
+
 
 class TestOrchestrationPipeline(unittest.TestCase):
     """Test suite for perform_model_training_and_bayesian_optimization across models and patches."""
@@ -69,7 +78,18 @@ class TestOrchestrationPipeline(unittest.TestCase):
 
     def test_instantiate_model(self) -> None:
         """Verify model instantiation across supported types and error handling."""
-        m_res = instantiate_model("resnet", seq_len=30, config={"resnet_channel": 8})
+        m_res = instantiate_model(
+            "resnet",
+            seq_len=30,
+            config={
+                "resnet_channel": 8,
+                "kernel_size": 3,
+                "dropout": 0.0,
+                "use_batch_norm": True,
+                "padding_mode": "reflect",
+                "use_film": False,
+            },
+        )
         self.assertIsInstance(m_res, ResNet1D)
 
         m_res_u = instantiate_model(
@@ -113,7 +133,17 @@ class TestOrchestrationPipeline(unittest.TestCase):
 
         train_cfg = {
             "model_type": "resnet",
-            "train_config": {"epochs": 2, "batch_size": 4, "verbose": True},
+            "train_config": {
+                "epochs": 2,
+                "batch_size": 4,
+                "verbose": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+                "dropout": 0.0,
+                "use_batch_norm": True,
+                "padding_mode": "reflect",
+                "use_film": False,
+            },
         }
         res = perform_model_training_and_bayesian_optimization(
             regional_datasets, criterion, config=train_cfg
@@ -148,7 +178,17 @@ class TestOrchestrationPipeline(unittest.TestCase):
         criterion = SpectralLoss()
         train_cfg = {
             "model_type": "resnet",
-            "train_config": {"epochs": 2, "batch_size": 8, "verbose": True},
+            "train_config": {
+                "epochs": 2,
+                "batch_size": 8,
+                "verbose": True,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+                "dropout": 0.0,
+                "use_batch_norm": True,
+                "padding_mode": "reflect",
+                "use_film": False,
+            },
         }
         res = perform_model_training_and_bayesian_optimization(
             regional_datasets, criterion, config=train_cfg
@@ -248,7 +288,14 @@ class TestOrchestrationPipeline(unittest.TestCase):
         }
         train_cfg = {
             "model_type": "resnet",
-            "train_config": {"epochs": 2, "batch_size": 4},
+            "train_config": {
+                "epochs": 2,
+                "batch_size": 4,
+                "dropout": 0.0,
+                "use_batch_norm": True,
+                "padding_mode": "reflect",
+                "use_film": False,
+            },
         }
         res = perform_model_training_and_bayesian_optimization(
             regional_datasets, criterion, config=train_cfg, bayesian_opt_config=bo_cfg
@@ -321,7 +368,13 @@ class TestOrchestrationPipeline(unittest.TestCase):
             perform_model_training_and_bayesian_optimization(
                 regional_datasets,
                 criterion,
-                config={"model_type": "resnet", "train_config": {"window_size": [15]}},
+                config={
+                    "model_type": "resnet",
+                    "train_config": {
+                        **_DEFAULT_RESNET_TEST_CONFIG,
+                        "window_size": [15],
+                    },
+                },
             )
 
         # kernel_size > window_size when BO is off -> ValueError
@@ -329,7 +382,14 @@ class TestOrchestrationPipeline(unittest.TestCase):
             perform_model_training_and_bayesian_optimization(
                 regional_datasets,
                 criterion,
-                config={"model_type": "resnet", "train_config": {"window_size": 5, "kernel_size": 7}},
+                config={
+                    "model_type": "resnet",
+                    "train_config": {
+                        **_DEFAULT_RESNET_TEST_CONFIG,
+                        "window_size": 5,
+                        "kernel_size": 7,
+                    },
+                },
             )
 
         # Singular window_size in bayesian_opt_config when BO is on -> KeyError
