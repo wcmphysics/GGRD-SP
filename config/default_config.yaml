@@ -202,6 +202,21 @@ metrics_report:
     - "peak_err%"
     - "max%err"
 
+quantification:
+  material: "NMG"
+  rsf_table:
+    C1s: 1.000
+    Al2p: 0.537
+    Ti2p: 7.910
+    O1s: 2.930
+    Cl2p: 2.285
+    N1s: 1.800
+    Si2p: 0.817
+  default_endpoint_strategy: "minima"
+  default_endpoint_average_ev: 1.0
+  max_iter: 50
+  tol: 0.00001
+
 visualization:
   show_plots: true
   plots:

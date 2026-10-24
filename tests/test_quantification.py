@@ -17,6 +17,7 @@ from utility.quantification import (
     determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
+    load_rsf_table,
 )
 from visualization import plot_shirley_background
 
@@ -157,7 +158,7 @@ class TestQuantification(unittest.TestCase):
             self.ary_ene,
             self.ary_int,
             self.meta_df,
-            config={"measurement_id": "NMG_M_J4_00000", "rsf_dict": custom_rsf},
+            config={"measurement_id": "NMG_M_J4_00000", "rsf_table": custom_rsf},
         )
 
         al_default = df_default["Al2p_at%"].iloc[0]
@@ -186,7 +187,17 @@ class TestQuantification(unittest.TestCase):
                 self.ary_ene,
                 self.ary_int,
                 self.meta_df,
-                config={"rsf_dict": {"Al2p": -1.0}},
+                config={"rsf_table": {"Al2p": -1.0}},
+            )
+
+    def test_missing_rsf_table_raises(self) -> None:
+        """Verify missing rsf_table in config raises KeyError when default is omitted."""
+        with self.assertRaises(KeyError):
+            calculate_atomic_percentages(
+                self.ary_ene,
+                self.ary_int,
+                self.meta_df,
+                config={"rsf_table": None, "measurement_id": "NMG_M_J4_00000"},
             )
 
     def test_zero_area_all_peaks(self) -> None:
@@ -908,6 +919,31 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         self.assertEqual(ret_ax1, custom_ax1)
         self.assertEqual(ret_ax2, custom_ax2)
         plt.close(fig)
+
+    def test_load_rsf_table_from_default_config(self) -> None:
+        """Verify load_rsf_table loads canonical Scofield RSF table from YAML config."""
+        rsf_table = load_rsf_table()
+        self.assertIsInstance(rsf_table, dict)
+        for expected_key in ["Ti2p", "Al2p", "C1s", "O1s", "Cl2p"]:
+            self.assertIn(expected_key, rsf_table)
+            self.assertGreater(rsf_table[expected_key], 0.0)
+
+    def test_load_rsf_table_from_dict(self) -> None:
+        """Verify load_rsf_table extracts RSF mapping from dictionary configs."""
+        custom_dict = {"quantification": {"rsf_table": {"C1s": 1.23, "Al2p": 0.45}}}
+        loaded = load_rsf_table(custom_dict)
+        self.assertEqual(loaded["C1s"], 1.23)
+        self.assertEqual(loaded["Al2p"], 0.45)
+
+    def test_load_rsf_table_nonexistent_file_raises(self) -> None:
+        """Verify load_rsf_table raises FileNotFoundError for nonexistent config path."""
+        with self.assertRaises(FileNotFoundError):
+            load_rsf_table("nonexistent_config_path_123.yaml")
+
+    def test_load_rsf_table_missing_key_raises(self) -> None:
+        """Verify load_rsf_table raises KeyError when rsf_table is missing."""
+        with self.assertRaises(KeyError):
+            load_rsf_table({"some_other_key": {}})
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ percentage calculation fulfilling Part 5 of GEMINI.md.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+import yaml
 import warnings
 
 import numpy as np
@@ -15,14 +17,76 @@ import pandas as pd
 from utility.flux_and_intensity import trapezoid_integral
 
 
+def load_rsf_table(
+    config_or_path: dict[str, Any] | str | Path | None = None,
+) -> dict[str, float]:
+    """Load Scofield relative sensitivity factor (RSF) table from configuration.
+
+    Parameters
+    ----------
+    config_or_path : dict[str, Any] | str | Path | None, optional
+        Configuration dictionary containing 'quantification.rsf_table' or
+        'rsf_table', file path to YAML, or None (defaults to
+        'config/default_config.yaml').
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary mapping spectral region name to its RSF value.
+
+    Raises
+    ------
+    FileNotFoundError
+        If configuration file does not exist.
+    KeyError
+        If 'rsf_table' is missing.
+    ValueError
+        If 'rsf_table' content is invalid.
+    """
+    if config_or_path is None:
+        config_or_path = Path("config/default_config.yaml")
+
+    if isinstance(config_or_path, (str, Path)):
+        p = Path(config_or_path)
+        if not p.is_file():
+            raise FileNotFoundError(f"Configuration file not found: '{p}'")
+        with open(p, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+        if not isinstance(raw, dict):
+            raise ValueError(f"YAML content in '{p}' must be a dictionary.")
+        quant = raw.get("quantification", {})
+        tbl = (
+            quant.get("rsf_table")
+            if isinstance(quant, dict)
+            else raw.get("rsf_table")
+        )
+        if tbl and isinstance(tbl, dict):
+            return {str(k): float(v) for k, v in tbl.items()}
+        raise KeyError(
+            f"Configuration file '{p}' does not contain 'quantification.rsf_table'."
+        )
+
+    if isinstance(config_or_path, dict):
+        if "rsf_table" in config_or_path and isinstance(
+            config_or_path["rsf_table"], dict
+        ):
+            return {
+                str(k): float(v) for k, v in config_or_path["rsf_table"].items()
+            }
+        if "quantification" in config_or_path and isinstance(
+            config_or_path["quantification"], dict
+        ):
+            q_tbl = config_or_path["quantification"].get("rsf_table")
+            if isinstance(q_tbl, dict):
+                return {str(k): float(v) for k, v in q_tbl.items()}
+
+    raise KeyError(
+        "Configuration missing required 'rsf_table' (or 'quantification.rsf_table')."
+    )
+
+
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation
-DEFAULT_SCOFIELD_RSF: dict[str, float] = {
-    "C1s": 1.000,
-    "Al2p": 0.537,
-    "Ti2p": 7.910,
-    "O1s": 2.930,
-    "Cl2p": 2.285,
-}
+DEFAULT_SCOFIELD_RSF: dict[str, float] = load_rsf_table()
 
 
 def _mean_std(
@@ -46,7 +110,7 @@ def get_default_quantification_config() -> dict[str, Any]:
         Dictionary packaging quantification parameters:
         - 'material': 'NMG'
         - 'measurement_id': None (if None, calculates for all sessions)
-        - 'rsf_dict': dict mapping region name to relative sensitivity factor
+        - 'rsf_table': dict mapping region name to relative sensitivity factor
         - 'default_endpoint_strategy': 'minima' ('minima', 'edge', or 'direct')
         - 'default_endpoint_average_ev': 1.0 (average over 1.0 eV window)
         - 'region_endpoint_config': None (optional per-region overrides)
@@ -57,7 +121,7 @@ def get_default_quantification_config() -> dict[str, Any]:
     return {
         "material": "NMG",
         "measurement_id": None,
-        "rsf_dict": dict(DEFAULT_SCOFIELD_RSF),
+        "rsf_table": dict(DEFAULT_SCOFIELD_RSF),
         "default_endpoint_strategy": "minima",
         "default_endpoint_average_ev": 1.0,
         "region_endpoint_config": None,
@@ -493,7 +557,10 @@ def calculate_atomic_percentages(
 
     target_meas: str | None = cfg.get("measurement_id")
     material: str | None = cfg.get("material")
-    rsf_dict: dict[str, float] = cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF)
+
+    rsf_table = cfg.get("rsf_table")
+    if not isinstance(rsf_table, dict):
+        raise KeyError("Configuration missing required 'rsf_table' dictionary.")
 
     required_cols = {"spectrum_index", "measurement_id", "die", "region"}
     missing = required_cols - set(df_meta.columns)
@@ -522,13 +589,13 @@ def calculate_atomic_percentages(
             dict(cfg, region=region),
         )
 
-        if region not in rsf_dict:
+        if region not in rsf_table:
             warnings.warn(
-                f"Region '{region}' not found in rsf_dict. Defaulting RSF to "
+                f"Region '{region}' not found in rsf_table. Defaulting RSF to "
                 "1.0. Atomic percentages may be uncalibrated without specific "
                 "sensitivity factors."
             )
-        rsf = float(rsf_dict.get(region, 1.0))
+        rsf = float(rsf_table.get(region, 1.0))
         if rsf <= 0.0:
             raise ValueError(
                 f"RSF for region '{region}' must be positive, got {rsf}"
@@ -630,7 +697,10 @@ def calculate_atomic_percentage_split_statistics(
     splits_filter = list(cfg.get("splits", ["train", "test"]))
     quant_cfg = dict(cfg.get("quantification_config", {}))
     quant_cfg.setdefault("material", cfg.get("material", "NMG"))
-    quant_cfg.setdefault("rsf_dict", cfg.get("rsf_dict", DEFAULT_SCOFIELD_RSF))
+    if "rsf_table" in cfg:
+        quant_cfg["rsf_table"] = cfg["rsf_table"]
+    elif "rsf_table" not in quant_cfg:
+        quant_cfg["rsf_table"] = dict(DEFAULT_SCOFIELD_RSF)
 
     df_per_die_orig, _ = calculate_atomic_percentages(
         ary_energy_orig, ary_intensity_orig, df_meta_orig, config=quant_cfg

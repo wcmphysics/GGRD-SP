@@ -44,6 +44,7 @@ from utility.quantification import (
     determine_shirley_endpoints,
     format_side_by_side_atomic_percentages,
     get_default_quantification_config,
+    load_rsf_table,
 )
 
 __all__ = [
@@ -76,6 +77,7 @@ __all__ = [
     "calculate_atomic_percentage_split_statistics",
     "format_side_by_side_atomic_percentages",
     "get_default_quantification_config",
+    "load_rsf_table",
     "DEFAULT_SCOFIELD_RSF",
     # Patching
     "calculate_window_points",

@@ -305,6 +305,16 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         vis.setdefault("use_sliding_window", use_sliding_window)
         vis.setdefault("noise_plot_config", noise_plot)
 
+    # 14. Inject into quantification and metrics_report
+    quant = resolved.setdefault("quantification", {})
+    if isinstance(quant, dict):
+        quant.setdefault("material", global_cfg.get("material", "NMG"))
+        rsf_tbl = quant.get("rsf_table")
+        if rsf_tbl and isinstance(metrics_rep, dict):
+            metrics_quant = metrics_rep.setdefault("quantification_config", {})
+            if isinstance(metrics_quant, dict):
+                metrics_quant.setdefault("rsf_table", rsf_tbl)
+
     return resolved
 
 
