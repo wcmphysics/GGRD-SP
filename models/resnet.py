@@ -2,7 +2,7 @@
 transformation.
 
 Transforms a regional spectrum measured on a source tool into the corresponding
-spectrum as if measured on a target tool, fulfilling Part 3 of GEMINI.md.
+spectrum as if measured on a target tool, fulfilling Stage 9 of AGENTS.md.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Spectrum pairing module for GGRD-SP.
 
 Provides 1-to-1 matching between source tool and target tool measurement
-sessions within a user-defined time threshold, fulfilling Part 2 of GEMINI.md.
+sessions within a user-defined time threshold, fulfilling Stage 2 of AGENTS.md.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ def pair_source_target_spectra(
 ) -> pd.DataFrame:
     """Pair source tool spectra to target tool spectra with 1-to-1 matching.
 
-    Fulfills Part 2 of GEMINI.md:
+    Fulfills Stage 2 of AGENTS.md:
     - Performs session-level 1-to-1 matching between source and target tools.
     - Pairs within each specimen material separately.
     - If t7_code is present, enforces identical t7_code for paired sessions.

@@ -1,7 +1,7 @@
 """Pseudo-measurement generation module for GGRD-SP.
 
 Generates synthetic XPS regional spectra and associated metadata according to
-project specifications in GEMINI.md.
+project specifications in AGENTS.md.
 """
 
 from __future__ import annotations
@@ -427,7 +427,7 @@ def generate_pseudo_measurements(
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """Generate synthetic XPS regional spectra and corresponding metadata.
 
-    Fulfills Part 1 of the program structure defined in GEMINI.md.
+    Fulfills Stage 1 of the program structure defined in AGENTS.md.
     Binding energy arrays for regions with the same name are identical and
     sorted in ascending order. Tool discrepancies (energy shifts and intensity
     scales) and die-to-die variations are captured in the intensity arrays.

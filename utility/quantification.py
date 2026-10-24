@@ -1,7 +1,7 @@
 """Quantification and Shirley background subtraction module for GGRD-SP.
 
 Provides Shirley background subtraction, peak area integration, and atomic
-percentage calculation fulfilling Part 5 of AGENTS.md.
+percentage calculation fulfilling Stage 12 of AGENTS.md.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def calculate_atomic_percentages(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Calculate atomic percentages in wide format (per-die and summary).
 
-    Fulfills Part 5 of GEMINI.md:
+    Fulfills Stage 12 of AGENTS.md:
     - Calculates net peak area via Shirley background subtraction per region.
     - Supports systematic Shirley endpoint determination ('minima', 'edge', or
       'direct') across all regions.
