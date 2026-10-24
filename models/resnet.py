@@ -118,13 +118,6 @@ class ResNet1D(nn.Module):
             (resnet_channel, 1), kernel_size, padding_mode=padding_mode
         )
 
-        # Backward compatibility aliases for 3-layer architecture
-        self.conv1 = self.hidden_convs[0]
-        self.conv2 = self.hidden_convs[1] if num_hidden > 1 else None
-        self.conv3 = self.conv_out
-        self.bn1 = self.hidden_bns[0]
-        self.bn2 = self.hidden_bns[1] if num_hidden > 1 else None
-
         # Normalization, activation, and dropout layers
         self.activation = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()

@@ -421,7 +421,7 @@ class TestPairingVisualization(unittest.TestCase):
 
     def test_calculate_staggered_levels_logic(self) -> None:
         """Verify staggered level assignment correctly separates close timestamps."""
-        from visualization.visualization import _calculate_staggered_levels
+        from visualization.plot_timeline import _calculate_staggered_levels
 
         base = pd.Timestamp("2026-01-01 12:00:00")
         # 3 points very close together within 1 minute of each other in a 10-hour span

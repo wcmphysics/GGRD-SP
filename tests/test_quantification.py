@@ -373,8 +373,8 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
             "default_endpoint_strategy": "minima",
             "default_endpoint_average_ev": 1.0,
             "region_endpoint_config": {
-                "Al2p": {"strategy": "edge", "average_ev": 0.5},
-                "Ti2p": {"strategy": "minima", "average_ev": 2.0},
+                "Al2p": {"strategy": "edge", "average_width_ev": 0.5},
+                "Ti2p": {"strategy": "minima", "average_width_ev": 2.0},
             },
         }
 
@@ -413,7 +413,11 @@ class TestEndpointStrategiesAndAveraging(unittest.TestCase):
 
     def test_strategy_direct_resolves_points_and_averages(self) -> None:
         """Strategy 'direct' resolves user-specified energy points to nearest indices."""
-        cfg = {"strategy": "direct", "points": (72.0, 78.0), "average_width_ev": 0.0}
+        cfg = {
+            "strategy": "direct",
+            "energy_endpoints": (72.0, 78.0),
+            "average_width_ev": 0.0,
+        }
         idx_1, idx_2, i_1, i_2 = determine_shirley_endpoints(self.energy, self.intensity, config=cfg)
         expected_idx_1 = int(np.argmin(np.abs(self.energy - 72.0)))
         expected_idx_2 = int(np.argmin(np.abs(self.energy - 78.0)))

@@ -52,24 +52,10 @@ def _resolve_region_config(
         else {}
     )
 
-    def _resolve_points_override(
-        primary_key: str, secondary_key: str
-    ) -> int | None:
-        override_value = region_override.get(
-            primary_key, region_override.get(secondary_key)
-        )
-        if override_value is not None:
-            return override_value
-        return global_config.get(
-            primary_key, global_config.get(secondary_key)
-        )
-
-    window_size_points = _resolve_points_override(
-        "window_size", "window_size_points"
+    window_size_points = region_override.get(
+        "window_size", global_config.get("window_size")
     )
-    stride_points = _resolve_points_override(
-        "stride", "sliding_stride_points"
-    )
+    stride_points = region_override.get("stride", global_config.get("stride"))
     sliding_window_config = {
         "window_size_ev": region_override.get(
             "window_size_ev", global_config.get("window_size_ev", 6.0)
@@ -79,8 +65,6 @@ def _resolve_region_config(
         ),
         "window_size": window_size_points,
         "stride": stride_points,
-        "window_size_points": window_size_points,
-        "sliding_stride_points": stride_points,
     }
 
     top_level_train_defaults = {

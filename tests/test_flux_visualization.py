@@ -14,7 +14,7 @@ import pandas as pd
 
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
-from visualization.visualization import (
+from visualization.plot_timeline import (
     _derive_tool_die_shades,
     plot_flux_and_averaged_intensity_vs_time,
 )
@@ -133,14 +133,14 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         self.assertGreater(len(ax_intensity.lines), 0)
         plt.close(fig)
 
-    def test_show_lines_alias_and_precedence(self) -> None:
-        """Test show_lines alias and region argument precedence."""
+    def test_region_argument_precedence(self) -> None:
+        """Test explicit region argument precedence over plot_config."""
         # Explicit kwarg takes precedence over config
         fig, (ax_flux, ax_intensity) = plot_flux_and_averaged_intensity_vs_time(
             self.ary_intensity,
             self.ary_energy,
             self.meta_df,
-            plot_config={"show_lines": True, "region": "Al2p", "show": False},
+            plot_config={"connect_lines": True, "region": "Al2p", "show": False},
             region="Ti2p",
         )
         self.assertGreater(len(ax_flux.lines), 0)

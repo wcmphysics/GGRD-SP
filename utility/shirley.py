@@ -145,11 +145,8 @@ def _resolve_direct_endpoints(
 ) -> tuple[int, int]:
     """Resolve and validate direct energy endpoints to index bounds."""
     region = str(cfg.get("region", ""))
-    direct_pts = (
-        region_cfg.get("energy_endpoints")
-        or region_cfg.get("points")
-        or cfg.get("energy_endpoints")
-        or cfg.get("points")
+    direct_pts = region_cfg.get(
+        "energy_endpoints", cfg.get("energy_endpoints")
     )
     if isinstance(direct_pts, dict):
         direct_pts = direct_pts.get(region)
@@ -220,9 +217,9 @@ def determine_shirley_endpoints(
         Configuration dictionary:
         - 'region' (str): Name of spectral region (e.g. 'Ti2p', 'Al2p').
         - 'strategy' (str): Strategy ('minima', 'edge', or 'direct').
-        - 'points' | 'energy_endpoints' (tuple[float, float] | None): Energy
+        - 'energy_endpoints' (tuple[float, float] | None): Energy
           coordinates (e_start, e_end) for the 'direct' strategy.
-        - 'average_width_ev' | 'average_ev' (float | None): Window width in eV
+        - 'average_width_ev' (float | None): Window width in eV
           for intensity averaging (default 1.0 eV).
         - 'smooth_search' (bool): Smooth curve before minima search.
         - 'region_endpoint_config' (dict[str, dict[str, Any]] | None):
@@ -256,30 +253,23 @@ def determine_shirley_endpoints(
 
     if "average_width_ev" in region_cfg:
         avg_ev = region_cfg["average_width_ev"]
-    elif "average_ev" in region_cfg:
-        avg_ev = region_cfg["average_ev"]
     elif "average_width_ev" in cfg:
         avg_ev = cfg["average_width_ev"]
     else:
-        avg_ev = cfg.get(
-            "default_endpoint_average_ev", cfg.get("average_ev", 1.0)
-        )
+        avg_ev = cfg.get("default_endpoint_average_ev", 1.0)
 
     smooth_search = bool(
-        region_cfg.get(
-            "smooth_search",
-            cfg.get("smooth_search", cfg.get("smooth_endpoints_search", False)),
-        )
+        region_cfg.get("smooth_search", cfg.get("smooth_search", False))
     )
 
     norm_strategy = str(strategy).lower().strip()
-    if norm_strategy in ("minima", "directional_minima"):
+    if norm_strategy == "minima":
         idx_1, idx_2 = _find_minima_endpoints(
             energy, intensity, smooth_search=smooth_search, region=region
         )
-    elif norm_strategy in ("edge", "bounds"):
+    elif norm_strategy == "edge":
         idx_1, idx_2 = 0, n_pts - 1
-    elif norm_strategy in ("direct", "custom"):
+    elif norm_strategy == "direct":
         idx_1, idx_2 = _resolve_direct_endpoints(
             energy, cfg, region_cfg, str(strategy)
         )
@@ -315,7 +305,8 @@ def calculate_shirley_background(
         Dictionary bundling options:
         - 'region' (str): Name of the spectral region (e.g. 'Ti2p', 'Al2p').
         - 'strategy' (str): 'minima', 'edge', or 'direct' (default 'minima').
-        - 'points' (tuple[float, float] | None): Energy endpoints for 'direct'.
+        - 'energy_endpoints' (tuple[float, float] | None): Energy endpoints
+          for 'direct'.
         - 'average_width_ev' (float | None): Averaging width in eV (def 1.0).
         - 'region_endpoint_config' (dict | None): Per-region overrides.
         - 'max_iter' (int): Maximum Shirley iterations (default 50).

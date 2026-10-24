@@ -23,7 +23,6 @@ _SEARCH_SPACE_KEYS = (
     "deeplabv3_backbone_channels",
     "deeplabv3_aspp_channels",
     "learning_rate_bounds",
-    "lr_bounds",
     "l2_bounds",
 )
 
@@ -55,6 +54,7 @@ _DISALLOWED_BO_KEYS = {
     "backbone_channel": "deeplabv3_backbone_channels",
     "aspp_channels": "deeplabv3_aspp_channels",
     "aspp_channel": "deeplabv3_aspp_channels",
+    "lr_bounds": "learning_rate_bounds",
 }
 
 _CHANNEL_SEARCH_KEYS = (
@@ -309,7 +309,7 @@ def optimize_model_hyperparameters(
           backbone channels.
         - 'deeplabv3_aspp_channels' (list[int]): Candidate DeepLabV3 ASPP
           channels.
-        - 'learning_rate_bounds' / 'lr_bounds' (tuple[float, float]):
+        - 'learning_rate_bounds' (tuple[float, float]):
           Learning rate search bounds (default (1e-4, 1e-2)).
         - 'l2_bounds' (tuple[float, float]): L2 regularization bounds
           (default (1e-6, 1e-2)).
@@ -344,9 +344,7 @@ def optimize_model_hyperparameters(
         int(train_dataset[0]["x"].shape[-1]) if len(train_dataset) > 0 else 100
     )
 
-    raw_lr_bounds = cfg.get(
-        "learning_rate_bounds", cfg.get("lr_bounds", (1e-4, 1e-2))
-    )
+    raw_lr_bounds = cfg.get("learning_rate_bounds", (1e-4, 1e-2))
     lr_range_spec = _range("learning_rate", raw_lr_bounds)
     l2_range_spec = _range("l2_weight", cfg.get("l2_bounds", (1e-6, 1e-2)))
 

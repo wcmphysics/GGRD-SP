@@ -16,17 +16,16 @@ import torch
 def _resolve_step_points(
     cfg: dict[str, Any],
     delta_e: float,
-    pts_keys: tuple[str, str],
+    pts_key: str,
     ev_spec: tuple[str, float],
 ) -> int:
     """Resolve a step or window size in data points from points or eV."""
-    primary_pts_key, alias_pts_key = pts_keys
-    pts_val = cfg.get(primary_pts_key, cfg.get(alias_pts_key))
+    pts_val = cfg.get(pts_key)
     if pts_val is not None:
         points = int(pts_val)
         if points <= 0:
             raise ValueError(
-                f"{primary_pts_key} must be strictly positive, got {points}."
+                f"{pts_key} must be strictly positive, got {points}."
             )
         return points
 
@@ -51,16 +50,14 @@ def calculate_window_points(
         Configuration dictionary:
         - 'window_size_ev' (float): Window width in eV (default 6.0).
         - 'sliding_stride_ev' (float): Sliding stride in eV (default 2.0).
-        - 'window_size_points' | 'window_size' (int | None): Explicit window
-          size in points.
-        - 'sliding_stride_points' | 'stride' (int | None): Explicit stride in
-          points.
+        - 'window_size' (int | None): Explicit window size in points.
+        - 'stride' (int | None): Explicit stride in points.
         - 'force_odd_window' (bool): Ensure window size is odd (default True).
 
     Returns
     -------
     tuple[int, int]
-        (window_size_points, sliding_stride_points)
+        (window_size, stride)
 
     Raises
     ------
@@ -77,10 +74,7 @@ def calculate_window_points(
         raise ValueError("Energy spacing delta_e must be strictly positive.")
 
     window_size = _resolve_step_points(
-        cfg,
-        delta_e,
-        ("window_size_points", "window_size"),
-        ("window_size_ev", 6.0),
+        cfg, delta_e, "window_size", ("window_size_ev", 6.0)
     )
     force_odd = bool(cfg.get("force_odd_window", True))
     window_size = min(n_total, window_size)
@@ -91,10 +85,7 @@ def calculate_window_points(
     window_size = max(3, window_size)
 
     stride = _resolve_step_points(
-        cfg,
-        delta_e,
-        ("sliding_stride_points", "stride"),
-        ("sliding_stride_ev", 2.0),
+        cfg, delta_e, "stride", ("sliding_stride_ev", 2.0)
     )
     stride = max(1, min(window_size, stride))
 

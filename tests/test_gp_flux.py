@@ -26,7 +26,7 @@ from utility.flux_and_intensity import calculate_flux_and_intensity
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.splitting import split_measurement_sessions
-from visualization.visualization import plot_gp_die_flux_timeline
+from visualization.plot_timeline import plot_gp_die_flux_timeline
 
 
 class TestSigmoidStepKernel(unittest.TestCase):

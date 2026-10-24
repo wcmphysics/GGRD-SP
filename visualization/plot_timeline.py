@@ -197,7 +197,7 @@ def plot_pairing_timeline(
                 zorder=3,
                 label=f"{t_name} (Unpaired)",
             )
-    if bool(cfg.get("annotate_measurements", cfg.get("show_labels", True))):
+    if bool(cfg.get("annotate_measurements", True)):
         stagger = max(1, int(cfg.get("stagger_levels", 3)))
         lead = bool(cfg.get("leader_lines", True))
         sz = int(cfg.get("label_fontsize", 8))
@@ -566,7 +566,7 @@ def plot_flux_and_averaged_intensity_vs_time(
         Dictionary bundling options:
         - 'source_tool' (str | None): Source tool name (base color: black).
         - 'target_tool' (str | None): Target tool name (base color: red).
-        - 'connect_lines' / 'show_lines' (bool): Connect chronological points
+        - 'connect_lines' (bool): Connect chronological points
           per tool and die group (default False).
         - 'die_groups' (dict[str, list[int]] | None): Mapping of 'center',
           'donut', 'edge' to die indices (default: center: [0], donut: [5-8],
@@ -669,7 +669,7 @@ def plot_flux_and_averaged_intensity_vs_time(
         **dict(
             zip(u_tools, ["tab:blue", "tab:green", "tab:purple", "tab:orange"])
         ),
-        **(cfg.get("tool_base_colors") or cfg.get("palette") or {}),
+        **(cfg.get("tool_base_colors") or {}),
     }
     pal.update(
         {
@@ -684,7 +684,7 @@ def plot_flux_and_averaged_intensity_vs_time(
         cfg.get("axes"), cfg.get("figsize", (10, 7)), 2, 1, sharex=True
     )
     panels = [(ax_flux, "total_flux"), (ax_int, "avg_intensity")]
-    conn = bool(cfg.get("connect_lines", cfg.get("show_lines", False)))
+    conn = bool(cfg.get("connect_lines", False))
     styles = {
         "center": (50.0, 0.95, 3, "-", 1.4),
         "donut": (38.0, 0.85, 2, "--", 1.0),

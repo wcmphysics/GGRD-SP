@@ -43,7 +43,7 @@ class TestSpectralPatching(unittest.TestCase):
         """Verify explicit point override in configuration."""
         w_pts, s_pts = calculate_window_points(
             self.energy,
-            config={"window_size_points": 15, "sliding_stride_points": 5},
+            config={"window_size": 15, "stride": 5},
         )
         self.assertEqual(w_pts, 15)
         self.assertEqual(s_pts, 5)
@@ -58,13 +58,13 @@ class TestSpectralPatching(unittest.TestCase):
             calculate_window_points(np.array([10.0, 10.0, 10.0]))  # delta_e == 0
 
         with self.assertRaises(ValueError):
-            calculate_window_points(energy, config={"window_size_points": 0})
+            calculate_window_points(energy, config={"window_size": 0})
 
         with self.assertRaises(ValueError):
             calculate_window_points(energy, config={"window_size_ev": -1.0})
 
         with self.assertRaises(ValueError):
-            calculate_window_points(energy, config={"sliding_stride_points": -2})
+            calculate_window_points(energy, config={"stride": -2})
 
         with self.assertRaises(ValueError):
             calculate_window_points(energy, config={"sliding_stride_ev": 0.0})

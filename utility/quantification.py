@@ -121,7 +121,7 @@ def get_default_quantification_config() -> dict[str, Any]:
         - 'default_endpoint_strategy': 'minima' ('minima', 'edge', or 'direct')
         - 'default_endpoint_average_ev': 1.0 (average over 1.0 eV window)
         - 'region_endpoint_config': None (optional per-region overrides)
-        - 'smooth_endpoints_search': False
+        - 'smooth_search': False
         - 'max_iter': 50
         - 'tol': 1e-5
     """
@@ -132,7 +132,7 @@ def get_default_quantification_config() -> dict[str, Any]:
         "default_endpoint_strategy": "minima",
         "default_endpoint_average_ev": 1.0,
         "region_endpoint_config": None,
-        "smooth_endpoints_search": False,
+        "smooth_search": False,
         "max_iter": 50,
         "tol": 1e-5,
     }

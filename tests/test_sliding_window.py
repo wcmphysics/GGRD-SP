@@ -116,7 +116,10 @@ class TestSlidingWindowPipeline(unittest.TestCase):
             optimize_model_hyperparameters(
                 self.train_ds,
                 self.val_ds,
-                config={"model_type": "resnet", "lr_bounds": (0.01, 0.001)},
+                config={
+                    "model_type": "resnet",
+                    "learning_rate_bounds": (0.01, 0.001),
+                },
             )
         with self.assertRaises(ValueError):
             optimize_model_hyperparameters(
