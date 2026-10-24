@@ -11,10 +11,10 @@ The codes will be composed of the following key stages
    - store the regional spectrum data (arrays of intensity and binding energy) and meta data separately
    - store regional spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
    - store regional binding energy as 2d numpy array `ary_energy` where the nth row is the nth binding energy array in eV (ascending order)
-   - Note that one array in `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` will be (`N_measurement`*`N_die`*`N_region`, `N_points`).
+   - Note that one array in `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` is (`N_measurement`*`N_die`*`N_region`, `N_points`).
    - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded
    - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array (`spectrum_index`)
-   - it is possible to have many kinds of materials in the data
+   - the meta data dataframe `df_meta` serves as a body to carry information for all spectra and will be enriched by other information later
    - physical spectral flux and mean intensity metrics are extracted via numerical trapezoidal integration over binding energy:
       - regional flux (`total_flux_single_region`) and regional mean intensity (`mean_intensity_single_region`)
       - die-level total flux (`total_flux_single_die`): summation of integrated flux among all regions for that specific die and measurement session
@@ -23,16 +23,15 @@ The codes will be composed of the following key stages
 2. Pairing source and target spectra
    - allow users to specify source tool (`source_tool`) and target tool (`target_tool`) in config
    - for every measurement in the source tool, we find/map a measurement from the target tool
-   - this source to target mapping must be 1-to-1 (no multiple source measurement is linked to the same target measurement)
+   - this source to target mapping is 1-to-1 (no multiple source measurement is linked to the same target measurement)
    - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accordingly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement)
    - the time difference between source and target measurement should be lower than a user-specified threshold (`time_threshold_hours`, default to 12 hours), utilizing optimal bipartite matching or greedy temporal matching
-   - store this pairing information in the meta data dataframe (add columns like `tool_target`, `measurement_id_target`, `spectrum_index_target`, `time_target`, `time_diff_hours`)
+   - pairing information is stored in the meta data dataframe (add columns like `tool_target`, `measurement_id_target`, `spectrum_index_target`, `time_target`, `time_diff_hours`)
    - establish canonical zero-based integer indexing for neural network categorical conditioning:
       - `tool_index`: integer index mapping for source tool
       - `tool_target_index`: integer index mapping for target tool
       - `region_index`: integer index mapping for each regional spectrum
 3. Normalization of spectral data
-   - need a dedicated config for this part
    - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
    - 5 options for performing normalization: 'by_total_flux_single_die' (default), 'by_regional_max_intensity', 'by_regional_max_intensity_of_source', 'by_mean_intensity_single_die', or 'no_normalization'
    - for normalization by total flux (`by_total_flux_single_die`), intensity of every regional spectrum from a die in a measurement was divided by the total flux of that die in that measurement (`total_flux_single_die`, summation of flux among all regions for that specific die and that specific measurement)
