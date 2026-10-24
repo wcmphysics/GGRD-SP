@@ -3,7 +3,7 @@ This is a sequence-to-sequence Machine Learning project that try to find how to 
 
 ## Program Structure
 The codes will be composed of the following key stages
-1. Spectrum data reading or generation and physical metric extraction
+1. Spectrum data reading or generation
    - there are many kinds of materials for the specimen under XPS measurement (defined in config)
    - 1 XPS measurement session gives many (specified by `N_die` and defaulted to `9`) full spectra
    - 1 full spectrum contains many (specified by `N_region` depending on material) regions (or called regional spectra)
@@ -15,11 +15,6 @@ The codes will be composed of the following key stages
    - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded
    - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array (`spectrum_index`)
    - the meta data dataframe `df_meta` serves as a body to carry information for all spectra and will be enriched by other information later
-   - physical spectral flux and mean intensity metrics are extracted via numerical trapezoidal integration over binding energy:
-      - regional flux (`total_flux_single_region`) and regional mean intensity (`mean_intensity_single_region`)
-      - die-level total flux (`total_flux_single_die`): summation of integrated flux among all regions for that specific die and measurement session
-      - die-level mean intensity (`mean_intensity_single_die`): average intensity across all regional points for that specific die and measurement session
-      - both die-level metrics are added directly into `df_meta`
 2. Pairing source and target spectra
    - allow users to specify source tool (`source_tool`) and target tool (`target_tool`) in config
    - for every measurement in the source tool, we find/map a measurement from the target tool
@@ -27,22 +22,8 @@ The codes will be composed of the following key stages
    - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accordingly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement)
    - the time difference between source and target measurement should be lower than a user-specified threshold (`time_threshold_hours`, default to 12 hours), utilizing optimal bipartite matching or greedy temporal matching
    - pairing information is stored in the meta data dataframe (add columns like `target_tool`, `target_measurement_id`, `target_spectrum_index`, `target_time`, `time_diff_hours`, `target_t7_code`)
-   - establish canonical zero-based integer indexing for neural network categorical conditioning:
-      - `source_tool_index`: integer index mapping for source tool
-      - `target_tool_index`: integer index mapping for target tool
-      - `region_index`: integer index mapping for each regional spectrum
-3. Normalization of spectral data
-   - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
-   - 5 options for performing normalization: 'by_total_flux_single_die' (default), 'by_regional_max_intensity', 'by_regional_max_intensity_of_source', 'by_mean_intensity_single_die', or 'no_normalization'
-   - for normalization by total flux (`by_total_flux_single_die`), intensity of every regional spectrum from a die in a measurement was divided by the total flux of that die in that measurement (`total_flux_single_die`, summation of flux among all regions for that specific die and that specific measurement)
-   - for normalization by regional maximum intensity (`by_regional_max_intensity`), intensity of a regional spectrum is divided by the maximum intensity of that specific regional spectrum
-   - for normalization by source regional maximum intensity (`by_regional_max_intensity_of_source`), this normalization is applied to each region individually. For each paired record, both the source regional spectrum and its paired target regional spectrum are divided by the maximum intensity of that source regional spectrum. Unpaired spectra are not scaled (left unscaled)
-   - for normalization by mean intensity (`by_mean_intensity_single_die`), intensity of a regional spectrum is divided by the mean intensity across all regional points for that die in that measurement (`mean_intensity_single_die`)
-   - for no normalization (`no_normalization`), intensity array is left unscaled
-   - defensive scale clamping against near-zero scales using configurable `eps`
-   - output are `ary_intensity` (normalization applied), `ary_energy`, and `df_meta`
-4. Train-val-test data splitting and feature standardization
-   - need a dedicated config for this part
+3. Train-val-test data splitting
+   - need a dedicated config for this part (`splitting`)
    - the splitting is based on measurement (session level) and its corresponding dies and regions follow that splitting to prevent spatial and temporal data leakage
    - need to add a `split` column into the meta data `df_meta` to indicate which split a row belongs to
    - the split column can take `train`, `test`, `val`, or `unpaired` (or none) if the measurement is not paired
@@ -51,8 +32,29 @@ The codes will be composed of the following key stages
    - configurable seed for random splitting (default to None)
    - split for direct assignment takes in a dictionary with keys `train`, `val`, and `test` and their values are a list of measurement ids. Check must be made to verify one measurement only appears in one group and the 3 groups take all paired measurements
    - output a session partition dictionary `session_splits` and dictionary `measurement_mapping` with keys being the measurement id from the paired source tool and values being the corresponding paired measurement id from target tool
+4. Pre-processing
+   - encapsulated pre-processing module (`preprocess`) and spectral normalization (`normalize_spectral_data`)
+   - physical spectral flux and mean intensity metrics are extracted via numerical trapezoidal integration over binding energy:
+      - regional flux (`total_flux_single_region`) and regional mean intensity (`mean_intensity_single_region`)
+      - die-level total flux (`total_flux_single_die`): summation of integrated flux among all regions for that specific die and measurement session
+      - die-level mean intensity (`mean_intensity_single_die`): average intensity across all regional points for that specific die and measurement session
+      - both die-level metrics are added directly into `df_meta`
+   - establish canonical zero-based integer indexing for neural network categorical conditioning:
+      - `source_tool_index`: integer index mapping for source tool
+      - `target_tool_index`: integer index mapping for target tool
+      - `region_index`: integer index mapping for each regional spectrum
    - metadata feature standardization (`standardize_metadata_features`): standardizes continuous conditioning variables (`time_standardized`, `total_flux_single_die_standardized`) with mean and standard deviation fitted strictly on the `train` split to prevent information leakage
-5. Gaussian Process die flux modeling
+   - normalization of spectral data:
+      - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
+      - 5 options for performing normalization: 'by_total_flux_single_die' (default), 'by_regional_max_intensity', 'by_regional_max_intensity_of_source', 'by_mean_intensity_single_die', or 'no_normalization'
+      - for normalization by total flux (`by_total_flux_single_die`), intensity of every regional spectrum from a die in a measurement was divided by the total flux of that die in that measurement (`total_flux_single_die`, summation of flux among all regions for that specific die and that specific measurement)
+      - for normalization by regional maximum intensity (`by_regional_max_intensity`), intensity of a regional spectrum is divided by the maximum intensity of that specific regional spectrum
+      - for normalization by source regional maximum intensity (`by_regional_max_intensity_of_source`), this normalization is applied to each region individually. For each paired record, both the source regional spectrum and its paired target regional spectrum are divided by the maximum intensity of that source regional spectrum. Unpaired spectra are not scaled (left unscaled)
+      - for normalization by mean intensity (`by_mean_intensity_single_die`), intensity of a regional spectrum is divided by the mean intensity across all regional points for that die in that measurement (`mean_intensity_single_die`)
+      - for no normalization (`no_normalization`), intensity array is left unscaled
+      - defensive scale clamping against near-zero scales using configurable `eps`
+      - output are `ary_intensity` (normalization applied), `ary_energy`, and `df_meta`
+5. Die flux modeling and prediction
    - need a dedicated config for this part (`gp_flux`)
    - models tool intensity drift, aging, and baseline shifts in die flux over time using exact Gaussian Process regression (GPyTorch)
    - features a composite covariance kernel:
@@ -87,7 +89,7 @@ The codes will be composed of the following key stages
       3. mean-squared error (MSE) between gradient of predicted and true intensity (central difference, default weight=0) to preserve peak inflections and peak shapes
       4. L2 regularization term (default weight=0) penalizing model parameter magnitudes
    - the cost function handles both sliding window patch tensors and full regional spectra
-8. Gaussian Process spectral noise and SNR analysis
+8. Spectral noise and SNR analysis
    - need a dedicated config for this part (`noise_analysis`)
    - fits exact Gaussian Process regression with smooth kernels (Matérn52 or RBF) to individual regional spectra
    - physical signal-noise decomposition: models each measured regional spectrum as y(E) = f(E) + eps, where f(E) is the latent smooth physical signal and eps ~ N(0, sigma^2) represents instrumentation noise
