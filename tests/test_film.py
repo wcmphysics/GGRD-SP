@@ -11,9 +11,18 @@ import torch.nn as nn
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
 from models.film import FiLMGenerator, prepare_film_condition_tensor
-from models.resnet import ResNet1D
+from models.resnet import REQUIRED_RESNET_KEYS, ResNet1D
 from models.trainer import train_one_epoch
 from torch.utils.data import DataLoader
+
+_DEFAULT_RESNET_TEST_CONFIG = {
+    "resnet_channel": 16,
+    "kernel_size": 3,
+    "dropout": 0.0,
+    "use_batch_norm": True,
+    "padding_mode": "reflect",
+    "use_film": False,
+}
 
 
 class TestFiLMModulation(unittest.TestCase):
@@ -104,7 +113,12 @@ class TestFiLMModulation(unittest.TestCase):
         """
         n_points = 50
         model = ResNet1D(
-            n_points=n_points, config={"resnet_channel": 16, "use_film": True}
+            n_points=n_points,
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "resnet_channel": 16,
+                "use_film": True,
+            },
         )
 
         x = torch.randn(4, 1, n_points)
@@ -137,7 +151,12 @@ class TestFiLMModulation(unittest.TestCase):
         """
         n_points = 40
         model = ResNet1D(
-            n_points=n_points, config={"resnet_channel": 8, "use_film": False}
+            n_points=n_points,
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "resnet_channel": 8,
+                "use_film": False,
+            },
         )
         x = torch.ones(2, 1, n_points)
         out = model(x)
@@ -163,7 +182,12 @@ class TestFiLMModulation(unittest.TestCase):
         loader = DataLoader(ds, batch_size=4, shuffle=False)
 
         model = ResNet1D(
-            n_points=n_points, config={"resnet_channel": 8, "use_film": True}
+            n_points=n_points,
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "resnet_channel": 8,
+                "use_film": True,
+            },
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         criterion = SpectralLoss()
@@ -379,6 +403,7 @@ class TestFiLMModulation(unittest.TestCase):
             ResNet1D(
                 n_points=20,
                 config={
+                    **_DEFAULT_RESNET_TEST_CONFIG,
                     "use_film": True,
                     **all_off_cfg,
                 },
@@ -414,6 +439,7 @@ class TestFiLMModulation(unittest.TestCase):
         model = ResNet1D(
             n_points=n_pts,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
                 "use_film": True,
                 "use_sliding_window": False,
@@ -553,6 +579,7 @@ class TestFiLMModulation(unittest.TestCase):
         model = ResNet1D(
             n_points=patch_len,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 16,
                 "use_film": True,
                 "use_sliding_window": True,
@@ -613,6 +640,7 @@ class TestFiLMModulation(unittest.TestCase):
         sw_model = ResNet1D(
             n_points=10,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
                 "kernel_size": 3,
                 "use_film": True,

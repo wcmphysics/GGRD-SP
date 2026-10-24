@@ -118,6 +118,11 @@ class TestCostFunctions(unittest.TestCase):
                 "batch_size": 2,
                 "model_type": "resnet",
                 "resnet_channel": 4,
+                "kernel_size": 3,
+                "dropout": 0.0,
+                "use_batch_norm": True,
+                "padding_mode": "reflect",
+                "use_film": False,
             },
         )
         self.assertIn("best_val_loss", res)

@@ -14,6 +14,21 @@ from models.inference import predict_sliding_window_spectrum
 from models.resnet import ResNet1D
 from models.trainer import evaluate_sliding_window, train_model_region
 
+_DEFAULT_RESNET_TEST_CONFIG = {
+    "resnet_channel": 8,
+    "kernel_size": 3,
+    "dropout": 0.0,
+    "use_batch_norm": True,
+    "padding_mode": "reflect",
+    "use_film": False,
+}
+_DEFAULT_RESNET_FIXED_CONFIG = {
+    "dropout": 0.0,
+    "use_batch_norm": True,
+    "padding_mode": "reflect",
+    "use_film": False,
+}
+
 
 class TestSlidingWindowPipeline(unittest.TestCase):
     """Test cases for dataset, training, evaluation, and Ax tuning with
@@ -42,7 +57,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_predict_sliding_window_spectrum(self) -> None:
         """Test single spectrum prediction and full length reconstruction."""
-        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5}
@@ -51,7 +66,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
-        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
         crit = SpectralLoss({"l2_weight": 0.0})
         loss = evaluate_sliding_window(
             model=model,
@@ -68,12 +83,11 @@ class TestSlidingWindowPipeline(unittest.TestCase):
             self.train_ds,
             self.val_ds,
             config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
                 "model_type": "resnet",
                 "use_sliding_window": True,
                 "window_size": 15,
                 "stride": 5,
-                "resnet_channel": 8,
-                "kernel_size": 3,
                 "epochs": 3,
                 "batch_size": 16,
                 "verbose": False,
@@ -90,6 +104,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
             self.train_ds,
             self.val_ds,
             config={
+                **_DEFAULT_RESNET_FIXED_CONFIG,
                 "model_type": "resnet",
                 "use_sliding_window": True,
                 "num_trials": 2,
@@ -229,7 +244,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         """Verify predict and evaluate functions with config dictionaries
         adhering to Rule 7.
         """
-        model = ResNet1D(n_points=15, config={"resnet_channel": 8, "kernel_size": 3})
+        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5, "batch_size": 32}
