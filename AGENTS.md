@@ -3,127 +3,172 @@ This is a sequence-to-sequence Machine Learning project that try to find how to 
 
 ## Program Structure
 The codes will be composed of the following key stages
-1. Spectrum data reading or generation
-   - there are many kinds of materials for the specimen under XPS measurement
-   - 1 XSP measurement gives many (specified by `N_die` and defaulted to `9`) full spectra
+1. Spectrum data reading or generation and physical metric extraction
+   - there are many kinds of materials for the specimen under XPS measurement (defined in config)
+   - 1 XPS measurement session gives many (specified by `N_die` and defaulted to `9`) full spectra
    - 1 full spectrum contains many (specified by `N_region` depending on material) regions (or called regional spectra)
-   - one region has `N_points` data points
+   - one region has `N_points` data points over binding energy
    - store the regional spectrum data (arrays of intensity and binding energy) and meta data separately
    - store regional spectrum intensity as 2d numpy array `ary_intensity` where the nth row is the nth intensity array
-   - store regional bidning energy as 2d numpy array `ary_energy` where the nth row is the nth binding energy array
-   - Note that one array in the `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` will be (`N_measurement`*`N_die`*`N_region`, `N_points`).
-   - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded 
-   - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array
-   - it is possible to have many kinds of materials in the data.
+   - store regional binding energy as 2d numpy array `ary_energy` where the nth row is the nth binding energy array in eV (ascending order)
+   - Note that one array in `ary_intensity` or `ary_energy` is one regional spectrum for one specific material, one specific measurement, one specific die, and one specific region. The shape of `ary_intensity` or `ary_energy` will be (`N_measurement`*`N_die`*`N_region`, `N_points`).
+   - meta data (`df_meta`) is a pandas dataframe containing all meta data of the spectra recorded
+   - meta data includes: material, tool and time of measurement, die, region, number of points in one spectrum, and the corresponding index in the intensity and energy array (`spectrum_index`)
+   - it is possible to have many kinds of materials in the data
+   - physical spectral flux and mean intensity metrics are extracted via numerical trapezoidal integration over binding energy:
+      - regional flux (`total_flux_single_region`) and regional mean intensity (`mean_intensity_single_region`)
+      - die-level total flux (`total_flux_single_die`): summation of integrated flux among all regions for that specific die and measurement session
+      - die-level mean intensity (`mean_intensity_single_die`): average intensity across all regional points for that specific die and measurement session
+      - both die-level metrics are added directly into `df_meta`
 2. Pairing source and target spectra
-   - allow users to specify source tool and target tool
-   - for every measurement in the source tool, we find/map a measurement
-     from the target tool
-   - this source to target mapping must be 1-to-1 (no multiple source
-     measurement is linked to the same target measurement)
-   - the mapping maps measurements from the source tool to the target tool,
-     the die and region in that measurement will also be paired accordingly
-     (spectrum from die A region B of the source measurement will map to the
-     same die A and the same region B in the target measurement)
-   - the time difference between source and target measurement should be lower
-     than a user-specified threshold (default to 12 hours)
-   - store this pairing information in the meta data dataframe (add columns
-     like tool_target, measurement_id_target, spectrum_index_target)
+   - allow users to specify source tool (`source_tool`) and target tool (`target_tool`) in config
+   - for every measurement in the source tool, we find/map a measurement from the target tool
+   - this source to target mapping must be 1-to-1 (no multiple source measurement is linked to the same target measurement)
+   - the mapping maps measurements from the source tool to the target tool, the die and region in that measurement will also be paired accordingly (spectrum from die A region B of the source measurement will map to the same die A and the same region B in the target measurement)
+   - the time difference between source and target measurement should be lower than a user-specified threshold (`time_threshold_hours`, default to 12 hours), utilizing optimal bipartite matching or greedy temporal matching
+   - store this pairing information in the meta data dataframe (add columns like `tool_target`, `measurement_id_target`, `spectrum_index_target`, `time_target`, `time_diff_hours`)
+   - establish canonical zero-based integer indexing for neural network categorical conditioning:
+      - `tool_index`: integer index mapping for source tool
+      - `tool_target_index`: integer index mapping for target tool
+      - `region_index`: integer index mapping for each regional spectrum
 3. Normalization of spectral data
    - need a dedicated config for this part
    - inputs are `ary_intensity`, `ary_energy`, and `df_meta`
-   - 5 options for performing normalization: 'by_total_flux_single_die' (default),
-     'by_regional_max_intensity', 'by_regional_max_intensity_of_source',
-     'by_mean_intensity_single_die', or 'no_normalization'
-   - for normalization by total flux, intensity of every regional spectra from a
-     die in a measurement was divided by the total flux of that die in that
-     measurement (summation of flux among all regions for that specific die and
-     that specific measurement)
-   - for normalization by regional maximum intensity, intensity of a regional
-     spectrum is divided by the maximum intensity of that specific regional
-     spectrum
-   - for normalization by source regional maximum intensity
-     ('source_regional_max'), this normalization is applied to each region
-     individually. For each paired record, both the source regional spectrum
-     and its paired target regional spectrum are divided by the maximum
-     intensity of that source regional spectrum. Unpaired spectra are not
-     scaled (left unscaled)
-   - for no normalization ('no_normalization'), intensity array is left unscaled
-   - output are `ary_intensity` (normalization applied), `ary_energy`, and
-     `df_meta`
-4. Train-val-test data splitting 
+   - 5 options for performing normalization: 'by_total_flux_single_die' (default), 'by_regional_max_intensity', 'by_regional_max_intensity_of_source', 'by_mean_intensity_single_die', or 'no_normalization'
+   - for normalization by total flux (`by_total_flux_single_die`), intensity of every regional spectrum from a die in a measurement was divided by the total flux of that die in that measurement (`total_flux_single_die`, summation of flux among all regions for that specific die and that specific measurement)
+   - for normalization by regional maximum intensity (`by_regional_max_intensity`), intensity of a regional spectrum is divided by the maximum intensity of that specific regional spectrum
+   - for normalization by source regional maximum intensity (`by_regional_max_intensity_of_source`), this normalization is applied to each region individually. For each paired record, both the source regional spectrum and its paired target regional spectrum are divided by the maximum intensity of that source regional spectrum. Unpaired spectra are not scaled (left unscaled)
+   - for normalization by mean intensity (`by_mean_intensity_single_die`), intensity of a regional spectrum is divided by the mean intensity across all regional points for that die in that measurement (`mean_intensity_single_die`)
+   - for no normalization (`no_normalization`), intensity array is left unscaled
+   - defensive scale clamping against near-zero scales using configurable `eps`
+   - output are `ary_intensity` (normalization applied), `ary_energy`, and `df_meta`
+4. Train-val-test data splitting and feature standardization
    - need a dedicated config for this part
-   - the splitting is based on measurement and its corresponding dies and regions follow that splitting
-   - need to add a `split` column into the meta data `df_meta` to indicates which split a row belongs to
-   - the split column can take `train`, `test`, `val`, or none if the measurement is not paired
-   - allow for setting up splitting ratio for train, val, and test.
+   - the splitting is based on measurement (session level) and its corresponding dies and regions follow that splitting to prevent spatial and temporal data leakage
+   - need to add a `split` column into the meta data `df_meta` to indicate which split a row belongs to
+   - the split column can take `train`, `test`, `val`, or `unpaired` (or none) if the measurement is not paired
+   - allow for setting up splitting ratio for train, val, and test (`train_ratio`, `val_ratio`, `test_ratio`)
    - 2 options for splitting: (1) random and (2) direct assignment
    - configurable seed for random splitting (default to None)
-   - split for direct assignment takes in a dictionary with keys `train`, `val`, and `test` and their values are a list of measurement ids. Check must be made to verify one measurement only appears in one group and the 3 groups takes all paired measurements.
-   - need to also output a dictionary `measurement_mapping` with keys being the measurement id from the paired source tool and the values are the corresponding paired measurement id from target tool.  
-5. Data set and data loader definition
+   - split for direct assignment takes in a dictionary with keys `train`, `val`, and `test` and their values are a list of measurement ids. Check must be made to verify one measurement only appears in one group and the 3 groups take all paired measurements
+   - output a session partition dictionary `session_splits` and dictionary `measurement_mapping` with keys being the measurement id from the paired source tool and values being the corresponding paired measurement id from target tool
+   - metadata feature standardization (`standardize_metadata_features`): standardizes continuous conditioning variables (`time_normalized`, `total_flux_single_die_standardized`) with mean and standard deviation fitted strictly on the `train` split to prevent information leakage
+5. Gaussian Process die flux modeling
+   - need a dedicated config for this part (`gp_flux`)
+   - models tool intensity drift, aging, and baseline shifts in die flux over time using exact Gaussian Process regression (GPyTorch)
+   - features a composite covariance kernel:
+      1. continuous temporal covariance (RBF or Matérn kernel) capturing smooth drift
+      2. learnable sigmoid step kernel (`SigmoidStepKernel`): k(t1, t2) = sigma_jump^2 * sigmoid(s * (t1 - t0)) * sigmoid(s * (t2 - t0)), with learnable transition time t0 and steepness s capturing abrupt tool maintenance baseline shifts
+      3. categorical die index covariance modeling inter-die spatial correlations across the sample holder
+   - evaluates Mean Absolute Error (MAE) and Mean Absolute Percentage Error (MAPE%) across train, val, and test partitions for source and target tools
+6. Data set and data loader definition (with sliding window patch augmentation)
    - define dataset and data loader in this part
-   - data augmentation by sliding window, or sometimes called patch, is utilized if users turn this option on in the config file 
-   - sliding window should be available to each models and user can specify whether to use it or not 
+   - supports two equal first-class paradigms for dataset organization:
+      1. Regional Datasets: separate dataset bundles (`dataset_train`, `dataset_val`, `dataset_test`) assembled independently for each core-level spectral region
+      2. Unified Dataset: merges all spectral regions into a single unified dataset (`create_unified_dataset`), enabling a single neural network to process all regions conditioned on categorical region embeddings
+   - data augmentation by sliding window, or sometimes called patch, is utilized if users turn this option on in the config file (`use_sliding_window`)
+   - sliding window should be available to each model and user can specify whether to use it or not
    - when sliding window is on, prepare the dataset and data loader accordingly
    - details about sliding window:
       - local sequence transformation using sliding windows (patches) from the source spectrum to the target spectrum
       - window size and sliding stride can be specified in eV (default window size: 6.0 eV, default stride: 2.0 eV) or in data points
       - sliding window slices a regional spectrum into overlapping patches to capture local spectral features and augment training samples
       - right-edge anchoring guarantees 100% spectral coverage using only real physical measurements without artificial boundary padding
-      - patch-to-patch mapping: predicts a target patch of length W for each input window
+      - patch-to-patch mapping: predicts a target patch of length W for each input window (`SpectrumPatchDataset`)
       - the predicted regional spectrum is reconstructed by accumulating and averaging all overlapping predicted slices across that region
       - validation loss and early stopping are evaluated directly on the reconstructed full spectrum
-      - when sliding winodw is used, Bayesian optimization should allow for hyper-parameter search for window size and stride
-6. Cost function defnition and preparation
-   - define cost functions for model to use in this part
-   - need a dedicated config for this part
-   - the cost function is mainly composed of a weighted average error among all regions (default is equal weight for all region but tunable by user via the config)
-   - the error in each region is defined by several weighted components (each weights are configurable ): 
-      1. mean-squared error (MSE) from I_pre/max(I_target) and I_target/max(I_target), with an option to turn off the max(I_target) normalization
-      2. cosine smilarity (default weight=0)
-      3. mean-squared error (MSE) between gradient of predicted and true
-         intensity (central difference, default weight=0)
-      4. L2 regularization term (default weight=0)
-   - the cost function should be able to handle patched dataset when sliding window is turn on
-7. Neural network definition, training, and hyperparamter search (by Bayesian optimization)
-   - need a dedicated config for this part
-   - we want to train a model such that it can find the mapping of spectra from source tool to the target tool, that is, the transformation such that the measurement performed on source tool can be transformed into the measurement performed on the target tool.
-   - the transformation info lies in the paired source and target measurement compiled in the "pairing source and target" step.
-   - we will have many models and each of them can be specified in the config feeding to a main orchestration function
-   - output should contains the trained model (best model from model training and Bayesian optimization of hyper-parameters)
-   - the general architecture and workflow inside a main orchestration function will be: 
-      1. model definition
-      2. definition of hyper-parameter search (Bayesian optimization)
-      3. model training and validation
-   - here are a list of models we want to implement:
-      - ResNet:
-         - the model has one ResNet for each regional spectrum 
-         - the ResNet is composed of 3 CNN and one shortcut (kernel size and step size are hyper-parameters)
-         - padding to maintain the sequence length (by mirrow padding)
-      - Residual U-Net:
+      - when sliding window is used, Bayesian optimization should allow for hyper-parameter search for window size and stride
+7. Cost function definition and preparation
+   - define cost functions for model to use in this part (`SpectralLoss`)
+   - need a dedicated config for this part (`cost`)
+   - the cost function is mainly composed of a weighted average error among all regions (default is equal weight for all regions but tunable by user via the config)
+   - the error in each region is defined by several weighted components (each weight is configurable):
+      1. mean-squared error (MSE) from I_pred/max(I_target) and I_target/max(I_target), with an option (`normalized_by_target_max`) to turn off the max(I_target) normalization
+      2. cosine similarity (1 - cos(I_pred, I_target)) penalizing spectral shape divergence (default weight=0)
+      3. mean-squared error (MSE) between gradient of predicted and true intensity (central difference, default weight=0) to preserve peak inflections and peak shapes
+      4. L2 regularization term (default weight=0) penalizing model parameter magnitudes
+   - the cost function handles both sliding window patch tensors and full regional spectra
+8. Gaussian Process spectral noise and SNR analysis
+   - need a dedicated config for this part (`noise_analysis`)
+   - fits exact Gaussian Process regression with smooth kernels (Matérn52 or RBF) to individual regional spectra
+   - physical signal-noise decomposition: models each measured regional spectrum as y(E) = f(E) + eps, where f(E) is the latent smooth physical signal and eps ~ N(0, sigma^2) represents instrumentation noise
+   - supports homoscedastic noise or Poisson-scaled intensity-dependent noise models
+   - quantifies intrinsic regional noise standard deviation sigma and signal-to-noise ratio (SNR)
+   - appends extracted diagnostic columns directly to `df_meta`: `gp_noise_sigma`, `gp_snr`, and `gp_lengthscale`
+9. Neural network definition, training, and hyperparameter search (by Bayesian optimization)
+   - need a dedicated config for this part (`training`, `film`, `bayesian_opt`)
+   - we want to train a model such that it can find the mapping of spectra from source tool to the target tool, that is, the transformation such that the measurement performed on source tool can be transformed into the measurement performed on the target tool
+   - the transformation info lies in the paired source and target measurement compiled in the "pairing source and target" step
+   - we have many models and each of them can be specified in the config feeding to a main orchestration function
+   - output should contain the trained model (best model from model training and Bayesian optimization of hyper-parameters)
+   - the general architecture and workflow inside a main orchestration function will be:
+      1. model definition and architecture instantiation
+      2. definition of hyper-parameter search (Bayesian optimization via Ax / BoTorch)
+      3. model training and validation with learning rate scheduling and early stopping
+   - here is a list of models implemented:
+      - ResNet (`resnet`):
+         - convolutional residual network composed of 3 CNN layers and one shortcut (kernel size and step size are hyper-parameters)
+         - padding to maintain the sequence length (by mirror reflection padding)
+      - ResNet-5L (`resnet_5l`):
+         - 5-layer deep convolutional residual network for higher model capacity
+      - ResNet-ScaledShort (`resnet_scaled_short`):
+         - residual network featuring a learnable scaling factor on the identity shortcut path
+      - Residual U-Net (`residual_unet`):
          - this model combines the idea of shortcut and conventional u-net so the target y and input x has the relation "y = x + UNet(x)"
-         - the model has one residual U-Net model for each regional spectrum
-         - the u-net part has a default depth 3 (tunable by user)
-      - U-net:
-         - the same as residual u-net but now no shortcut. Namely from "y = x + UNet(x)" to just "y = UNet(x)".
-         - the model has one U-Net model for each regional spectrum
-   - dedicated 'film_config' enables FiLM; with sliding windows,
-     'encode_energy' encodes patch energy bounds normalized by
-     'energy_scale_ev'.
-8. Prediction from model
-   - use the trained model from the training part to do prediction here
-   - predict target spectra on train/validation/test data for model performance observation later
-   - the output contains intensity, energy, and meta data
-7. Model performance observation
-8. Calculation of atomic percentage for elements by area integration
-   - to get atomic percentage for elements you need to remove background, integrate area, and corrected with sensitivity factors
-   - you do not need to deconvolute peaks, you only need to remove background signal (like using Shirley or other common functions)
-   - there should be a build-in table for relative sensitivity factor (RSF) so user can modify
+         - default depth 3 (tunable by user)
+      - U-Net (`unet`):
+         - conventional encoder-decoder U-Net without shortcut: from "y = x + UNet(x)" to just "y = UNet(x)"
+      - DeepLabV3 (`deeplabv3`):
+         - 1D Atrous Spatial Pyramid Pooling (ASPP) network capturing multi-scale context through parallel dilated convolutions
+   - Feature-wise Linear Modulation (FiLM):
+      - dynamically modulates intermediate convolutional feature maps: h' = gamma(c) * h + beta(c)
+      - multi-attribute condition vector c encodes: die index, source tool index, target tool index, standardized measurement time, standardized source die flux, region index, relative intensity, patch energy bounds normalized by `energy_scale_ev`, and material element multi-hot vector without target leakage
+   - Hyperparameter search via Ax Bayesian Optimization:
+      - tunes learning rate, L2 regularization weight, batch size, convolutional kernel size, channel capacities, network depth, and sliding window parameters
+      - employs ReduceLROnPlateau or CosineAnnealingLR schedulers and validation early stopping
+10. Prediction from model
+   - dedicated configuration section (`prediction`)
+   - use the trained model from the training part to predict target spectra on train/validation/test data for model performance observation later
+   - for sliding window models, slices input spectra into patches, conditions on patch energy bounds, and reconstructs full continuous spectra via overlap accumulation and averaging
+   - supports non-negative clamping (`clamp_non_negative: true`) to preserve physical intensity bounds
+   - preserves energy grids and source metadata
+   - output contains predicted intensity, energy, and meta data: `(ary_intensity_pred, ary_energy_pred, df_meta_pred)`
+11. Quantitative model evaluation
+   - dedicated configuration section (`metrics_report`)
+   - computes numerical metrics comparing predicted spectra against ground truth target spectra per sample and aggregated per region:
+      - Normalized MSE and Raw RMSE
+      - Peak Relative Error % (`peak_err%`): relative error at the ground truth peak maximum location
+      - Maximum Absolute Error % (`max%err`): maximum point-wise relative deviation across the regional spectrum
+   - formats structured side-by-side comparison tables across train and test partitions
+12. Calculation of atomic percentage for elements by area integration (Quantification)
+   - dedicated configuration section (`quantification`)
+   - to get atomic percentage for elements you need to remove background, integrate area, and correct with sensitivity factors
+   - you do not need to deconvolute peaks, you only need to remove background signal using iterative Shirley background subtraction:
+      - flexible endpoint determination strategies: local minima search (`minima`), boundary edge points (`edge`), or explicit energy points (`direct`), with mirror-padded boundary averaging over an eV window
+      - iterates to numerical convergence bounded by `max_iter` and tolerance `tol`
+   - integrate net peak areas via numerical trapezoidal integration after background removal
+   - relative sensitivity factors (RSF) are read strictly from `quantification.rsf_table` in `config/default_config.yaml`
+   - normalize scaled areas row-wise to 100% atomic percentage per measurement session and die
+   - evaluate Mean Absolute Error (MAE) and base MAE between source, target, and predicted atomic percentages across splits and elements
+13. Diagnostic visualization dispatching
+   - dedicated configuration section (`visualization`)
+   - centralized dispatching module driven by boolean toggles in YAML config
+   - supported diagnostic plots:
+      - GP die flux timelines and maintenance step tracking
+      - temporal pairing timeline between source and target tools
+      - flux and averaged intensity vs. measurement time
+      - Shirley background subtraction and endpoint overlays
+      - spectral noise decomposition and SNR curves
+      - GP hyperparameter optimization convergence curves
+      - model training and validation loss progression histories
+      - transformed prediction vs. target spectral comparison overlays
+      - regional spectrum intensity distributions
+      - atomic percentage distributions and Mean Absolute Error (MAE) box/bar plots across splits
+      - sliding window patch decomposition and reconstruction slices
 
 ## Tech Stack
 - Python 3
-- Scikit-learn, PyTorch, Pandas, NumPy, SciPy, Ax (for Bayesian optimization)
+- Scikit-learn, PyTorch, GPyTorch, Pandas, NumPy, SciPy, Ax (for Bayesian optimization)
 - Jupyter Notebooks for exploration, Python scripts for utilities.
 
 ## Agent Instructions
