@@ -27,7 +27,7 @@ def load_rsf_table(
     config_or_path : dict[str, Any] | str | Path | None, optional
         Configuration dictionary containing 'quantification.rsf_table' or
         'rsf_table', file path to YAML, or None (defaults to
-        'config/default_config.yaml').
+        'config/config.yaml').
 
     Returns
     -------
@@ -44,7 +44,7 @@ def load_rsf_table(
         If 'rsf_table' content is invalid.
     """
     if config_or_path is None:
-        config_or_path = Path("config/default_config.yaml")
+        config_or_path = Path("config/config.yaml")
 
     if isinstance(config_or_path, (str, Path)):
         p = Path(config_or_path)

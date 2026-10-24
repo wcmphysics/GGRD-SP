@@ -920,7 +920,7 @@ class TestAtomicPercentageVisualization(unittest.TestCase):
         self.assertEqual(ret_ax2, custom_ax2)
         plt.close(fig)
 
-    def test_load_rsf_table_from_default_config(self) -> None:
+    def test_load_rsf_table_from_config(self) -> None:
         """Verify load_rsf_table loads canonical Scofield RSF table from YAML config."""
         rsf_table = load_rsf_table()
         self.assertIsInstance(rsf_table, dict)

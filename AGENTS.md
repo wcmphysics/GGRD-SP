@@ -147,7 +147,7 @@ The codes will be composed of the following key stages
       - flexible endpoint determination strategies: local minima search (`minima`), boundary edge points (`edge`), or explicit energy points (`direct`), with mirror-padded boundary averaging over an eV window
       - iterates to numerical convergence bounded by `max_iter` and tolerance `tol`
    - integrate net peak areas via numerical trapezoidal integration after background removal
-   - relative sensitivity factors (RSF) are read strictly from `quantification.rsf_table` in `config/default_config.yaml`
+   - relative sensitivity factors (RSF) are read strictly from `quantification.rsf_table` in `config/config.yaml`
    - normalize scaled areas row-wise to 100% atomic percentage per measurement session and die
    - evaluate Mean Absolute Error (MAE) and base MAE between source, target, and predicted atomic percentages across splits and elements
 13. Diagnostic visualization dispatching

@@ -318,16 +318,16 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
-def load_default_config(
-    file_path: str | Path = "config/default_config.yaml",
+def load_config(
+    file_path: str | Path = "config/config.yaml",
 ) -> dict[str, Any]:
-    """Load and resolve default pipeline configuration.
+    """Load and resolve pipeline configuration.
 
     Parameters
     ----------
     file_path : str | Path, optional
-        Path to default configuration YAML (default:
-        'config/default_config.yaml').
+        Path to configuration YAML (default:
+        'config/config.yaml').
 
     Returns
     -------

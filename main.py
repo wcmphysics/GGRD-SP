@@ -37,7 +37,7 @@ def main() -> None:
     # =========================================================================
     # GLOBAL SETUP & CONFIGURATIONS (Loaded and resolved from YAML)
     # =========================================================================
-    config = utility.load_default_config("config/default_config.yaml")
+    config = utility.load_config("config/config.yaml")
     show_plots = "--no-plots" not in sys.argv and "--headless" not in sys.argv
 
     # =========================================================================

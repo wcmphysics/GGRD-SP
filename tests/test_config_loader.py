@@ -8,7 +8,7 @@ from pathlib import Path
 
 from utility.config_loader import (
     extract_element_vocabulary,
-    load_default_config,
+    load_config,
     load_material_elements,
     load_yaml,
     resolve_pipeline_config,
@@ -100,9 +100,9 @@ class TestConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_element_vocabulary({})
 
-    def test_load_default_config_pipeline(self) -> None:
-        """Verify default_config.yaml loads with all required stages."""
-        cfg = load_default_config("config/default_config.yaml")
+    def test_load_config_pipeline(self) -> None:
+        """Verify config.yaml loads with all required stages."""
+        cfg = load_config("config/config.yaml")
         required_stages = [
             "materials",
             "global",
@@ -139,7 +139,7 @@ class TestConfigLoader(unittest.TestCase):
         vocab = extract_element_vocabulary(mat_elements)
         self.assertEqual(vocab, sorted(["Al", "C", "Cl", "N", "O", "Si", "Ti"]))
 
-        # Verify resolve_pipeline_config resolution inside load_default_config
+        # Verify resolve_pipeline_config resolution inside load_config
         self.assertIn("material_elements", cfg["film"])
         self.assertIn("element_vocab", cfg["film"])
         self.assertEqual(cfg["pairing"]["source_tool"], cfg["global"]["source_tool"])

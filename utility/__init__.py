@@ -3,7 +3,7 @@
 
 from utility.config_loader import (
     extract_element_vocabulary,
-    load_default_config,
+    load_config,
     load_material_elements,
     load_yaml,
     resolve_pipeline_config,
@@ -52,7 +52,7 @@ __all__ = [
     "load_yaml",
     "load_material_elements",
     "extract_element_vocabulary",
-    "load_default_config",
+    "load_config",
     "resolve_pipeline_config",
     # Data generation
     "generate_pseudo_measurements",
