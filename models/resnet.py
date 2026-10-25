@@ -152,23 +152,20 @@ class ResNet1D(nn.Module):
           (default 3, minimum 2).
     """
 
-    def __init__(
-        self, n_points_generalized: int, config: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, n_points_generalized: int, config: dict[str, Any] | None = None) -> None:
+        
         super().__init__()
-
+        
         cfg = config if config is not None else {}
         self.n_points_generalized = n_points_generalized
 
         # validate config and inputs
         _validate_required_resnet_keys(cfg)
-        kernel_size = cfg["kernel_size"]
-        if kernel_size > self.n_points_generalized:
+        if cfg["kernel_size"] > self.n_points_generalized:
             raise ValueError(
-                f"kernel_size ({kernel_size}) cannot be larger than "
+                f"kernel_size ({cfg["kernel_size"]}) cannot be larger than "
                 f"n_points_generalized ({self.n_points_generalized})."
             )
-
         self.energy_scale_ev = cfg.get("energy_scale_ev", 1000.0)
         self.num_layers = cfg.get("num_layers", 3)
         self.use_film = cfg["use_film"]
@@ -187,11 +184,8 @@ class ResNet1D(nn.Module):
         )
         self.activation = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(cfg["dropout"]) if cfg["dropout"] > 0.0 else nn.Identity()
-        self.film_gen = (
-            FiLMGenerator([cfg["resnet_channel"]] * (self.num_layers - 1), config=cfg)
-            if self.use_film
-            else None
-        )
+        self.film_gen = (FiLMGenerator([cfg["resnet_channel"]] * (self.num_layers - 1), config=cfg)
+                         if self.use_film else None)
 
     def _get_film_modulations(self, cond: dict[str, torch.Tensor] | torch.Tensor | None
                              ) -> list[tuple[torch.Tensor, torch.Tensor]] | None:
@@ -217,11 +211,7 @@ class ResNet1D(nn.Module):
 
         return self.conv_out(hidden_features)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cond: dict[str, torch.Tensor] | torch.Tensor | None = None,) -> torch.Tensor:
         """Apply residual transformation: y = x + Delta(x, cond).
 
         Parameters
