@@ -260,6 +260,14 @@ The codes will be composed of the following key stages
    - Pipeline configuration in `config/config.yaml` is validated at load boundaries via Pydantic schema (`utility/config_schema.py`).
    - Maintain editor autocomplete and hover docs via `# yaml-language-server: $schema=config.schema.json`.
    - Avoid lengthy in-code default fallback blocks: put default values in YAML/schema. Check only for missing required keys (raise informative exceptions); allow extra keys cleanly without manual disallowed-key sets.
+   - Avoid Redundant In-Code Type Casting and Static Property Checks:
+     When configuration hyperparameters are validated and typed by Pydantic
+     schemas (e.g. `TrainConfig`), downstream model constructors and layer
+     initializers must NOT apply redundant type casts (`int()`, `float()`,
+     `bool()`, `str()`) or duplicate static checks (positive or odd integers).
+     In-code model validation must strictly focus on dynamic runtime invariants
+     that Pydantic cannot evaluate at load time
+     (e.g., `kernel_size <= n_points_generalized`).
 
 # Code Modification Rules (CRITICAL - Strictly Enforced)
 1. **Surgical Edits Only (Minimal Diff)**:
