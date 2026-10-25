@@ -82,26 +82,13 @@ def _build_hidden_conv_and_norm_layers(
 def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Build dedicated FiLM configuration for the scaled shortcut connection.
 
-    Disables energy bounds if global sample attributes (die, tool, flux, time)
-    are active, ensuring shortcut gain reflects global tool scaling.
+    Disables sliding window and energy bound encoding so shortcut gain reflects
+    only global sample and tool attributes.
     """
-    has_global_condition = any([
-        cfg.get("encode_die", True),
-        cfg.get("encode_tool", True),
-        cfg.get("encode_flux", True),
-        cfg.get("encode_time", True),
-        cfg.get("encode_region", False),
-        cfg.get("encode_relative_intensity", False),
-        cfg.get("encode_elements", False),
-    ])
     return {
         **cfg,
         "use_sliding_window": False,
-        "encode_energy": (
-            False
-            if has_global_condition
-            else bool(cfg.get("encode_energy", False))
-        ),
+        "encode_energy": False,
     }
 
 
