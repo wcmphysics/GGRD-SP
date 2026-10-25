@@ -375,6 +375,8 @@ class TrainConfig(BaseModel):
     padding_mode: str = "reflect"
     use_film: bool = False
     energy_scale_ev: float = Field(1000.0, gt=0.0)
+    num_layers: int = Field(3, ge=2)
+    film_internal_layers: bool = True
     model_config = ConfigDict(extra="allow")
 
     @field_validator("kernel_size")

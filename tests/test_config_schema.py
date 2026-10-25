@@ -65,6 +65,14 @@ class TestConfigSchema(unittest.TestCase):
             TrainConfig(kernel_size=8)
         self.assertIn("kernel_size must be an odd integer", str(ctx.exception))
 
+    def test_train_config_num_layers_validation(self) -> None:
+        """Verify TrainConfig enforces num_layers >= 2."""
+        tc_valid = TrainConfig(num_layers=3)
+        self.assertEqual(tc_valid.num_layers, 3)
+
+        with self.assertRaises(ValidationError):
+            TrainConfig(num_layers=1)
+
     def test_savgol_window_length_odd_validation(self) -> None:
         """Verify DenoiseSavgolConfig rejects even window lengths."""
         # Valid odd window length
