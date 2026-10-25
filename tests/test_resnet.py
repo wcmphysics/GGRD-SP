@@ -14,7 +14,7 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, create_dataloaders
 from models.inference import format_predicted_measurement_id, predict_spectra
-from models.resnet import REQUIRED_RESNET_KEYS, ResNet1D, ResNet5L1D, ResNetScaledShort1D
+from models.resnet import REQUIRED_RESNET_KEYS, ResNet1D, ResNetScaledShort1D
 from models.trainer import evaluate, instantiate_model, train_model_region
 
 _DEFAULT_RESNET_FIXED_CONFIG = {
@@ -519,8 +519,8 @@ class TestResNetScaledShort1D(unittest.TestCase):
         self.assertIn("lower than the floor min_learning_rate", str(ctx.exception))
 
 
-class TestResNet5L1D(unittest.TestCase):
-    """Test cases for 5-layer ResNet (ResNet5L1D)."""
+class TestResNetNumLayers(unittest.TestCase):
+    """Test cases for ResNet with configurable num_layers."""
 
     def setUp(self) -> None:
         self.cond = {
@@ -532,11 +532,19 @@ class TestResNet5L1D(unittest.TestCase):
         }
 
     def test_layer_count_and_channels(self) -> None:
-        """Verify 5 Conv1d layers and 4 hidden BatchNorm layers."""
-        model = ResNet5L1D(
+        """Verify 5 Conv1d layers and 4 hidden BatchNorm layers when
+        num_layers=5.
+        """
+        model = ResNet1D(
             50,
-            config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 16, "kernel_size": 3},
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "resnet_channel": 16,
+                "kernel_size": 3,
+                "num_layers": 5,
+            },
         )
+
         def _get_conv(layer: nn.Module) -> nn.Conv1d:
             return next(m for m in layer.modules() if isinstance(m, nn.Conv1d))
 
@@ -552,23 +560,29 @@ class TestResNet5L1D(unittest.TestCase):
 
     def test_forward_pass_shape(self) -> None:
         """Verify forward pass output shape matches input (B, 1, N)."""
-        model = ResNet5L1D(
+        model = ResNet1D(
             40,
-            config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3},
+            config={
+                **_DEFAULT_RESNET_TEST_CONFIG,
+                "resnet_channel": 8,
+                "kernel_size": 3,
+                "num_layers": 5,
+            },
         )
         x = torch.randn(4, 1, 40)
         out = model(x)
         self.assertEqual(out.shape, (4, 1, 40))
 
     def test_film_modulation_all_4_hidden_layers(self) -> None:
-        """Verify FiLM modulates all 4 hidden layers."""
-        model = ResNet5L1D(
+        """Verify FiLM modulates all 4 hidden layers when num_layers=5."""
+        model = ResNet1D(
             40,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
                 "kernel_size": 3,
                 "use_film": True,
+                "num_layers": 5,
             },
         )
         self.assertIsNotNone(model.film_gen)
@@ -577,15 +591,25 @@ class TestResNet5L1D(unittest.TestCase):
         out = model(x, self.cond)
         self.assertEqual(out.shape, (2, 1, 40))
 
-    def test_instantiate_model_resnet_5l(self) -> None:
-        """Verify instantiate_model supports 'resnet_5L' and 'resnet_5l'."""
-        m1 = instantiate_model("resnet_5L", 50, _DEFAULT_RESNET_TEST_CONFIG)
-        m2 = instantiate_model("resnet_5l", 50, _DEFAULT_RESNET_TEST_CONFIG)
-        self.assertIsInstance(m1, ResNet5L1D)
-        self.assertIsInstance(m2, ResNet5L1D)
+    def test_instantiate_model_custom_num_layers(self) -> None:
+        """Verify instantiate_model configures num_layers and rejects
+        resnet_5l.
+        """
+        m1 = instantiate_model(
+            "resnet", 50, {**_DEFAULT_RESNET_TEST_CONFIG, "num_layers": 5}
+        )
+        self.assertIsInstance(m1, ResNet1D)
+        self.assertEqual(len(m1.hidden_convs), 4)
 
-    def test_training_and_inference_resnet_5l(self) -> None:
-        """Verify training and inference pipeline with resnet_5L."""
+        with self.assertRaises(ValueError):
+            instantiate_model("resnet_5l", 50, _DEFAULT_RESNET_TEST_CONFIG)
+        with self.assertRaises(ValueError):
+            instantiate_model("resnet_5L", 50, _DEFAULT_RESNET_TEST_CONFIG)
+
+    def test_training_and_inference_resnet_5_layers(self) -> None:
+        """Verify training and inference pipeline with resnet and
+        num_layers=5.
+        """
         x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
         y_raw = (x_raw * 1.05).astype(np.float32)
         meta_list = [
@@ -608,7 +632,8 @@ class TestResNet5L1D(unittest.TestCase):
             train_ds,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
-                "model_type": "resnet_5L",
+                "model_type": "resnet",
+                "num_layers": 5,
                 "use_film": True,
                 "epochs": 2,
                 "resnet_channel": 8,
@@ -616,7 +641,8 @@ class TestResNet5L1D(unittest.TestCase):
             },
         )
         self.assertIn("model", res)
-        self.assertIsInstance(res["model"], ResNet5L1D)
+        self.assertIsInstance(res["model"], ResNet1D)
+        self.assertEqual(len(res["model"].hidden_convs), 4)
         meta_df = pd.DataFrame(meta_list)
         pred_int, pred_eng, pred_df = predict_spectra(
             models={"Al2p": res["model"]},
@@ -626,8 +652,10 @@ class TestResNet5L1D(unittest.TestCase):
         self.assertEqual(pred_int.shape, (8, 40))
         self.assertEqual(len(pred_df), 8)
 
-    def test_ax_bayesian_optimization_resnet_5l(self) -> None:
-        """Verify Ax Bayesian optimization integration for resnet_5L."""
+    def test_ax_bayesian_optimization_resnet_num_layers(self) -> None:
+        """Verify Ax Bayesian optimization integration for resnet with
+        custom num_layers.
+        """
         x_raw = np.random.uniform(10.0, 50.0, size=(8, 40)).astype(np.float32)
         y_raw = (x_raw * 1.05).astype(np.float32)
         train_ds = SpectrumPairDataset(x_raw, y_raw)
@@ -636,7 +664,8 @@ class TestResNet5L1D(unittest.TestCase):
             train_ds,
             config={
                 **_DEFAULT_RESNET_FIXED_CONFIG,
-                "model_type": "resnet_5L",
+                "model_type": "resnet",
+                "num_layers": 5,
                 "num_trials": 2,
                 "epochs_per_trial": 2,
                 "kernel_sizes": [3],
