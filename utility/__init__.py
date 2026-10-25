@@ -8,6 +8,7 @@ from utility.config_loader import (
     load_yaml,
     resolve_pipeline_config,
 )
+from utility.config_schema import PipelineConfig
 from utility.evaluation import (
     calculate_prediction_metrics,
     format_side_by_side_metrics,
@@ -53,6 +54,7 @@ from utility.quantification import (
 
 __all__ = [
     # Config loading
+    "PipelineConfig",
     "load_yaml",
     "load_material_elements",
     "extract_element_vocabulary",

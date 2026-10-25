@@ -170,6 +170,12 @@ def extract_element_vocabulary(
     return sorted(vocab_set)
 
 
+def _set_if_none(d: dict[str, Any], key: str, value: Any) -> None:
+    """Set d[key] to value if key is not present or has a None value."""
+    if d.get(key) is None:
+        d[key] = value
+
+
 def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     """Resolve and inject cross-section configuration defaults.
 
@@ -228,36 +234,36 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     # 4. Inject into pairing
     pairing = resolved.setdefault("pairing", {})
     if isinstance(pairing, dict):
-        pairing.setdefault("source_tool", source_tool)
-        pairing.setdefault("target_tool", target_tool)
-        pairing.setdefault("material", material)
+        _set_if_none(pairing, "source_tool", source_tool)
+        _set_if_none(pairing, "target_tool", target_tool)
+        _set_if_none(pairing, "material", material)
 
     # 5. Inject into splitting
     splitting = resolved.setdefault("splitting", {})
     if isinstance(splitting, dict):
-        splitting.setdefault("source_tool", source_tool)
-        splitting.setdefault("target_tool", target_tool)
+        _set_if_none(splitting, "source_tool", source_tool)
+        _set_if_none(splitting, "target_tool", target_tool)
 
     # 6. Inject into dataset
     dataset = resolved.setdefault("dataset", {})
     if isinstance(dataset, dict):
-        dataset.setdefault("source_tool", source_tool)
-        dataset.setdefault("target_tool", target_tool)
-        dataset.setdefault("use_sliding_window", use_sliding_window)
-        dataset.setdefault("regions", regions)
+        _set_if_none(dataset, "source_tool", source_tool)
+        _set_if_none(dataset, "target_tool", target_tool)
+        _set_if_none(dataset, "use_sliding_window", use_sliding_window)
+        _set_if_none(dataset, "regions", regions)
 
     # 7. Inject into noise_analysis, denoise, and noise_plot
     noise_analysis = resolved.setdefault("noise_analysis", {})
     if isinstance(noise_analysis, dict):
-        noise_analysis.setdefault("regions", [example_region])
+        _set_if_none(noise_analysis, "regions", [example_region])
 
     denoise_cfg = resolved.setdefault("denoise", {})
     if isinstance(denoise_cfg, dict):
-        denoise_cfg.setdefault("apply_denoise", apply_denoise)
-        denoise_cfg.setdefault("source_tool", source_tool)
-        denoise_cfg.setdefault("target_tool", target_tool)
-        denoise_cfg.setdefault("material", material)
-        denoise_cfg.setdefault("regions", ["Cl2p", "Ti2p"])
+        _set_if_none(denoise_cfg, "apply_denoise", apply_denoise)
+        _set_if_none(denoise_cfg, "source_tool", source_tool)
+        _set_if_none(denoise_cfg, "target_tool", target_tool)
+        _set_if_none(denoise_cfg, "material", material)
+        _set_if_none(denoise_cfg, "regions", ["Cl2p", "Ti2p"])
 
     noise_plot = resolved.setdefault("noise_plot", {})
     if isinstance(noise_plot, dict):
@@ -349,14 +355,19 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def load_config(
     file_path: str | Path = "config/config.yaml",
+    *,
+    validate: bool = True,
 ) -> dict[str, Any]:
-    """Load and resolve pipeline configuration.
+    """Load, validate, and resolve pipeline configuration.
 
     Parameters
     ----------
     file_path : str | Path, optional
         Path to configuration YAML (default:
         'config/config.yaml').
+    validate : bool, optional
+        Whether to validate configuration using Pydantic schema
+        (default: True).
 
     Returns
     -------
@@ -364,4 +375,9 @@ def load_config(
         Fully resolved top-level pipeline configuration dictionary.
     """
     raw = load_yaml(file_path)
+    if validate:
+        from utility.config_schema import PipelineConfig
+
+        validated = PipelineConfig.model_validate(raw)
+        raw = validated.to_dict()
     return resolve_pipeline_config(raw)
