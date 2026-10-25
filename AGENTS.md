@@ -112,10 +112,8 @@ The codes will be composed of the following key stages
       3. model training and validation with learning rate scheduling and early stopping
    - here is a list of models implemented:
       - ResNet (`resnet`):
-         - convolutional residual network composed of 3 CNN layers and one shortcut (kernel size and step size are hyper-parameters)
+         - convolutional residual network composed of configurable CNN layers (default 3 layers, tunable via `num_layers`) and one shortcut (kernel size and step size are hyper-parameters)
          - padding to maintain the sequence length (by mirror reflection padding)
-      - ResNet-5L (`resnet_5l`):
-         - 5-layer deep convolutional residual network for higher model capacity
       - ResNet-ScaledShort (`resnet_scaled_short`):
          - residual network featuring a learnable scaling factor on the identity shortcut path
       - Residual U-Net (`residual_unet`):

@@ -35,8 +35,8 @@ def main() -> None:
     construction, cost preparation, training, prediction, evaluation,
     quantification, and visualization.
 
-    Available model_type: resnet, resnet_5l, resnet_scaled_short,
-    residual_unet, unet, deeplabv3.
+    Available model_type: resnet, resnet_scaled_short, residual_unet, unet,
+    deeplabv3.
     """
     # =========================================================================
     # GLOBAL SETUP & CONFIGURATIONS (Loaded and resolved from YAML)
