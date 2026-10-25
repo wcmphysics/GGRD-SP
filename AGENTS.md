@@ -127,7 +127,8 @@ The codes will be composed of the following key stages
          - 1D Atrous Spatial Pyramid Pooling (ASPP) network capturing multi-scale context through parallel dilated convolutions
    - Feature-wise Linear Modulation (FiLM):
       - dynamically modulates intermediate convolutional feature maps: h' = gamma(c) * h + beta(c)
-      - multi-attribute condition vector c encodes: die index, source tool index, target tool index, standardized measurement time, standardized source die flux, region index, relative intensity, energy bounds normalized by `energy_scale_ev` (patch bounds when sliding window is used, regional bounds when not), and material element multi-hot vector without target leakage
+      - multi-attribute condition vector c encodes: die index, source tool index, target tool index, standardized measurement time, standardized source die flux, region index, relative intensity, energy bounds normalized by `energy_scale_ev`, and material element multi-hot vector without target leakage
+      - FiLM energy encoding roles: CNN convolutional blocks encode window bounds when sliding window is active and regional bounds when inactive; scaled shortcut FiLM (`ResNetScaledShort1D`) unconditionally disables energy bounds (`encode_energy: false`) to ensure tool scaling is uniform and invariant across spectral windows
    - Hyperparameter search via Ax Bayesian Optimization:
       - tunes learning rate, L2 regularization weight, batch size, convolutional kernel size, channel capacities, network depth, and sliding window parameters
       - employs ReduceLROnPlateau or CosineAnnealingLR schedulers and validation early stopping
@@ -257,6 +258,10 @@ The codes will be composed of the following key stages
          `source_atomic_percentage`, `target_atomic_percentage`,
          `predicted_atomic_percentage`, `diff_atomic_percentage`,
          `abs_diff_atomic_percentage`, `base_abs_diff_atomic_percentage`).
+13. **Configuration Schema Validation & Fallback Elimination:**
+   - Pipeline configuration in `config/config.yaml` is validated at load boundaries via Pydantic schema (`utility/config_schema.py`).
+   - Maintain editor autocomplete and hover docs via `# yaml-language-server: $schema=config.schema.json`.
+   - Avoid lengthy in-code default fallback blocks: put default values in YAML/schema. Check only for missing required keys (raise informative exceptions); allow extra keys cleanly without manual disallowed-key sets.
 
 # Code Modification Rules (CRITICAL - Strictly Enforced)
 1. **Surgical Edits Only (Minimal Diff)**:
