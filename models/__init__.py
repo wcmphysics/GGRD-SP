@@ -44,7 +44,7 @@ from models.inference import (
 from models.orchestration import (
     perform_model_training_and_bayesian_optimization,
 )
-from models.resnet import ResNet1D, ResNet5L1D, ResNetScaledShort1D
+from models.resnet import ResNet1D, ResNetScaledShort1D
 from models.trainer import (
     evaluate,
     evaluate_sliding_window,
@@ -60,7 +60,6 @@ from models.unet import (
 __all__ = [
     # Models
     "ResNet1D",
-    "ResNet5L1D",
     "ResNetScaledShort1D",
     "UNet1D",
     "ResidualUNet1D",

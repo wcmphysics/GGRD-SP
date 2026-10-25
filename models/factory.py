@@ -6,12 +6,11 @@ from typing import Any
 import torch.nn as nn
 
 from models.deeplabv3 import DeepLabV3
-from models.resnet import ResNet1D, ResNet5L1D, ResNetScaledShort1D
+from models.resnet import ResNet1D, ResNetScaledShort1D
 from models.unet import ConventionalUNet1D, ResidualUNet1D
 
 MODEL_CLASS_MAP: dict[str, type[nn.Module]] = {
     "resnet": ResNet1D,
-    "resnet_5l": ResNet5L1D,
     "resnet_scaled_short": ResNetScaledShort1D,
     "residual_unet": ResidualUNet1D,
     "unet": ConventionalUNet1D,
@@ -35,8 +34,8 @@ def instantiate_model(
     Parameters
     ----------
     model_type : str
-        Architecture name: 'resnet', 'resnet_5L', 'resnet_scaled_short',
-        'residual_unet', 'unet', or 'deeplabv3'.
+        Architecture name: 'resnet', 'resnet_scaled_short', 'residual_unet',
+        'unet', or 'deeplabv3'.
     seq_len : int
         Input sequence length in data points (full regional spectrum or
         patch length).
@@ -52,7 +51,7 @@ def instantiate_model(
     model_class = MODEL_CLASS_MAP.get(model_type.lower())
     if model_class is None:
         raise ValueError(
-            f"Unknown model_type '{model_type}'. Choose 'resnet', 'resnet_5L', "
+            f"Unknown model_type '{model_type}'. Choose 'resnet', "
             "'resnet_scaled_short', 'residual_unet', 'unet', or 'deeplabv3'."
         )
     return model_class(seq_len, config=config or {})

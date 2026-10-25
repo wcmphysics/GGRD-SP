@@ -148,6 +148,8 @@ class ResNet1D(nn.Module):
           (default 'reflect').
         - 'use_film' (bool): Whether to enable Feature-wise Linear Modulation
           conditioning (default False).
+        - 'num_layers' (int): Total number of convolutional layers
+          (default 3, minimum 2).
     """
 
     def __init__(
@@ -160,34 +162,36 @@ class ResNet1D(nn.Module):
 
         # validate config and inputs
         _validate_required_resnet_keys(cfg)
-        resnet_channel = cfg["resnet_channel"]
         kernel_size = cfg["kernel_size"]
         if kernel_size > self.n_points_generalized:
             raise ValueError(
                 f"kernel_size ({kernel_size}) cannot be larger than "
                 f"n_points_generalized ({self.n_points_generalized})."
             )
-        dropout = cfg["dropout"]
-        use_batch_norm = cfg["use_batch_norm"]
-        padding_mode = cfg["padding_mode"]
-        self.use_film = cfg["use_film"]
+
         self.energy_scale_ev = cfg.get("energy_scale_ev", 1000.0)
         self.num_layers = cfg.get("num_layers", 3)
-        num_hidden = self.num_layers - 1
+        self.use_film = cfg["use_film"]
 
         # setup neural-layer components (hidden and output CNNs, activation,
         # dropout, film)
         self.hidden_convs, self.hidden_bns = _build_hidden_conv_and_norm_layers(
-            num_hidden,
-            resnet_channel,
-            kernel_size,
-            padding_mode,
-            use_batch_norm,
+            self.num_layers - 1,
+            cfg["resnet_channel"],
+            cfg["kernel_size"],
+            cfg["padding_mode"],
+            cfg["use_batch_norm"],
         )
-        self.conv_out = build_conv1d_layer((resnet_channel, 1), kernel_size, padding_mode=padding_mode)
+        self.conv_out = build_conv1d_layer(
+            (cfg["resnet_channel"], 1), cfg["kernel_size"], padding_mode=cfg["padding_mode"]
+        )
         self.activation = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
-        self.film_gen = (FiLMGenerator([resnet_channel] * num_hidden, config=cfg) if self.use_film else None)
+        self.dropout = nn.Dropout(cfg["dropout"]) if cfg["dropout"] > 0.0 else nn.Identity()
+        self.film_gen = (
+            FiLMGenerator([cfg["resnet_channel"]] * (self.num_layers - 1), config=cfg)
+            if self.use_film
+            else None
+        )
 
     def _get_film_modulations(self, cond: dict[str, torch.Tensor] | torch.Tensor | None
                              ) -> list[tuple[torch.Tensor, torch.Tensor]] | None:
@@ -341,30 +345,4 @@ class ResNetScaledShort1D(ResNet1D):
         return (gamma_out.unsqueeze(-1) * x) + delta
 
 
-class ResNet5L1D(ResNet1D):
-    """5-layer 1D ResNet: 4 hidden convolutional layers + 1 projection layer.
-
-    Transforms a 1D regional spectrum sequence from source tool to target tool
-    while preserving sequence length: y = x + Delta(x, cond).
-    Features 4 hidden layers of uniform channel width (resnet_channel), mirror
-    padding, identity shortcut, and optional FiLM modulation across all 4
-    hidden layers.
-
-    Parameters
-    ----------
-    n_points_generalized : int
-        Number of spectral data points (length of input regional spectrum or
-        patch window).
-    config : dict[str, Any] | None, optional
-        Configuration dictionary. Accepts standard ResNet1D hyperparameters.
-    """
-
-    def __init__(
-        self, n_points_generalized: int, config: dict[str, Any] | None = None
-    ) -> None:
-        super().__init__(
-            n_points_generalized, {**(config or {}), "num_layers": 5}
-        )
-
-
-__all__ = ["REQUIRED_RESNET_KEYS", "ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
+__all__ = ["REQUIRED_RESNET_KEYS", "ResNet1D", "ResNetScaledShort1D"]
