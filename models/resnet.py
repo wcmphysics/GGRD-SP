@@ -40,15 +40,6 @@ def _validate_required_resnet_keys(cfg: dict[str, Any]) -> None:
                                 "Please ensure they are defined in config.yaml under 'training.train_config'.")
 
 
-def _validate_layer_count(num_layers: int) -> int:
-    """Validate layer count to ensure at least one hidden and one output conv.
-
-    Raises ValueError if num_layers < 2 (cannot form a residual block).
-    """
-    if num_layers < 2: raise ValueError(f"ResNet1D num_layers must be >= 2, got {num_layers}.")
-    return num_layers
-
-
 def _build_hidden_conv_and_norm_layers(
     num_hidden: int,
     resnet_channel: int,
@@ -165,23 +156,23 @@ class ResNet1D(nn.Module):
         super().__init__()
 
         cfg = config if config is not None else {}
-        self.n_points_generalized = int(n_points_generalized)
+        self.n_points_generalized = n_points_generalized
 
         # validate config and inputs
         _validate_required_resnet_keys(cfg)
-        resnet_channel = int(cfg["resnet_channel"])
-        kernel_size = int(cfg["kernel_size"])
+        resnet_channel = cfg["resnet_channel"]
+        kernel_size = cfg["kernel_size"]
         if kernel_size > self.n_points_generalized:
             raise ValueError(
                 f"kernel_size ({kernel_size}) cannot be larger than "
                 f"n_points_generalized ({self.n_points_generalized})."
             )
-        dropout = float(cfg["dropout"])
-        use_batch_norm = bool(cfg["use_batch_norm"])
-        padding_mode = str(cfg["padding_mode"])
-        self.use_film = bool(cfg["use_film"])
-        self.energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
-        self.num_layers = _validate_layer_count(int(cfg.get("num_layers", 3)))
+        dropout = cfg["dropout"]
+        use_batch_norm = cfg["use_batch_norm"]
+        padding_mode = cfg["padding_mode"]
+        self.use_film = cfg["use_film"]
+        self.energy_scale_ev = cfg.get("energy_scale_ev", 1000.0)
+        self.num_layers = cfg.get("num_layers", 3)
         num_hidden = self.num_layers - 1
 
         # setup neural-layer components (hidden and output CNNs, activation,
@@ -302,7 +293,7 @@ class ResNetScaledShort1D(ResNet1D):
                 "Please set 'use_film': True in model config."
             )
 
-        self.film_internal_layers = bool(cfg.get("film_internal_layers", True))
+        self.film_internal_layers = cfg.get("film_internal_layers", True)
         if not self.film_internal_layers:
             self.film_gen = None
 
