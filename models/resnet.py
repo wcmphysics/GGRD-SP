@@ -39,11 +39,8 @@ def _validate_required_resnet_keys(cfg: dict[str, Any]) -> None:
     Raises KeyError if any required configuration key is missing.
     """
     missing = [key for key in REQUIRED_RESNET_KEYS if key not in cfg]
-    if missing:
-        raise KeyError(
-            f"Missing required ResNet config key(s): {missing}. "
-            "Please ensure they are defined in config.yaml under 'training.train_config'."
-        )
+    if missing: raise KeyError(f"Missing required ResNet config key(s): {missing}. "
+                                "Please ensure they are defined in config.yaml under 'training.train_config'.")
 
 
 def _validate_layer_count(num_layers: int) -> int:
@@ -51,8 +48,7 @@ def _validate_layer_count(num_layers: int) -> int:
 
     Raises ValueError if num_layers < 2 (cannot form a residual block).
     """
-    if num_layers < 2:
-        raise ValueError(f"ResNet1D num_layers must be >= 2, got {num_layers}.")
+    if num_layers < 2: raise ValueError(f"ResNet1D num_layers must be >= 2, got {num_layers}.")
     return num_layers
 
 
@@ -68,14 +64,16 @@ def _build_hidden_conv_and_norm_layers(
     Iterates through hidden layers, mapping 1 input channel to resnet_channel
     at layer 0 and preserving resnet_channel across all subsequent layers.
     """
+    
+    # CNN layers (1st layer input channel set to 1 to match input data)
     hidden_convs = [build_conv1d_layer(channels = (1 if i == 0 else resnet_channel, resnet_channel),
                                        kernel_size = kernel_size,
                                        padding_mode = padding_mode,) 
                     for i in range(num_hidden)]
     hidden_convs = nn.ModuleList(hidden_convs)
-        
-    hidden_bns = [nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity()
-                  for _ in range(num_hidden)]
+    
+    # batch norm layers if needed, otherwise just identidy layers
+    hidden_bns = [nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity() for _ in range(num_hidden)]
     hidden_bns = nn.ModuleList(hidden_bns)
     
     return hidden_convs, hidden_bns
