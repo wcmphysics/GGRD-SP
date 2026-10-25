@@ -55,4 +55,4 @@ def instantiate_model(
             f"Unknown model_type '{model_type}'. Choose 'resnet', 'resnet_5L', "
             "'resnet_scaled_short', 'residual_unet', 'unet', or 'deeplabv3'."
         )
-    return model_class(n_points=seq_len, config=config or {})
+    return model_class(seq_len, config=config or {})
