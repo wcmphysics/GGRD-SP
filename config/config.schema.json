@@ -1,0 +1,1531 @@
+{
+  "$defs": {
+    "BayesianOptConfig": {
+      "additionalProperties": true,
+      "description": "Ax Bayesian optimization search space and trial budget.",
+      "properties": {
+        "use_bayesian_opt": {
+          "default": false,
+          "title": "Use Bayesian Opt",
+          "type": "boolean"
+        },
+        "num_trials": {
+          "default": 5,
+          "exclusiveMinimum": 0,
+          "title": "Num Trials",
+          "type": "integer"
+        },
+        "epochs_per_trial": {
+          "default": 15,
+          "exclusiveMinimum": 0,
+          "title": "Epochs Per Trial",
+          "type": "integer"
+        },
+        "verbose": {
+          "default": true,
+          "title": "Verbose",
+          "type": "boolean"
+        },
+        "learning_rate_bounds": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Learning Rate Bounds",
+          "type": "array"
+        },
+        "l2_bounds": {
+          "items": {
+            "type": "number"
+          },
+          "title": "L2 Bounds",
+          "type": "array"
+        },
+        "batch_sizes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Batch Sizes",
+          "type": "array"
+        },
+        "window_size_choices": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Window Size Choices",
+          "type": "array"
+        },
+        "kernel_sizes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Kernel Sizes",
+          "type": "array"
+        },
+        "resnet_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Resnet Channels",
+          "type": "array"
+        },
+        "residual_unet_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Residual Unet Channels",
+          "type": "array"
+        },
+        "unet_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Unet Channels",
+          "type": "array"
+        },
+        "deeplabv3_backbone_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Deeplabv3 Backbone Channels",
+          "type": "array"
+        },
+        "deeplabv3_aspp_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Deeplabv3 Aspp Channels",
+          "type": "array"
+        },
+        "depths": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Depths",
+          "type": "array"
+        }
+      },
+      "title": "BayesianOptConfig",
+      "type": "object"
+    },
+    "CostConfig": {
+      "additionalProperties": true,
+      "description": "Multi-component spectral transfer loss function weights.",
+      "properties": {
+        "w_mse": {
+          "default": 1.0,
+          "minimum": 0.0,
+          "title": "W Mse",
+          "type": "number"
+        },
+        "w_shape": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "W Shape",
+          "type": "number"
+        },
+        "w_gradient": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "W Gradient",
+          "type": "number"
+        },
+        "l2_weight": {
+          "default": 1e-06,
+          "minimum": 0.0,
+          "title": "L2 Weight",
+          "type": "number"
+        },
+        "normalized_by_target_max": {
+          "default": true,
+          "title": "Normalized By Target Max",
+          "type": "boolean"
+        }
+      },
+      "title": "CostConfig",
+      "type": "object"
+    },
+    "DataGenerationConfig": {
+      "additionalProperties": true,
+      "description": "Synthetic spectral data generation parameters.",
+      "properties": {
+        "regions": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Regions",
+          "type": "array"
+        },
+        "region_relative_strengths": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Region Relative Strengths",
+          "type": "object"
+        },
+        "n_points": {
+          "default": 100,
+          "exclusiveMinimum": 1,
+          "title": "N Points",
+          "type": "integer"
+        },
+        "measurements_per_tool": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Measurements Per Tool",
+          "type": "object"
+        },
+        "measurements_per_t7_code": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "title": "Measurements Per T7 Code",
+          "type": "integer"
+        },
+        "interval_hours_range": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            }
+          ],
+          "default": [
+            4.0,
+            24.0
+          ],
+          "title": "Interval Hours Range"
+        },
+        "die_variation_std": {
+          "default": 0.03,
+          "minimum": 0.0,
+          "title": "Die Variation Std",
+          "type": "number"
+        },
+        "noise_relative_std": {
+          "default": 0.015,
+          "minimum": 0.0,
+          "title": "Noise Relative Std",
+          "type": "number"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "tool_offsets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolOffsetConfig"
+          },
+          "title": "Tool Offsets",
+          "type": "object"
+        }
+      },
+      "required": [
+        "regions"
+      ],
+      "title": "DataGenerationConfig",
+      "type": "object"
+    },
+    "DatasetConfig": {
+      "additionalProperties": true,
+      "description": "Dataset assembly and sliding window patch slicing options.",
+      "properties": {
+        "window_size_ev": {
+          "default": 3.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Window Size Ev",
+          "type": "number"
+        },
+        "sliding_stride_ev": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Sliding Stride Ev",
+          "type": "number"
+        },
+        "region_configs": {
+          "additionalProperties": true,
+          "title": "Region Configs",
+          "type": "object"
+        },
+        "source_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Tool"
+        },
+        "target_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Tool"
+        },
+        "use_sliding_window": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Use Sliding Window"
+        },
+        "regions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regions"
+        }
+      },
+      "title": "DatasetConfig",
+      "type": "object"
+    },
+    "DenoiseConfig": {
+      "additionalProperties": true,
+      "description": "Regional de-noising execution configuration.",
+      "properties": {
+        "method": {
+          "default": "savgol",
+          "enum": [
+            "savgol",
+            "wavelet",
+            "fourier",
+            "gp"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "regions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Regions",
+          "type": "array"
+        },
+        "apply_to": {
+          "default": "both",
+          "enum": [
+            "both",
+            "source",
+            "target"
+          ],
+          "title": "Apply To",
+          "type": "string"
+        },
+        "savgol": {
+          "$ref": "#/$defs/DenoiseSavgolConfig"
+        },
+        "wavelet": {
+          "$ref": "#/$defs/DenoiseWaveletConfig"
+        },
+        "fourier": {
+          "$ref": "#/$defs/DenoiseFourierConfig"
+        },
+        "gp": {
+          "$ref": "#/$defs/DenoiseGPConfig"
+        },
+        "region_configs": {
+          "additionalProperties": true,
+          "title": "Region Configs",
+          "type": "object"
+        },
+        "rsf_table": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rsf Table"
+        }
+      },
+      "title": "DenoiseConfig",
+      "type": "object"
+    },
+    "DenoiseFourierConfig": {
+      "additionalProperties": true,
+      "description": "Frequency-domain filtering hyperparameters.",
+      "properties": {
+        "filter_type": {
+          "default": "dct",
+          "enum": [
+            "dct",
+            "butterworth"
+          ],
+          "title": "Filter Type",
+          "type": "string"
+        },
+        "cutoff_ratio": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Cutoff Ratio",
+          "type": "number"
+        },
+        "filter_order": {
+          "default": 4,
+          "minimum": 1,
+          "title": "Filter Order",
+          "type": "integer"
+        },
+        "rolloff_type": {
+          "default": "butterworth",
+          "title": "Rolloff Type",
+          "type": "string"
+        },
+        "padding_mode": {
+          "default": "even",
+          "title": "Padding Mode",
+          "type": "string"
+        }
+      },
+      "title": "DenoiseFourierConfig",
+      "type": "object"
+    },
+    "DenoiseGPConfig": {
+      "additionalProperties": true,
+      "description": "Gaussian process filtering hyperparameters.",
+      "properties": {
+        "kernel": {
+          "$ref": "#/$defs/NoiseKernelConfig"
+        },
+        "noise_model": {
+          "default": "homoscedastic",
+          "title": "Noise Model",
+          "type": "string"
+        },
+        "confidence_type": {
+          "default": "observation",
+          "title": "Confidence Type",
+          "type": "string"
+        },
+        "training": {
+          "$ref": "#/$defs/NoiseTrainingConfig"
+        }
+      },
+      "title": "DenoiseGPConfig",
+      "type": "object"
+    },
+    "DenoiseSavgolConfig": {
+      "additionalProperties": true,
+      "description": "Savitzky-Golay polynomial filtering hyperparameters.",
+      "properties": {
+        "window_length": {
+          "default": 11,
+          "exclusiveMinimum": 2,
+          "title": "Window Length",
+          "type": "integer"
+        },
+        "polynomial_order": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Polynomial Order",
+          "type": "integer"
+        },
+        "boundary_mode": {
+          "default": "interp",
+          "title": "Boundary Mode",
+          "type": "string"
+        }
+      },
+      "title": "DenoiseSavgolConfig",
+      "type": "object"
+    },
+    "DenoiseWaveletConfig": {
+      "additionalProperties": true,
+      "description": "Wavelet shrinkage decomposition hyperparameters.",
+      "properties": {
+        "transform_type": {
+          "default": "stationary",
+          "enum": [
+            "stationary",
+            "discrete"
+          ],
+          "title": "Transform Type",
+          "type": "string"
+        },
+        "wavelet_name": {
+          "default": "sym4",
+          "title": "Wavelet Name",
+          "type": "string"
+        },
+        "decomposition_level": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Decomposition Level",
+          "type": "integer"
+        },
+        "threshold_mode": {
+          "default": "soft",
+          "enum": [
+            "soft",
+            "hard",
+            "garrote"
+          ],
+          "title": "Threshold Mode",
+          "type": "string"
+        },
+        "threshold_rule": {
+          "default": "universal",
+          "enum": [
+            "universal",
+            "sure",
+            "bayes"
+          ],
+          "title": "Threshold Rule",
+          "type": "string"
+        },
+        "threshold_scale": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Threshold Scale",
+          "type": "number"
+        }
+      },
+      "title": "DenoiseWaveletConfig",
+      "type": "object"
+    },
+    "FiLMConfig": {
+      "additionalProperties": true,
+      "description": "Feature-wise Linear Modulation conditioning parameters.",
+      "properties": {
+        "encode_die": {
+          "default": true,
+          "title": "Encode Die",
+          "type": "boolean"
+        },
+        "encode_tool": {
+          "default": true,
+          "title": "Encode Tool",
+          "type": "boolean"
+        },
+        "encode_flux": {
+          "default": true,
+          "title": "Encode Flux",
+          "type": "boolean"
+        },
+        "encode_time": {
+          "default": true,
+          "title": "Encode Time",
+          "type": "boolean"
+        },
+        "encode_energy": {
+          "default": true,
+          "title": "Encode Energy",
+          "type": "boolean"
+        },
+        "encode_region": {
+          "default": true,
+          "title": "Encode Region",
+          "type": "boolean"
+        },
+        "encode_relative_intensity": {
+          "default": true,
+          "title": "Encode Relative Intensity",
+          "type": "boolean"
+        },
+        "encode_elements": {
+          "default": true,
+          "title": "Encode Elements",
+          "type": "boolean"
+        },
+        "region_embed_dim": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "title": "Region Embed Dim",
+          "type": "integer"
+        },
+        "energy_scale_ev": {
+          "default": 1000.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Energy Scale Ev",
+          "type": "number"
+        },
+        "die_embed_dim": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "title": "Die Embed Dim",
+          "type": "integer"
+        },
+        "tool_embed_dim": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "title": "Tool Embed Dim",
+          "type": "integer"
+        },
+        "hidden_dim": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Hidden Dim",
+          "type": "integer"
+        },
+        "relative_learning_rate": {
+          "default": 0.1,
+          "exclusiveMinimum": 0.0,
+          "title": "Relative Learning Rate",
+          "type": "number"
+        },
+        "material_elements": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material Elements"
+        },
+        "element_vocab": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Vocab"
+        }
+      },
+      "title": "FiLMConfig",
+      "type": "object"
+    },
+    "GPFluxConfig": {
+      "additionalProperties": true,
+      "description": "Gaussian Process die flux drift and aging modeling parameters.",
+      "properties": {
+        "reference_date": {
+          "default": "2026-01-01",
+          "title": "Reference Date",
+          "type": "string"
+        },
+        "unpaired_split": {
+          "default": "train",
+          "title": "Unpaired Split",
+          "type": "string"
+        },
+        "target_column": {
+          "default": "total_flux_single_die",
+          "title": "Target Column",
+          "type": "string"
+        },
+        "kernel": {
+          "$ref": "#/$defs/GPFluxKernel"
+        },
+        "training": {
+          "$ref": "#/$defs/GPFluxTraining"
+        },
+        "plot": {
+          "$ref": "#/$defs/GPFluxPlot"
+        }
+      },
+      "title": "GPFluxConfig",
+      "type": "object"
+    },
+    "GPFluxDie": {
+      "additionalProperties": true,
+      "description": "Die spatial index covariance component.",
+      "properties": {
+        "type": {
+          "default": "index",
+          "title": "Type",
+          "type": "string"
+        },
+        "num_dies": {
+          "default": 9,
+          "exclusiveMinimum": 0,
+          "title": "Num Dies",
+          "type": "integer"
+        },
+        "rank": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Rank",
+          "type": "integer"
+        }
+      },
+      "title": "GPFluxDie",
+      "type": "object"
+    },
+    "GPFluxKernel": {
+      "additionalProperties": true,
+      "description": "Composite covariance kernel specification for die flux.",
+      "properties": {
+        "time_continuous": {
+          "$ref": "#/$defs/GPFluxTimeContinuous"
+        },
+        "time_jump": {
+          "$ref": "#/$defs/GPFluxTimeJump"
+        },
+        "die": {
+          "$ref": "#/$defs/GPFluxDie"
+        },
+        "composition": {
+          "default": "product_with_jump",
+          "title": "Composition",
+          "type": "string"
+        }
+      },
+      "title": "GPFluxKernel",
+      "type": "object"
+    },
+    "GPFluxPlot": {
+      "additionalProperties": true,
+      "description": "Diagnostic visualization options for die flux drift.",
+      "properties": {
+        "plot_die": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Plot Die",
+          "type": "integer"
+        }
+      },
+      "title": "GPFluxPlot",
+      "type": "object"
+    },
+    "GPFluxTimeContinuous": {
+      "additionalProperties": true,
+      "description": "Continuous temporal covariance component.",
+      "properties": {
+        "type": {
+          "default": "rbf",
+          "title": "Type",
+          "type": "string"
+        },
+        "initial_lengthscale": {
+          "default": 5.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Initial Lengthscale",
+          "type": "number"
+        }
+      },
+      "title": "GPFluxTimeContinuous",
+      "type": "object"
+    },
+    "GPFluxTimeJump": {
+      "additionalProperties": true,
+      "description": "Learnable sigmoid maintenance baseline shift kernel.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "initial_step_time_days": {
+          "default": 10.0,
+          "title": "Initial Step Time Days",
+          "type": "number"
+        },
+        "initial_steepness": {
+          "default": 2.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Initial Steepness",
+          "type": "number"
+        },
+        "learn_step_time": {
+          "default": true,
+          "title": "Learn Step Time",
+          "type": "boolean"
+        }
+      },
+      "title": "GPFluxTimeJump",
+      "type": "object"
+    },
+    "GPFluxTraining": {
+      "additionalProperties": true,
+      "description": "Optimization hyperparameters for exact GP flux regression.",
+      "properties": {
+        "num_iterations": {
+          "default": 150,
+          "exclusiveMinimum": 0,
+          "title": "Num Iterations",
+          "type": "integer"
+        },
+        "learning_rate": {
+          "default": 0.05,
+          "exclusiveMinimum": 0.0,
+          "title": "Learning Rate",
+          "type": "number"
+        }
+      },
+      "title": "GPFluxTraining",
+      "type": "object"
+    },
+    "GlobalConfig": {
+      "additionalProperties": true,
+      "description": "Global experiment and pipeline execution parameters.",
+      "properties": {
+        "material": {
+          "default": "NMG",
+          "title": "Material",
+          "type": "string"
+        },
+        "model_type": {
+          "default": "resnet",
+          "title": "Model Type",
+          "type": "string"
+        },
+        "use_sliding_window": {
+          "default": false,
+          "title": "Use Sliding Window",
+          "type": "boolean"
+        },
+        "use_film": {
+          "default": false,
+          "title": "Use Film",
+          "type": "boolean"
+        },
+        "apply_denoise": {
+          "default": false,
+          "title": "Apply Denoise",
+          "type": "boolean"
+        },
+        "unified_model": {
+          "default": true,
+          "title": "Unified Model",
+          "type": "boolean"
+        },
+        "source_tool": {
+          "default": "J4",
+          "title": "Source Tool",
+          "type": "string"
+        },
+        "target_tool": {
+          "default": "J5",
+          "title": "Target Tool",
+          "type": "string"
+        },
+        "example_region": {
+          "default": "Ti2p",
+          "title": "Example Region",
+          "type": "string"
+        },
+        "sample_measurement_id": {
+          "default": "NMG_M_J4_00000",
+          "title": "Sample Measurement Id",
+          "type": "string"
+        }
+      },
+      "title": "GlobalConfig",
+      "type": "object"
+    },
+    "MaterialSpec": {
+      "additionalProperties": true,
+      "description": "Specification of chemical elements in a specimen material.",
+      "properties": {
+        "elements": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Elements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "elements"
+      ],
+      "title": "MaterialSpec",
+      "type": "object"
+    },
+    "MetricsReportConfig": {
+      "additionalProperties": true,
+      "description": "Quantitative performance reporting configuration.",
+      "properties": {
+        "splits": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Splits",
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metrics",
+          "type": "array"
+        }
+      },
+      "title": "MetricsReportConfig",
+      "type": "object"
+    },
+    "NoiseAnalysisConfig": {
+      "additionalProperties": true,
+      "description": "Spectral noise estimation and SNR quantification configuration.",
+      "properties": {
+        "method": {
+          "default": "gp",
+          "enum": [
+            "gp",
+            "savgol",
+            "wavelet",
+            "fourier"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "splits": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Splits"
+        },
+        "dies": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dies"
+        },
+        "batch_size": {
+          "default": 64,
+          "exclusiveMinimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "unpaired_split": {
+          "default": "train",
+          "title": "Unpaired Split",
+          "type": "string"
+        },
+        "kernel": {
+          "$ref": "#/$defs/NoiseKernelConfig"
+        },
+        "noise_model": {
+          "default": "homoscedastic",
+          "title": "Noise Model",
+          "type": "string"
+        },
+        "confidence_type": {
+          "default": "observation",
+          "title": "Confidence Type",
+          "type": "string"
+        },
+        "training": {
+          "$ref": "#/$defs/NoiseTrainingConfig"
+        }
+      },
+      "title": "NoiseAnalysisConfig",
+      "type": "object"
+    },
+    "NoiseKernelConfig": {
+      "additionalProperties": true,
+      "description": "Kernel covariance options for spectral noise decomposition.",
+      "properties": {
+        "type": {
+          "default": "matern52",
+          "title": "Type",
+          "type": "string"
+        },
+        "initial_lengthscale_ev": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Initial Lengthscale Ev",
+          "type": "number"
+        }
+      },
+      "title": "NoiseKernelConfig",
+      "type": "object"
+    },
+    "NoisePlotConfig": {
+      "additionalProperties": true,
+      "description": "Diagnostic noise visualization configuration.",
+      "properties": {
+        "plots": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Plots",
+          "type": "array"
+        }
+      },
+      "title": "NoisePlotConfig",
+      "type": "object"
+    },
+    "NoiseTrainingConfig": {
+      "additionalProperties": true,
+      "description": "Training iterations for Gaussian Process noise estimation.",
+      "properties": {
+        "num_iterations": {
+          "default": 50,
+          "exclusiveMinimum": 0,
+          "title": "Num Iterations",
+          "type": "integer"
+        },
+        "learning_rate": {
+          "default": 0.2,
+          "exclusiveMinimum": 0.0,
+          "title": "Learning Rate",
+          "type": "number"
+        }
+      },
+      "title": "NoiseTrainingConfig",
+      "type": "object"
+    },
+    "NormalizationConfig": {
+      "additionalProperties": true,
+      "description": "Physical spectral flux and intensity normalization options.",
+      "properties": {
+        "normalization_mode": {
+          "default": "by_regional_max_intensity_of_source",
+          "enum": [
+            "by_total_flux_single_die",
+            "by_regional_max_intensity",
+            "by_regional_max_intensity_of_source",
+            "by_mean_intensity_single_die",
+            "no_normalization"
+          ],
+          "title": "Normalization Mode",
+          "type": "string"
+        },
+        "eps": {
+          "default": 1e-06,
+          "exclusiveMinimum": 0.0,
+          "title": "Eps",
+          "type": "number"
+        }
+      },
+      "title": "NormalizationConfig",
+      "type": "object"
+    },
+    "PairingConfig": {
+      "additionalProperties": true,
+      "description": "Source-to-target temporal bipartite matching parameters.",
+      "properties": {
+        "time_threshold_hours": {
+          "default": 8.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Time Threshold Hours",
+          "type": "number"
+        },
+        "method": {
+          "default": "optimal",
+          "enum": [
+            "optimal",
+            "greedy"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "source_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Tool"
+        },
+        "target_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Tool"
+        },
+        "material": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        }
+      },
+      "title": "PairingConfig",
+      "type": "object"
+    },
+    "PredictionConfig": {
+      "additionalProperties": true,
+      "description": "Post-training spectral inference configuration.",
+      "properties": {
+        "clamp_non_negative": {
+          "default": true,
+          "title": "Clamp Non Negative",
+          "type": "boolean"
+        }
+      },
+      "title": "PredictionConfig",
+      "type": "object"
+    },
+    "QuantificationConfig": {
+      "additionalProperties": true,
+      "description": "Shirley background subtraction and atomic percentage calculation.",
+      "properties": {
+        "rsf_table": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "minProperties": 1,
+          "title": "Rsf Table",
+          "type": "object"
+        },
+        "default_endpoint_strategy": {
+          "default": "minima",
+          "title": "Default Endpoint Strategy",
+          "type": "string"
+        },
+        "default_endpoint_average_ev": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Default Endpoint Average Ev",
+          "type": "number"
+        },
+        "max_iter": {
+          "default": 50,
+          "exclusiveMinimum": 0,
+          "title": "Max Iter",
+          "type": "integer"
+        },
+        "tol": {
+          "default": 1e-05,
+          "exclusiveMinimum": 0.0,
+          "title": "Tol",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rsf_table"
+      ],
+      "title": "QuantificationConfig",
+      "type": "object"
+    },
+    "SplittingConfig": {
+      "additionalProperties": true,
+      "description": "Session-level train-val-test partitioning parameters.",
+      "properties": {
+        "method": {
+          "default": "random",
+          "enum": [
+            "random",
+            "direct"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "train_ratio": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Train Ratio",
+          "type": "number"
+        },
+        "val_ratio": {
+          "default": 0.2,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Val Ratio",
+          "type": "number"
+        },
+        "test_ratio": {
+          "default": 0.3,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Test Ratio",
+          "type": "number"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "source_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Tool"
+        },
+        "target_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Tool"
+        },
+        "assignment": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assignment"
+        }
+      },
+      "title": "SplittingConfig",
+      "type": "object"
+    },
+    "ToolOffsetConfig": {
+      "additionalProperties": true,
+      "description": "Synthetic spectral drift and scale offsets per measurement tool.",
+      "properties": {
+        "shift_ev": {
+          "default": 0.0,
+          "title": "Shift Ev",
+          "type": "number"
+        },
+        "scale": {
+          "default": 10000.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "title": "ToolOffsetConfig",
+      "type": "object"
+    },
+    "TrainConfig": {
+      "additionalProperties": true,
+      "description": "Deep neural network training hyperparameters.",
+      "properties": {
+        "epochs": {
+          "default": 100,
+          "exclusiveMinimum": 0,
+          "title": "Epochs",
+          "type": "integer"
+        },
+        "batch_size": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "learning_rate": {
+          "default": 0.0001,
+          "exclusiveMinimum": 0.0,
+          "title": "Learning Rate",
+          "type": "number"
+        },
+        "depth": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "kernel_size": {
+          "default": 9,
+          "exclusiveMinimum": 0,
+          "title": "Kernel Size",
+          "type": "integer"
+        },
+        "use_learning_rate_scheduler": {
+          "default": true,
+          "title": "Use Learning Rate Scheduler",
+          "type": "boolean"
+        },
+        "learning_rate_reduce_factor": {
+          "default": 0.9,
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Learning Rate Reduce Factor",
+          "type": "number"
+        },
+        "learning_rate_scheduler_patience": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Learning Rate Scheduler Patience",
+          "type": "integer"
+        },
+        "early_stopping_patience": {
+          "default": 20,
+          "minimum": 1,
+          "title": "Early Stopping Patience",
+          "type": "integer"
+        },
+        "verbose": {
+          "default": true,
+          "title": "Verbose",
+          "type": "boolean"
+        },
+        "resnet_channel": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Resnet Channel",
+          "type": "integer"
+        },
+        "residual_unet_channel": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Residual Unet Channel",
+          "type": "integer"
+        },
+        "unet_channel": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Unet Channel",
+          "type": "integer"
+        },
+        "deeplabv3_backbone_channel": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Deeplabv3 Backbone Channel",
+          "type": "integer"
+        },
+        "deeplabv3_aspp_channel": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Deeplabv3 Aspp Channel",
+          "type": "integer"
+        },
+        "dropout": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Dropout",
+          "type": "number"
+        },
+        "use_batch_norm": {
+          "default": true,
+          "title": "Use Batch Norm",
+          "type": "boolean"
+        },
+        "padding_mode": {
+          "default": "reflect",
+          "title": "Padding Mode",
+          "type": "string"
+        },
+        "use_film": {
+          "default": false,
+          "title": "Use Film",
+          "type": "boolean"
+        },
+        "energy_scale_ev": {
+          "default": 1000.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Energy Scale Ev",
+          "type": "number"
+        }
+      },
+      "title": "TrainConfig",
+      "type": "object"
+    },
+    "TrainingSectionConfig": {
+      "additionalProperties": true,
+      "description": "Training stage configuration section.",
+      "properties": {
+        "train_config": {
+          "$ref": "#/$defs/TrainConfig"
+        },
+        "region_configs": {
+          "additionalProperties": true,
+          "title": "Region Configs",
+          "type": "object"
+        }
+      },
+      "title": "TrainingSectionConfig",
+      "type": "object"
+    },
+    "VisualizationConfig": {
+      "additionalProperties": true,
+      "description": "Diagnostic plotting switches and global display options.",
+      "properties": {
+        "show_plots": {
+          "default": true,
+          "title": "Show Plots",
+          "type": "boolean"
+        },
+        "plots": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "Plots",
+          "type": "object"
+        }
+      },
+      "title": "VisualizationConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "Root configuration schema for the GGRD-SP spectral transfer pipeline.",
+  "properties": {
+    "materials": {
+      "additionalProperties": {
+        "$ref": "#/$defs/MaterialSpec"
+      },
+      "minProperties": 1,
+      "title": "Materials",
+      "type": "object"
+    },
+    "global": {
+      "$ref": "#/$defs/GlobalConfig"
+    },
+    "data_generation": {
+      "$ref": "#/$defs/DataGenerationConfig"
+    },
+    "pairing": {
+      "$ref": "#/$defs/PairingConfig"
+    },
+    "normalization": {
+      "$ref": "#/$defs/NormalizationConfig"
+    },
+    "splitting": {
+      "$ref": "#/$defs/SplittingConfig"
+    },
+    "gp_flux": {
+      "$ref": "#/$defs/GPFluxConfig"
+    },
+    "dataset": {
+      "$ref": "#/$defs/DatasetConfig"
+    },
+    "cost": {
+      "$ref": "#/$defs/CostConfig"
+    },
+    "noise_analysis": {
+      "$ref": "#/$defs/NoiseAnalysisConfig"
+    },
+    "denoise": {
+      "$ref": "#/$defs/DenoiseConfig"
+    },
+    "noise_plot": {
+      "$ref": "#/$defs/NoisePlotConfig"
+    },
+    "film": {
+      "$ref": "#/$defs/FiLMConfig"
+    },
+    "bayesian_opt": {
+      "$ref": "#/$defs/BayesianOptConfig"
+    },
+    "training": {
+      "$ref": "#/$defs/TrainingSectionConfig"
+    },
+    "prediction": {
+      "$ref": "#/$defs/PredictionConfig"
+    },
+    "metrics_report": {
+      "$ref": "#/$defs/MetricsReportConfig"
+    },
+    "quantification": {
+      "$ref": "#/$defs/QuantificationConfig"
+    },
+    "visualization": {
+      "$ref": "#/$defs/VisualizationConfig"
+    }
+  },
+  "required": [
+    "materials",
+    "data_generation",
+    "quantification"
+  ],
+  "title": "PipelineConfig",
+  "type": "object"
+}

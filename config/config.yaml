@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=config.schema.json
 # Pipeline and material configuration for GGRD-SP
 
 materials:
