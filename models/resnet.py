@@ -82,14 +82,26 @@ def _build_hidden_conv_and_norm_layers(
 def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Build dedicated FiLM configuration for the scaled shortcut connection.
 
-    Disables sliding window and energy bound encoding so shortcut gain reflects
-    only global sample and tool attributes.
+    Disables sliding window and energy bound encoding so shortcut scaling 
+    reflects only global sample and tool attributes.
+    
+    Notice the hidden design choice for disabling energy encoding here:
+    # When sliding window = ON, unified model = ON/OFF:
+        Shortcut FiLM should be independent of the current window such that
+        all windows share the same scaling. Physically speaking the scale 
+        between tools should not vary that much within one energy region.
+        Practically speaking forced shared scaling for all windows avoids
+        abrupt change when merging spectra from all windows. As a result, 
+        energy encoding is turned off.
+    # When sliding window is OFF, unified model = OFF
+        One might want to choose bounding energy of the current region to
+        be encoded, but we choose NOT TO for the same physical reason above.
+        This also makes the behavior of FiLM for shortcut clean. 
+    # when sliding window is OFF, unified model = ON
+        no clear definition for bounding energy or representative energy
+        for a model to learn.
     """
-    return {
-        **cfg,
-        "use_sliding_window": False,
-        "encode_energy": False,
-    }
+    return {**cfg, "use_sliding_window": False, "encode_energy": False,}
 
 
 def _extract_and_clamp_shortcut_gain(
