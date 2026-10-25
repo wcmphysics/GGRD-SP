@@ -36,7 +36,7 @@ class TestResNet1D(unittest.TestCase):
 
     def test_cnn_forward_shape_2d_raises(self) -> None:
         """Test that 2D tensor input raises ValueError."""
-        model = ResNet1D(n_points=100, config=_DEFAULT_RESNET_TEST_CONFIG)
+        model = ResNet1D(100, config=_DEFAULT_RESNET_TEST_CONFIG)
         x = torch.randn(8, 100)
         with self.assertRaises(ValueError):
             model(x)
@@ -44,36 +44,30 @@ class TestResNet1D(unittest.TestCase):
     def test_cnn_forward_shape_3d(self) -> None:
         """Test forward pass with 3D tensor input (batch, 1, n_points)."""
         cfg = {**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3}
-        model = ResNet1D(n_points=80, config=cfg)
+        model = ResNet1D(80, config=cfg)
         x = torch.randn(4, 1, 80)
         out = model(x)
         self.assertEqual(out.shape, (4, 1, 80))
 
     def test_invalid_kernel_size_raises(self) -> None:
-        """Test that even, non-positive, or larger-than-n_points kernel size
-        raises ValueError.
+        """Test that kernel size larger than n_points_generalized raises
+        ValueError.
         """
         with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 4})
-        with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 0})
-        with self.assertRaises(ValueError):
-            ResNet1D(n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": -3})
-        with self.assertRaises(ValueError):
-            ResNet1D(n_points=5, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 7})
+            ResNet1D(5, config={**_DEFAULT_RESNET_TEST_CONFIG, "kernel_size": 7})
 
     def test_missing_required_keys_raises_key_error(self) -> None:
         """Test that omitting required configuration keys raises KeyError."""
         with self.assertRaises(KeyError):
-            ResNet1D(n_points=50, config=None)
+            ResNet1D(50, config=None)
         with self.assertRaises(KeyError):
-            ResNet1D(n_points=50, config={})
+            ResNet1D(50, config={})
         for key in REQUIRED_RESNET_KEYS:
             incomplete_cfg = {
                 k: v for k, v in _DEFAULT_RESNET_TEST_CONFIG.items() if k != key
             }
             with self.assertRaises(KeyError):
-                ResNet1D(n_points=50, config=incomplete_cfg)
+                ResNet1D(50, config=incomplete_cfg)
 
     def test_extra_keys_in_config_are_ignored(self) -> None:
         """Test that extra non-architecture keys are safely ignored."""
@@ -84,7 +78,7 @@ class TestResNet1D(unittest.TestCase):
             "learning_rate": 1e-4,
             "arbitrary_extra_param": "ignored_value",
         }
-        model = ResNet1D(n_points=50, config=cfg)
+        model = ResNet1D(50, config=cfg)
         self.assertIsInstance(model, ResNet1D)
 
     def test_l2_regularization_targets_weights_only(self) -> None:
@@ -92,7 +86,7 @@ class TestResNet1D(unittest.TestCase):
         BatchNorm.
         """
         cfg = {**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3}
-        model = ResNet1D(n_points=50, config=cfg)
+        model = ResNet1D(50, config=cfg)
         l2_reg = model.get_l2_regularization()
         self.assertIsInstance(l2_reg, torch.Tensor)
         self.assertGreater(l2_reg.item(), 0.0)
@@ -158,7 +152,7 @@ class TestTrainingAndInference(unittest.TestCase):
         """
         _, val_loader = create_dataloaders(self.train_ds, self.val_ds, config={"batch_size": 4})
         model = ResNet1D(
-            n_points=50,
+            50,
             config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3},
         )
 
@@ -274,16 +268,16 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_requires_use_film_true(self) -> None:
         """Verify ValueError when use_film is not explicitly enabled."""
         with self.assertRaises(KeyError):
-            ResNetScaledShort1D(n_points=50)
+            ResNetScaledShort1D(50)
         with self.assertRaises(ValueError):
             ResNetScaledShort1D(
-                n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": False}
+                50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": False}
             )
 
     def test_requires_cond_in_forward(self) -> None:
         """Verify ValueError when forward is called without metadata dict."""
         model = ResNetScaledShort1D(
-            n_points=50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": True}
+            50, config={**_DEFAULT_RESNET_TEST_CONFIG, "use_film": True}
         )
         x = torch.randn(2, 1, 50)
         with self.assertRaises(ValueError):
@@ -296,7 +290,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_identity_initialization(self) -> None:
         """Verify initial shortcut scaling factor is exactly 1.0."""
         model = ResNetScaledShort1D(
-            n_points=50,
+            50,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
@@ -314,7 +308,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_clamping_and_warning_on_negative_gain(self) -> None:
         """Verify warning is emitted and gamma_out clamped when negative."""
         model = ResNetScaledShort1D(
-            n_points=50,
+            50,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
@@ -341,7 +335,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_internal_film_layers_toggle(self) -> None:
         """Verify film_internal_layers disables internal FiLM when False."""
         model_no_internal = ResNetScaledShort1D(
-            n_points=50,
+            50,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
@@ -358,7 +352,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
         self.assertEqual(out.shape, (2, 1, 50))
 
         model_with_internal = ResNetScaledShort1D(
-            n_points=50,
+            50,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
@@ -374,7 +368,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
     def test_shortcut_ignores_window_energy(self) -> None:
         """Verify shortcut FiLM generator ignores sliding window energy."""
         model = ResNetScaledShort1D(
-            n_points=30,
+            30,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "use_film": True,
@@ -540,7 +534,7 @@ class TestResNet5L1D(unittest.TestCase):
     def test_layer_count_and_channels(self) -> None:
         """Verify 5 Conv1d layers and 4 hidden BatchNorm layers."""
         model = ResNet5L1D(
-            n_points=50,
+            50,
             config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 16, "kernel_size": 3},
         )
         def _get_conv(layer: nn.Module) -> nn.Conv1d:
@@ -559,7 +553,7 @@ class TestResNet5L1D(unittest.TestCase):
     def test_forward_pass_shape(self) -> None:
         """Verify forward pass output shape matches input (B, 1, N)."""
         model = ResNet5L1D(
-            n_points=40,
+            40,
             config={**_DEFAULT_RESNET_TEST_CONFIG, "resnet_channel": 8, "kernel_size": 3},
         )
         x = torch.randn(4, 1, 40)
@@ -569,7 +563,7 @@ class TestResNet5L1D(unittest.TestCase):
     def test_film_modulation_all_4_hidden_layers(self) -> None:
         """Verify FiLM modulates all 4 hidden layers."""
         model = ResNet5L1D(
-            n_points=40,
+            40,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,

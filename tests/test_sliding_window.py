@@ -57,7 +57,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_predict_sliding_window_spectrum(self) -> None:
         """Test single spectrum prediction and full length reconstruction."""
-        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
+        model = ResNet1D(15, config=_DEFAULT_RESNET_TEST_CONFIG)
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5}
@@ -66,7 +66,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
     def test_evaluate_sliding_window_reconstructed(self) -> None:
         """Test full-spectrum reconstructed evaluation loss calculation."""
-        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
+        model = ResNet1D(15, config=_DEFAULT_RESNET_TEST_CONFIG)
         crit = SpectralLoss({"l2_weight": 0.0})
         loss = evaluate_sliding_window(
             model=model,
@@ -244,7 +244,7 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         """Verify predict and evaluate functions with config dictionaries
         adhering to Rule 7.
         """
-        model = ResNet1D(n_points=15, config=_DEFAULT_RESNET_TEST_CONFIG)
+        model = ResNet1D(15, config=_DEFAULT_RESNET_TEST_CONFIG)
         spectrum = self.train_ds[0]["x"].cpu().numpy().squeeze()
         pred = predict_sliding_window_spectrum(
             model, spectrum, config={"window_size": 15, "stride": 5, "batch_size": 32}

@@ -113,7 +113,7 @@ class TestFiLMModulation(unittest.TestCase):
         """
         n_points = 50
         model = ResNet1D(
-            n_points=n_points,
+            n_points,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 16,
@@ -151,7 +151,7 @@ class TestFiLMModulation(unittest.TestCase):
         """
         n_points = 40
         model = ResNet1D(
-            n_points=n_points,
+            n_points,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
@@ -182,7 +182,7 @@ class TestFiLMModulation(unittest.TestCase):
         loader = DataLoader(ds, batch_size=4, shuffle=False)
 
         model = ResNet1D(
-            n_points=n_points,
+            n_points,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
@@ -401,7 +401,7 @@ class TestFiLMModulation(unittest.TestCase):
 
         with self.assertRaises(ValueError) as ctx2:
             ResNet1D(
-                n_points=20,
+                20,
                 config={
                     **_DEFAULT_RESNET_TEST_CONFIG,
                     "use_film": True,
@@ -437,7 +437,7 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertAlmostEqual(item["energy_bounds"][1].item(), 175.0, places=3)
 
         model = ResNet1D(
-            n_points=n_pts,
+            n_pts,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
@@ -577,7 +577,7 @@ class TestFiLMModulation(unittest.TestCase):
         """Verify ResNet1D forward and backward pass with window energy FiLM."""
         patch_len = 10
         model = ResNet1D(
-            n_points=patch_len,
+            patch_len,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 16,
@@ -610,7 +610,9 @@ class TestFiLMModulation(unittest.TestCase):
         self.assertIsNotNone(model.film_gen.mlp[0].weight.grad)
 
     def test_predict_spectra_and_sliding_window_with_film(self) -> None:
-        """Verify predict_spectra and evaluate_sliding_window with FiLM active."""
+        """Verify predict_spectra and evaluate_sliding_window with FiLM
+        active.
+        """
         from models.inference import predict_spectra
         from models.trainer import evaluate_sliding_window
 
@@ -638,7 +640,7 @@ class TestFiLMModulation(unittest.TestCase):
         ]
         val_ds = SpectrumPairDataset(x, y, energy=energy, metadata=meta_records)
         sw_model = ResNet1D(
-            n_points=10,
+            10,
             config={
                 **_DEFAULT_RESNET_TEST_CONFIG,
                 "resnet_channel": 8,
