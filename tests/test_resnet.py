@@ -334,7 +334,7 @@ class TestResNetScaledShort1D(unittest.TestCase):
                 w
                 for w in recorded_warnings
                 if issubclass(w.category, UserWarning)
-                and "Negative shortcut gain detected" in str(w.message)
+                and "Negative shortcut or NaN scaling detected" in str(w.message)
             ]
             self.assertGreaterEqual(len(clamping_warns), 1)
 

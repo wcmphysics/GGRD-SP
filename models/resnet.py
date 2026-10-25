@@ -104,24 +104,21 @@ def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return {**cfg, "use_sliding_window": False, "encode_energy": False,}
 
 
-def _extract_and_clamp_shortcut_gain(
-    shortcut_mods: list[tuple[torch.Tensor, torch.Tensor]],
-) -> torch.Tensor:
-    """Extract and non-negatively clamp scalar shortcut gain gamma_out.
+def _extract_and_clamp_shortcut_gain(shortcut_mods: list[tuple[torch.Tensor, torch.Tensor]],) -> torch.Tensor:
+    """Extract and non-negatively clamp scalar shortcut scale gamma_out.
 
     Clamps negative gain to zero to prevent unphysical spectrum inversion if
-    FiLM outputs a negative scale factor on the identity residual path.
+    FiLM outputs a negative scale factor on the scaled shortcut.
     """
+    # take scaling factor and drop shifting factor
     gamma_out, _ = shortcut_mods[0]
-    if not (gamma_out < 0.0).any():
+    if (gamma_out >= 0.0).all():
         return gamma_out
 
-    warnings.warn(
-        "Negative shortcut gain detected in ResNetScaledShort1D; "
-        "clamping gamma_out to 0.0.",
-        UserWarning,
-        stacklevel=3,
-    )
+    # warning if the scaling is negative or somehow NaN (NaN>=0.0 -> False)
+    warnings.warn("Negative shortcut or NaN scaling detected in ResNetScaledShort1D; "
+                  "clamping gamma_out to 0.0.",
+                  UserWarning, stacklevel=3,)
     return torch.clamp(gamma_out, min=0.0)
 
 
