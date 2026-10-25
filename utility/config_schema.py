@@ -373,7 +373,6 @@ class TrainConfig(BaseModel):
     dropout: float = Field(0.0, ge=0.0, le=1.0)
     use_batch_norm: bool = True
     padding_mode: str = "reflect"
-    use_film: bool = False
     energy_scale_ev: float = Field(1000.0, gt=0.0)
     num_layers: int = Field(3, ge=2)
     film_internal_layers: bool = True

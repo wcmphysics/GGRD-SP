@@ -234,7 +234,6 @@ training:
     dropout: 0.0
     use_batch_norm: true
     padding_mode: "reflect"
-    use_film: false
     energy_scale_ev: 1000.0
   region_configs:
     Al2p:

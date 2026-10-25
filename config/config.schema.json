@@ -1403,11 +1403,6 @@
           "title": "Padding Mode",
           "type": "string"
         },
-        "use_film": {
-          "default": false,
-          "title": "Use Film",
-          "type": "boolean"
-        },
         "energy_scale_ev": {
           "default": 1000.0,
           "exclusiveMinimum": 0.0,
