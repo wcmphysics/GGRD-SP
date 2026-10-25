@@ -18,9 +18,6 @@ from models.layers import (
     build_conv1d_layer,
     compute_conv1d_l2_reg,
     validate_3d_spectrum_tensor,
-    validate_common_model_config,
-    validate_odd_kernel_size,
-    validate_positive_int,
 )
 
 REQUIRED_RESNET_KEYS = (
@@ -135,14 +132,15 @@ class ResNet1D(nn.Module):
     spectral edges.
 
     Structure Overview:
-    1. Validates hyperparameter dictionary and kernel bounds against n_points.
+    1. Validates hyperparameter dictionary and kernel bounds against
+       n_points_generalized.
     2. Builds hidden 1D conv layers and normalization modules.
     3. Initializes 1x1 output projection conv, activation, and dropout layers.
     4. Instantiates optional FiLM generator for metadata condition modulation.
 
     Parameters
     ----------
-    n_points : int
+    n_points_generalized : int
         Number of spectral data points (length of input regional spectrum or
         patch window).
     config : dict[str, Any] | None, optional
@@ -161,17 +159,23 @@ class ResNet1D(nn.Module):
           conditioning (default False).
     """
 
-    def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, n_points_generalized: int, config: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
-        
+
         cfg = config if config is not None else {}
-        self.n_points = int(n_points)
-        
-        # validatet config and inputs
+        self.n_points_generalized = int(n_points_generalized)
+
+        # validate config and inputs
         _validate_required_resnet_keys(cfg)
-        max_allowed_k = validate_common_model_config(cfg, self.n_points, (), ("ResNet1D", ""),)
-        resnet_channel = validate_positive_int(cfg["resnet_channel"], "resnet_channel")
-        kernel_size = validate_odd_kernel_size(cfg["kernel_size"], max_allowed=max_allowed_k)
+        resnet_channel = int(cfg["resnet_channel"])
+        kernel_size = int(cfg["kernel_size"])
+        if kernel_size > self.n_points_generalized:
+            raise ValueError(
+                f"kernel_size ({kernel_size}) cannot be larger than "
+                f"n_points_generalized ({self.n_points_generalized})."
+            )
         dropout = float(cfg["dropout"])
         use_batch_norm = bool(cfg["use_batch_norm"])
         padding_mode = str(cfg["padding_mode"])
@@ -180,7 +184,8 @@ class ResNet1D(nn.Module):
         self.num_layers = _validate_layer_count(int(cfg.get("num_layers", 3)))
         num_hidden = self.num_layers - 1
 
-        # setup neural-layer components (hidden and output CNNs, activation, dropout, film)
+        # setup neural-layer components (hidden and output CNNs, activation,
+        # dropout, film)
         self.hidden_convs, self.hidden_bns = _build_hidden_conv_and_norm_layers(
             num_hidden,
             resnet_channel,
@@ -227,19 +232,22 @@ class ResNet1D(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            Input spectral tensor of shape (batch_size, 1, n_points).
+            Input spectral tensor of shape
+            (batch_size, 1, n_points_generalized).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
             Optional metadata conditioning features for FiLM modulation.
 
         Returns
         -------
         torch.Tensor
-            Transformed spectrum of shape (batch_size, 1, n_points).
+            Transformed spectrum of shape
+            (batch_size, 1, n_points_generalized).
 
         Raises
         ------
         ValueError
-            If x is not a 3D tensor of shape (batch_size, 1, n_points).
+            If x is not a 3D tensor of shape
+            (batch_size, 1, n_points_generalized).
         """
         validate_3d_spectrum_tensor(x)
         film_modulations = self._get_film_modulations(cond)
@@ -271,7 +279,7 @@ class ResNetScaledShort1D(ResNet1D):
 
     Parameters
     ----------
-    n_points : int
+    n_points_generalized : int
         Number of spectral data points (length of input regional spectrum or
         patch window).
     config : dict[str, Any] | None, optional
@@ -284,9 +292,9 @@ class ResNetScaledShort1D(ResNet1D):
     """
 
     def __init__(
-        self, n_points: int, config: dict[str, Any] | None = None
+        self, n_points_generalized: int, config: dict[str, Any] | None = None
     ) -> None:
-        super().__init__(n_points, config)
+        super().__init__(n_points_generalized, config)
         cfg = config or {}
         if not self.use_film:
             raise ValueError(
@@ -312,14 +320,16 @@ class ResNetScaledShort1D(ResNet1D):
         Parameters
         ----------
         x : torch.Tensor
-            Input spectral tensor of shape (batch_size, 1, n_points).
+            Input spectral tensor of shape
+            (batch_size, 1, n_points_generalized).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
             Metadata conditioning features dictionary. Required.
 
         Returns
         -------
         torch.Tensor
-            Transformed spectrum of shape (batch_size, 1, n_points).
+            Transformed spectrum of shape
+            (batch_size, 1, n_points_generalized).
 
         Raises
         ------
@@ -351,7 +361,7 @@ class ResNet5L1D(ResNet1D):
 
     Parameters
     ----------
-    n_points : int
+    n_points_generalized : int
         Number of spectral data points (length of input regional spectrum or
         patch window).
     config : dict[str, Any] | None, optional
@@ -359,9 +369,11 @@ class ResNet5L1D(ResNet1D):
     """
 
     def __init__(
-        self, n_points: int, config: dict[str, Any] | None = None
+        self, n_points_generalized: int, config: dict[str, Any] | None = None
     ) -> None:
-        super().__init__(n_points, {**(config or {}), "num_layers": 5})
+        super().__init__(
+            n_points_generalized, {**(config or {}), "num_layers": 5}
+        )
 
 
 __all__ = ["REQUIRED_RESNET_KEYS", "ResNet1D", "ResNet5L1D", "ResNetScaledShort1D"]
