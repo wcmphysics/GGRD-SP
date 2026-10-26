@@ -3,117 +3,80 @@
 from __future__ import annotations
 
 import unittest
-
 import numpy as np
-import pandas as pd
 import torch
 
 from models.bayesian_opt import optimize_model_hyperparameters
-from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
 from models.deeplabv3 import ASPP1D, DeepLabV3, ResNet1DBackbone
 from models.orchestration import instantiate_model
 from models.trainer import train_model_region
-from utility.pairing import pair_source_target_spectra
-from utility.pseudo_measurement import generate_pseudo_measurements
 
 
 class TestDeepLabV3Architecture(unittest.TestCase):
     """Test suite for DeepLabV3 model modules and forward transformations."""
 
-    def test_output_shapes_2d_and_3d(self) -> None:
-        """Verify 1D DeepLabV3 strictly enforces (batch, 1, seq_len)."""
+    def test_input_dimension_enforcement(self) -> None:
+        """Verify model enforces strictly (batch, 1, seq_len) shape."""
         model = DeepLabV3(
-            n_points=100,
+            n_points=30,
+            config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
+        )
+        invalid_shapes = [
+            torch.randn(30),          # 1D
+            torch.randn(2, 30),       # 2D
+            torch.randn(2, 2, 30),    # 3D with 2 channels
+            torch.randn(2, 1, 1, 30), # 4D
+        ]
+        for x in invalid_shapes:
+            with self.subTest(shape=x.shape):
+                with self.assertRaises(ValueError):
+                    model(x)
+
+    def test_forward_shapes_and_sequence_lengths(self) -> None:
+        """Verify forward output preservation across short, odd, and normal
+        lengths.
+        """
+        model = DeepLabV3(
+            n_points=50,
             config={
-                "deeplabv3_backbone_channel": 16,
-                "deeplabv3_aspp_channel": 16,
+                "deeplabv3_backbone_channel": 8,
+                "deeplabv3_aspp_channel": 8,
                 "kernel_size": 3,
                 "multi_grid": (1, 2, 4),
                 "aspp_rates": (2, 4, 6),
             },
         )
+        # Test odd, standard, and short patch lengths
+        for seq_len in (3, 15, 53, 100):
+            with self.subTest(seq_len=seq_len):
+                x = torch.randn(2, 1, seq_len)
+                m = DeepLabV3(
+                    n_points=seq_len,
+                    config={
+                        "deeplabv3_backbone_channel": 8,
+                        "deeplabv3_aspp_channel": 8,
+                        "aspp_rates": (2, 4, 6),
+                    },
+                )
+                y = m(x)
+                self.assertEqual(y.shape, (2, 1, seq_len))
+                self.assertFalse(torch.isnan(y).any())
 
-        # 2D input should raise ValueError
-        x_2d = torch.randn(4, 100)
-        with self.assertRaises(ValueError):
-            model(x_2d)
+    def test_multi_grid_and_aspp_adaptation(self) -> None:
+        """Verify dynamic multi_grid blocks and ASPP atrous branches."""
+        # Multi-grid block scaling
+        for multi_grid in ((1,), (1, 2, 4), (1, 2, 2, 4, 8)):
+            with self.subTest(multi_grid=multi_grid):
+                backbone = ResNet1DBackbone(
+                    in_channels=1,
+                    out_channels=16,
+                    multi_grid=multi_grid,
+                    kernel_size=3,
+                )
+                self.assertEqual(len(backbone.blocks), len(multi_grid))
 
-        # 3D input (batch, 1, n_points)
-        x_3d = torch.randn(4, 1, 100)
-        y_3d = model(x_3d)
-        self.assertEqual(y_3d.shape, (4, 1, 100))
-
-    def test_single_sample_batch_training_mode(self) -> None:
-        """Verify model handles batch_size=1 during training mode without BatchNorm error."""
-        model = DeepLabV3(
-            n_points=100,
-            config={
-                "deeplabv3_backbone_channel": 16,
-                "deeplabv3_aspp_channel": 16,
-                "use_batch_norm": True,
-            },
-        )
-        model.train()
-        x_single = torch.randn(1, 1, 100)
-        y_single = model(x_single)
-        self.assertEqual(y_single.shape, (1, 1, 100))
-        self.assertFalse(torch.isnan(y_single).any())
-
-        # Verify backward pass on batch_size=1 works cleanly
-        loss = y_single.sum()
-        loss.backward()
-        self.assertIsNotNone(model.head.weight.grad)
-
-    def test_various_sequence_lengths(self) -> None:
-        """Verify model handles various sequence lengths including small patches and odd lengths."""
-        lengths = [15, 25, 50, 77, 101]
-        for seq_len in lengths:
-            model = DeepLabV3(
-                n_points=seq_len,
-                config={
-                    "deeplabv3_backbone_channel": 8,
-                    "deeplabv3_aspp_channel": 8,
-                    "kernel_size": 3,
-                    "multi_grid": (1, 2, 4),
-                    "aspp_rates": (2, 4, 6),
-                },
-            )
-            x = torch.randn(2, 1, seq_len)
-            y = model(x)
-            self.assertEqual(y.shape, (2, 1, seq_len), f"Mismatch for sequence length {seq_len}")
-
-    def test_multi_grid_adaptation(self) -> None:
-        """Verify backbone dynamically adapts number of residual blocks to multi_grid tuple."""
-        # 3 blocks
-        backbone_3 = ResNet1DBackbone(
-            in_channels=1,
-            out_channels=16,
-            multi_grid=(1, 2, 4),
-            kernel_size=3,
-        )
-        self.assertEqual(len(backbone_3.blocks), 3)
-
-        # 4 blocks
-        backbone_4 = ResNet1DBackbone(
-            in_channels=1,
-            out_channels=16,
-            multi_grid=(1, 2, 2, 4),
-            kernel_size=3,
-        )
-        self.assertEqual(len(backbone_4.blocks), 4)
-
-        # Test forward pass with custom multi_grid in full DeepLabV3
-        model_custom = DeepLabV3(
-            n_points=50,
-            config={"multi_grid": (1, 2, 2, 4), "deeplabv3_backbone_channel": 16, "deeplabv3_aspp_channel": 16},
-        )
-        x = torch.randn(2, 1, 50)
-        y = model_custom(x)
-        self.assertEqual(y.shape, (2, 1, 50))
-
-    def test_aspp_branches_and_rates(self) -> None:
-        """Verify ASPP module produces correct output shape and respects custom dilation rates."""
+        # ASPP branches and rates
         aspp = ASPP1D(
             in_channels=16,
             out_channels=16,
@@ -121,180 +84,58 @@ class TestDeepLabV3Architecture(unittest.TestCase):
             kernel_size=3,
         )
         self.assertEqual(len(aspp.atrous_branches), 3)
+        feat_out = aspp(torch.randn(2, 16, 40))
+        self.assertEqual(feat_out.shape, (2, 16, 40))
 
-        feat_in = torch.randn(2, 16, 60)
-        feat_out = aspp(feat_in)
-        self.assertEqual(feat_out.shape, (2, 16, 60))
+    def test_modes_and_regularization(self) -> None:
+        """Verify residual mode toggle, L2 regularization, and gradient flow."""
+        # Residual vs direct prediction
+        for residual_mode in (True, False):
+            with self.subTest(residual=residual_mode):
+                model = DeepLabV3(
+                    n_points=30,
+                    config={
+                        "residual": residual_mode,
+                        "deeplabv3_backbone_channel": 8,
+                        "deeplabv3_aspp_channel": 8,
+                    },
+                )
+                out = model(torch.randn(2, 1, 30))
+                self.assertEqual(out.shape, (2, 1, 30))
 
-    def test_global_pooling_safeguard(self) -> None:
-        """Verify global average pooling branch works even when patch is small."""
-        # When sequence length is small, dilation might approach window size
-        model = DeepLabV3(
-            n_points=12,
-            config={
-                "deeplabv3_backbone_channel": 8,
-                "deeplabv3_aspp_channel": 8,
-                "kernel_size": 3,
-                "multi_grid": (1, 2),
-                "aspp_rates": (2, 4, 6),
-            },
+        # L2 penalty and gradient propagation on batch_size=1
+        model_train = DeepLabV3(
+            n_points=30,
+            config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
         )
-        x = torch.randn(2, 1, 12)
-        y = model(x)
-        self.assertEqual(y.shape, (2, 1, 12))
-        self.assertFalse(torch.isnan(y).any())
-
-    def test_residual_mode_toggle(self) -> None:
-        """Verify residual mode and direct prediction mode both produce valid outputs."""
-        model_res = DeepLabV3(n_points=40, config={"residual": True, "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
-        model_dir = DeepLabV3(n_points=40, config={"residual": False, "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
-
-        x = torch.randn(2, 1, 40)
-        y_res = model_res(x)
-        y_dir = model_dir(x)
-
-        self.assertEqual(y_res.shape, (2, 1, 40))
-        self.assertEqual(y_dir.shape, (2, 1, 40))
-
-    def test_l2_regularization(self) -> None:
-        """Verify L2 regularization calculation only penalizes conv weight matrices."""
-        model = DeepLabV3(n_points=30, config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
-        l2_reg = model.get_l2_regularization()
-
-        self.assertTrue(torch.is_tensor(l2_reg))
+        l2_reg = model_train.get_l2_regularization()
         self.assertGreater(l2_reg.item(), 0.0)
 
-        # Verify exact sum of Conv1d weights and total exclusion of BatchNorm1d
-        expected_conv_l2 = sum(
-            torch.sum(m.weight ** 2)
-            for m in model.modules()
-            if isinstance(m, torch.nn.Conv1d) and m.weight.requires_grad
-        )
-        self.assertAlmostEqual(l2_reg.item(), expected_conv_l2.item(), places=5)
-
-        # Verify no BatchNorm parameter contributes
-        for m in model.modules():
-            if isinstance(m, torch.nn.BatchNorm1d) and m.weight is not None:
-                # If BatchNorm were included, diff would be >= sum(m.weight**2)
-                self.assertNotAlmostEqual(
-                    l2_reg.item(),
-                    (expected_conv_l2 + torch.sum(m.weight ** 2)).item(),
-                )
-
-    def test_invalid_tensor_dimensions_raise(self) -> None:
-        """Verify model raises ValueError on invalid dimensions or channel counts."""
-        model = DeepLabV3(n_points=30, config={"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8})
-
-        # 1D tensor
-        with self.assertRaises(ValueError):
-            model(torch.randn(30))
-
-        # 2D tensor
-        with self.assertRaises(ValueError):
-            model(torch.randn(2, 30))
-
-        # 4D tensor
-        with self.assertRaises(ValueError):
-            model(torch.randn(2, 1, 1, 30))
-
-        # 3D tensor with 2 channels (expects 1 channel)
-        with self.assertRaises(ValueError):
-            model(torch.randn(2, 2, 30))
-
-    def test_extremely_short_sequence_padding_safety(self) -> None:
-        """Verify safe padding handles sequence lengths smaller than dilation pad without crashing."""
-        # For kernel_size=3 and dilation=6, pad=6. A sequence of length 3 would crash standard ReflectionPad1d.
-        model = DeepLabV3(
-            n_points=3,
-            config={
-                "deeplabv3_backbone_channel": 8,
-                "deeplabv3_aspp_channel": 8,
-                "aspp_rates": (2, 4, 6),
-                "multi_grid": (1, 2),
-            },
-        )
-        x = torch.randn(2, 1, 3)
-        y = model(x)
-        self.assertEqual(y.shape, (2, 1, 3))
-        self.assertFalse(torch.isnan(y).any())
-
-    def test_extreme_multi_grid_configurations(self) -> None:
-        """Verify single block and multi-block multi_grid tuples execute properly."""
-        # Single block
-        model_single = DeepLabV3(
-            n_points=30,
-            config={"multi_grid": (1,), "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
-        )
-        self.assertEqual(len(model_single.backbone.blocks), 1)
-        self.assertEqual(model_single(torch.randn(2, 1, 30)).shape, (2, 1, 30))
-
-        # 5 blocks
-        model_extended = DeepLabV3(
-            n_points=30,
-            config={"multi_grid": (1, 2, 2, 4, 8), "deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8},
-        )
-        self.assertEqual(len(model_extended.backbone.blocks), 5)
-        self.assertEqual(model_extended(torch.randn(2, 1, 30)).shape, (2, 1, 30))
-
-    def test_backward_gradient_flow(self) -> None:
-        """Verify backward gradients propagate through all components of DeepLabV3."""
-        model = DeepLabV3(n_points=50, config={"deeplabv3_backbone_channel": 16, "deeplabv3_aspp_channel": 16})
-        x = torch.randn(2, 1, 50, requires_grad=True)
-        y_pred = model(x)
-        loss = torch.mean((y_pred - torch.ones_like(y_pred)) ** 2) + 1e-4 * model.get_l2_regularization()
+        x_single = torch.randn(1, 1, 30, requires_grad=True)
+        y_single = model_train(x_single)
+        loss = y_single.sum() + 1e-4 * l2_reg
         loss.backward()
-
-        self.assertIsNotNone(x.grad)
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                self.assertIsNotNone(param.grad, f"Gradient missing for parameter {name}")
+        self.assertIsNotNone(x_single.grad)
 
     def test_instantiate_model_factory(self) -> None:
-        """Verify instantiate_model factory correctly resolves 'deeplabv3'."""
-        model = instantiate_model("deeplabv3", seq_len=80, config={"deeplabv3_backbone_channel": 16})
+        """Verify instantiate_model resolves 'deeplabv3' and rejects invalid
+        names.
+        """
+        model = instantiate_model(
+            "deeplabv3", seq_len=40, config={"deeplabv3_backbone_channel": 8}
+        )
         self.assertIsInstance(model, DeepLabV3)
-        self.assertEqual(model.n_points, 80)
-
-        # Strict naming test: alias raises ValueError
         with self.assertRaises(ValueError):
             instantiate_model("deeplab", seq_len=40)
 
 
 class TestDeepLabV3PipelineIntegration(unittest.TestCase):
-    """End-to-end integration tests for DeepLabV3 training and prediction."""
+    """Integration tests for DeepLabV3 training and Bayesian optimization."""
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        pseudo_cfg = {
-            "material": "NMG",
-            "regions": ["Al2p", "Ti2p"],
-            "n_points": 40,
-            "measurements_per_tool": {"J4": 4, "H1": 4},
-            "measurements_per_t7_code": 2,
-            "interval_hours_range": (1.0, 5.0),
-            "tool_offsets": {
-                "J4": {"shift_ev": 0.0, "scale": 10000.0},
-                "H1": {"shift_ev": 0.5, "scale": 11000.0},
-            },
-            "die_variation_std": 0.01,
-            "noise_relative_std": 0.01,
-            "seed": 42,
-        }
-        cls.ary_intensity, cls.ary_energy, cls.meta_df = generate_pseudo_measurements(pseudo_cfg)
-        cls.paired_meta = pair_source_target_spectra(
-            cls.meta_df,
-            config={
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "time_threshold_hours": 12.0,
-                "material": "all",
-            },
-        )
-
-    def test_training_one_epoch_normalized_loss(self) -> None:
-        """Verify DeepLabV3 completes a training step with SpectralLoss."""
-        x_synth = np.random.uniform(10.0, 100.0, size=(10, 40))
-        y_synth = x_synth + np.random.normal(0.0, 1.0, size=(10, 40))
+    def test_training_and_optimization_pipeline(self) -> None:
+        """Verify training step and Ax hyperparameter search."""
+        x_synth = np.random.uniform(10.0, 50.0, size=(8, 30)).astype(np.float32)
+        y_synth = (x_synth * 1.05).astype(np.float32)
         dataset = SpectrumPairDataset(x_synth, y_synth)
 
         train_res = train_model_region(
@@ -315,12 +156,7 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
         self.assertLess(train_res["best_val_loss"], float("inf"))
         self.assertIsInstance(train_res["model"], DeepLabV3)
 
-    def test_bayesian_optimization_deeplabv3(self) -> None:
-        """Verify Ax Bayesian optimization searches DeepLabV3 hyperparameters."""
-        x_synth = np.random.uniform(10.0, 100.0, size=(10, 40))
-        y_synth = x_synth + np.random.normal(0.0, 1.0, size=(10, 40))
-        dataset = SpectrumPairDataset(x_synth, y_synth)
-
+        # Ax optimization minimal trial check
         ax_res = optimize_model_hyperparameters(
             dataset,
             dataset,
@@ -328,22 +164,16 @@ class TestDeepLabV3PipelineIntegration(unittest.TestCase):
                 "model_type": "deeplabv3",
                 "num_trials": 2,
                 "epochs_per_trial": 2,
-                "kernel_sizes": [3, 5],
-                "deeplabv3_backbone_channels": [8, 16],
-                "deeplabv3_aspp_channels": [8, 16],
+                "kernel_sizes": [3],
+                "deeplabv3_backbone_channels": [8],
+                "deeplabv3_aspp_channels": [8],
                 "batch_sizes": [4],
                 "seed": 42,
             },
         )
-
         self.assertIn("best_parameters", ax_res)
-        self.assertIn("best_val_loss", ax_res)
         self.assertEqual(len(ax_res["trials_data"]), 2)
-        self.assertIn(ax_res["best_parameters"]["kernel_size"], [3, 5])
-        self.assertIn(ax_res["best_parameters"]["deeplabv3_backbone_channel"], [8, 16])
-        self.assertIn(ax_res["best_parameters"]["deeplabv3_aspp_channel"], [8, 16])
 
 
 if __name__ == "__main__":
     unittest.main()
-

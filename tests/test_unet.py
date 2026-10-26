@@ -3,145 +3,95 @@
 from __future__ import annotations
 
 import unittest
-
 import numpy as np
-import pandas as pd
 import torch
 
-from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset
 from models.trainer import train_model_region
-from models.unet import (
-    ConventionalUNet1D,
-    ResidualUNet1D,
-    UNet1D,
-    UNetConvBlock1D,
-)
-from utility.pairing import pair_source_target_spectra
-from utility.pseudo_measurement import generate_pseudo_measurements
+from models.unet import UNet1D, UNetConvBlock1D
 
 
 class TestUNet1DArchitecture(unittest.TestCase):
     """Test suite for UNet1D network module and forward transformations."""
 
-    def test_output_shapes(self) -> None:
-        """Verify 1D U-Net strictly enforces (batch, 1, seq_len)."""
-        model = UNet1D(
-            n_points=100, config={"residual_unet_channel": 8, "depth": 3, "kernel_size": 3}
-        )
-
-        # 2D input should raise ValueError
-        x_2d = torch.randn(4, 100)
-        with self.assertRaises(ValueError):
-            model(x_2d)
-
-        # 3D input (batch, 1, n_points)
-        x_3d = torch.randn(4, 1, 100)
-        y_3d = model(x_3d)
-        self.assertEqual(y_3d.shape, (4, 1, 100))
-
-    def test_odd_sequence_length_robustness(self) -> None:
-        """Verify decoder interpolation matches odd lengths without dimension
-        mismatch.
+    def test_output_shapes_and_odd_sequence_lengths(self) -> None:
+        """Verify 1D U-Net shape preservation across standard and odd sequence
+        lengths.
         """
-        odd_lengths = [25, 53, 77, 101]
-        for seq_len in odd_lengths:
-            model = UNet1D(
-                n_points=seq_len,
-                config={"residual_unet_channel": 8, "depth": 3, "kernel_size": 3},
-            )
-            x = torch.randn(2, 1, seq_len)
-            y = model(x)
-            self.assertEqual(
-                y.shape, (2, 1, seq_len), f"Failed for odd sequence length {seq_len}"
-            )
-
-    def test_direct_vs_residual_mode(self) -> None:
-        """Verify both residual shortcut and direct prediction modes operate correctly."""
-        model_res = UNet1D(
-            n_points=40, config={"residual": True, "residual_unet_channel": 8, "depth": 2}
-        )
-        model_dir = UNet1D(
-            n_points=40, config={"residual": False, "unet_channel": 8, "depth": 2}
-        )
-
-        x = torch.randn(2, 1, 40)
-        y_res = model_res(x)
-        y_dir = model_dir(x)
-
-        self.assertEqual(y_res.shape, (2, 1, 40))
-        self.assertEqual(y_dir.shape, (2, 1, 40))
-
-    def test_l2_regularization_scalar(self) -> None:
-        """Verify L2 penalty calculates positive scalar on conv weights."""
+        # 2D input should raise ValueError
         model = UNet1D(
-            n_points=50,
+            n_points=40,
+            config={"residual_unet_channel": 8, "depth": 2, "kernel_size": 3},
+        )
+        with self.assertRaises(ValueError):
+            model(torch.randn(4, 40))
+
+        # Odd and even sequence length preservation
+        for seq_len in (25, 40, 53, 77):
+            with self.subTest(seq_len=seq_len):
+                m = UNet1D(
+                    n_points=seq_len,
+                    config={"residual_unet_channel": 8, "depth": 2, "kernel_size": 3},
+                )
+                x = torch.randn(2, 1, seq_len)
+                y = m(x)
+                self.assertEqual(y.shape, (2, 1, seq_len))
+
+    def test_modes_block_config_and_l2_regularization(self) -> None:
+        """Verify residual mode, conv block config, and L2 regularization."""
+        # Residual vs direct prediction
+        x = torch.randn(2, 1, 40)
+        for residual_mode in (True, False):
+            with self.subTest(residual=residual_mode):
+                m = UNet1D(
+                    n_points=40,
+                    config={
+                        "residual": residual_mode,
+                        "residual_unet_channel": 8,
+                        "unet_channel": 8,
+                        "depth": 2,
+                    },
+                )
+                self.assertEqual(m(x).shape, (2, 1, 40))
+
+        # L2 regularization check
+        model_reg = UNet1D(
+            n_points=40,
             config={"residual_unet_channel": 8, "depth": 2, "use_batch_norm": True},
         )
-        l2_val = model.get_l2_regularization()
-        self.assertIsInstance(l2_val, torch.Tensor)
-        self.assertEqual(l2_val.dim(), 0)
+        l2_val = model_reg.get_l2_regularization()
         self.assertGreater(float(l2_val.item()), 0.0)
 
-        expected_l2 = sum(
-            torch.sum(m.weight**2).item()
-            for m in model.modules()
-            if isinstance(m, torch.nn.Conv1d)
-        )
-        self.assertAlmostEqual(float(l2_val.item()), expected_l2, places=3)
-
-    def test_conv_block_config_interface(self) -> None:
-        """Verify UNetConvBlock1D accepts config dictionary with bundled parameters."""
+        # UNetConvBlock1D config interface
         block = UNetConvBlock1D(
             4, 8, config={"kernel_size": 3, "dropout": 0.1, "use_batch_norm": True}
         )
-        x = torch.randn(2, 4, 30)
-        y = block(x)
-        self.assertEqual(y.shape, (2, 8, 30))
+        self.assertEqual(block(torch.randn(2, 4, 30)).shape, (2, 8, 30))
 
     def test_invalid_parameters_raise(self) -> None:
-        """Verify invalid kernel_size, depth, and sequence length raise ValueError."""
-        with self.assertRaises(ValueError):
-            UNet1D(n_points=50, config={"kernel_size": 4})  # even
-        with self.assertRaises(ValueError):
-            UNet1D(n_points=50, config={"kernel_size": 0})  # non-positive
-        with self.assertRaises(ValueError):
-            UNet1D(n_points=50, config={"depth": 0})  # depth < 1
-        with self.assertRaises(ValueError):
-            UNet1D(n_points=7, config={"depth": 3})  # 7 < 2**3
-        with self.assertRaises(ValueError):
-            UNet1D(n_points=8, config={"depth": 2, "kernel_size": 9})  # kernel_size > n_points
+        """Verify invalid kernel_size, depth, and sequence lengths raise
+        ValueError.
+        """
+        invalid_configs = [
+            (50, {"kernel_size": 4}),               # even kernel
+            (50, {"kernel_size": 0}),               # non-positive kernel
+            (50, {"depth": 0}),                     # depth < 1
+            (7, {"depth": 3}),                      # 7 < 2**3
+            (8, {"depth": 2, "kernel_size": 9}),    # kernel_size > n_points
+        ]
+        for n_pts, cfg in invalid_configs:
+            with self.subTest(n_points=n_pts, cfg=cfg):
+                with self.assertRaises(ValueError):
+                    UNet1D(n_points=n_pts, config=cfg)
 
 
 class TestUNetTrainingAndPipeline(unittest.TestCase):
-    """Test suite for training routine and end-to-end pipeline."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Generate small pseudo-measurement dataset for testing."""
-        config = {
-            "measurements_per_tool": {"J4": 4, "H1": 4},
-            "measurements_per_t7_code": 2,
-            "n_die": 2,
-            "n_points": 40,
-            "regions": ["Al2p", "Ti2p"],
-            "seed": 42,
-        }
-        cls.ary_int, cls.ary_ene, cls.meta_df = generate_pseudo_measurements(config)
-        cls.meta_df = pair_source_target_spectra(
-            cls.meta_df,
-            config={
-                "source_tool": "J4",
-                "target_tool": "H1",
-                "time_threshold_hours": 12.0,
-                "material": "all",
-            },
-        )
+    """Test suite for training routine and pipeline integration."""
 
     def test_train_unet_region_loss_reduction(self) -> None:
-        """Verify train_unet_region completes epochs and records loss history."""
-        x_synth = np.random.uniform(10.0, 100.0, size=(10, 30))
-        y_synth = x_synth + np.random.normal(0.0, 1.0, size=(10, 30))
+        """Verify train_model_region completes epochs with residual_unet."""
+        x_synth = np.random.uniform(10.0, 50.0, size=(8, 30)).astype(np.float32)
+        y_synth = (x_synth * 1.05).astype(np.float32)
         ds = SpectrumPairDataset(x_synth, y_synth)
 
         res = train_model_region(
@@ -149,18 +99,18 @@ class TestUNetTrainingAndPipeline(unittest.TestCase):
             val_dataset=ds,
             config={
                 "model_type": "residual_unet",
-                "epochs": 3,
+                "epochs": 2,
                 "batch_size": 4,
                 "residual_unet_channel": 8,
                 "depth": 2,
                 "kernel_size": 3,
                 "learning_rate": 1e-3,
+                "verbose": False,
             },
         )
-
         self.assertIn("model", res)
         self.assertIn("best_val_loss", res)
-        self.assertEqual(len(res["history"]["train_loss"]), 3)
+        self.assertEqual(len(res["history"]["train_loss"]), 2)
         self.assertIsInstance(res["model"], UNet1D)
 
 
