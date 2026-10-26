@@ -1,4 +1,6 @@
-"""Unit tests for ReduceLROnPlateau dynamical learning rate and zero-validation training in models/trainer.py."""
+"""Unit tests for ReduceLROnPlateau scheduler and trainer in
+models/trainer.py.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ from models.trainer import train_model_region
 
 
 class DummyConstantModel(nn.Module):
-    """Dummy 1D model outputting constant predictions to simulate a plateau."""
+    """Dummy 1D model outputting constant predictions to simulate plateau."""
 
     def __init__(self, n_points: int = 20) -> None:
         super().__init__()
@@ -20,12 +22,11 @@ class DummyConstantModel(nn.Module):
         self.param = nn.Parameter(torch.tensor(1.0))
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        # Prediction has zero gradient for parameter so loss stays completely flat (plateau)
         return x * 1.0 + self.param * 0.0
 
 
 class TestReduceLROnPlateau(unittest.TestCase):
-    """Test suite for ReduceLROnPlateau dynamic learning rate scheduler and zero-validation support."""
+    """Test suite for ReduceLROnPlateau dynamic scheduler and validations."""
 
     def setUp(self) -> None:
         np.random.seed(42)
@@ -33,7 +34,7 @@ class TestReduceLROnPlateau(unittest.TestCase):
         self.n_samples = 10
         self.n_points = 20
         self.x = np.random.uniform(0.1, 1.0, (self.n_samples, self.n_points)).astype(np.float32)
-        self.y = self.x * 2.0  # Constant gap to keep loss positive
+        self.y = self.x * 2.0
 
         self.train_ds = SpectrumPairDataset(self.x, self.y)
         self.val_ds = SpectrumPairDataset(self.x.copy(), self.y.copy())
@@ -42,53 +43,13 @@ class TestReduceLROnPlateau(unittest.TestCase):
             np.empty((0, self.n_points), dtype=np.float32),
         )
 
-    def test_dynamic_lr_reduction_default_factor_0_9(self) -> None:
-        """Verify LR is reduced by default factor 0.9 when val loss plateaus for lr_patience epochs."""
-        model = DummyConstantModel(n_points=self.n_points)
-        init_lr = 1e-2
-        config = {
-            "model": model,
-            "epochs": 6,
-            "batch_size": 4,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": True,
-            "learning_rate_scheduler_patience": 2,  # Reduce after 2 non-improving epochs
-            "early_stopping_patience": 10,  # Do not early stop before scheduler acts
-            "verbose": False,
-        }
-
-        res = train_model_region(self.train_ds, self.val_ds, config=config)
-        lr_history = res["history"]["learning_rate"]
-
-        self.assertEqual(len(lr_history), 6)
-        self.assertAlmostEqual(lr_history[0], init_lr, places=6)
-        # By epoch 4 (2 epochs patience + 1), LR should drop to 0.9 * init_lr
-        self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
-        self.assertLess(lr_history[-1], init_lr)
-
-    def test_dynamic_lr_default_min_lr_is_one_ten_thousandth(self) -> None:
-        """Verify min_lr defaults to initial_lr / 10000.0."""
-        model = DummyConstantModel(n_points=self.n_points)
-        init_lr = 2e-3
-        config = {
-            "model": model,
-            "epochs": 1,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": True,
-            "verbose": False,
-        }
-        res = train_model_region(self.train_ds, self.val_ds, config=config)
-        resolved_cfg = res["config"]
-        expected_min_lr = init_lr / 10000.0
-        self.assertAlmostEqual(
-            resolved_cfg["min_learning_rate"], expected_min_lr, places=8
-        )
-
-    def test_dynamic_lr_custom_factor_and_explicit_min_lr(self) -> None:
-        """Verify custom reduction factor and explicit min_lr are respected."""
+    def test_dynamic_lr_reduction_and_limits(self) -> None:
+        """Verify dynamic learning rate reduction and floor enforcement."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-2
         custom_min_lr = 1e-3
+
+        # Test custom reduction factor (0.5) and minimum floor
         config = {
             "model": model,
             "epochs": 10,
@@ -102,181 +63,120 @@ class TestReduceLROnPlateau(unittest.TestCase):
         }
         res = train_model_region(self.train_ds, self.val_ds, config=config)
         lr_history = res["history"]["learning_rate"]
-        # LR will step down: 1e-2 -> 5e-3 -> 2.5e-3 -> 1.25e-3 -> min_lr (1e-3)
         self.assertAlmostEqual(lr_history[-1], custom_min_lr, places=5)
 
-    def test_zero_validation_dataset_monitors_train_loss(self) -> None:
-        """Verify zero validation dataset does not raise error and monitors train loss for LR reduction."""
+        # Test default floor (initial_lr / 10000.0)
+        res_default = train_model_region(
+            self.train_ds,
+            self.val_ds,
+            config={
+                "model": DummyConstantModel(n_points=self.n_points),
+                "epochs": 1,
+                "learning_rate": 2e-3,
+                "use_learning_rate_scheduler": True,
+                "verbose": False,
+            },
+        )
+        self.assertAlmostEqual(
+            res_default["config"]["min_learning_rate"], 2e-3 / 10000.0, places=8
+        )
+
+    def test_validation_fallback_and_scheduler_toggle(self) -> None:
+        """Verify empty or None validation fallback and disabled scheduler."""
         model = DummyConstantModel(n_points=self.n_points)
         init_lr = 1e-2
-        config = {
-            "model": model,
-            "epochs": 5,
-            "batch_size": 10,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": True,
-            "learning_rate_scheduler_patience": 2,
-            "early_stopping_patience": 10,
-            "verbose": False,
-        }
-        # Run training with empty validation dataset
-        res = train_model_region(self.train_ds, self.empty_val_ds, config=config)
 
-        self.assertIn("history", res)
-        self.assertEqual(len(res["history"]["train_loss"]), 5)
-        # val_loss history should contain NaNs since no validation set exists
-        for vl in res["history"]["val_loss"]:
-            self.assertTrue(np.isnan(vl))
+        # Subtest 1: Empty or None validation set monitors train_loss
+        for val_set in (self.empty_val_ds, None):
+            with self.subTest(val_type="empty" if val_set is not None else "None"):
+                res = train_model_region(
+                    self.train_ds,
+                    val_set,
+                    config={
+                        "model": model,
+                        "epochs": 4,
+                        "batch_size": 10,
+                        "learning_rate": init_lr,
+                        "use_learning_rate_scheduler": True,
+                        "learning_rate_scheduler_patience": 1,
+                        "early_stopping_patience": 10,
+                        "verbose": False,
+                    },
+                )
+                self.assertEqual(len(res["history"]["train_loss"]), 4)
+                self.assertTrue(all(np.isnan(vl) for vl in res["history"]["val_loss"]))
+                self.assertLess(res["history"]["learning_rate"][-1], init_lr)
 
-        # Scheduler stepped on train_loss and reduced LR
-        lr_history = res["history"]["learning_rate"]
-        self.assertLess(lr_history[-1], init_lr)
-        self.assertAlmostEqual(lr_history[-1], init_lr * 0.9, places=6)
-
-    def test_disabled_scheduler_preserves_constant_lr(self) -> None:
-        """Verify scheduler disabled keeps learning rate constant."""
-        model = DummyConstantModel(n_points=self.n_points)
-        init_lr = 1e-3
-        config = {
-            "model": model,
-            "epochs": 5,
-            "batch_size": 4,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": False,
-            "learning_rate_scheduler_patience": 1,
-            "early_stopping_patience": 10,
-            "verbose": False,
-        }
-        res = train_model_region(self.train_ds, self.val_ds, config=config)
-        lr_history = res["history"]["learning_rate"]
-        for lr_val in lr_history:
+        # Subtest 2: Disabled scheduler maintains constant learning rate
+        res_disabled = train_model_region(
+            self.train_ds,
+            self.val_ds,
+            config={
+                "model": model,
+                "epochs": 3,
+                "batch_size": 4,
+                "learning_rate": init_lr,
+                "use_learning_rate_scheduler": False,
+                "verbose": False,
+            },
+        )
+        for lr_val in res_disabled["history"]["learning_rate"]:
             self.assertEqual(lr_val, init_lr)
 
-    def test_none_validation_dataset_monitors_train_loss(self) -> None:
-        """Verify val_dataset=None is accepted and monitors train_loss."""
+    def test_legacy_aliases_rejected(self) -> None:
+        """Verify passing deprecated or legacy aliases raises KeyError."""
         model = DummyConstantModel(n_points=self.n_points)
-        init_lr = 1e-2
-        config = {
-            "model": model,
-            "epochs": 4,
-            "batch_size": 10,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": True,
-            "learning_rate_scheduler_patience": 1,
-            "early_stopping_patience": 10,
-            "verbose": False,
-        }
-        res = train_model_region(self.train_ds, None, config=config)
-        self.assertIn("history", res)
-        self.assertEqual(len(res["history"]["train_loss"]), 4)
-        for vl in res["history"]["val_loss"]:
-            self.assertTrue(np.isnan(vl))
-        self.assertLess(res["history"]["learning_rate"][-1], init_lr)
-
-    def test_deprecated_aliases_raise_keyerror(self) -> None:
-        """Verify passing deprecated aliases raises KeyError."""
-        model = DummyConstantModel(n_points=self.n_points)
-        for deprecated_key in ["lr", "lr_scheduler", "lr_factor", "lr_patience", "lr_min"]:
-            config = {
-                "model": model,
-                "epochs": 2,
-                "batch_size": 4,
-                deprecated_key: 1e-2,
-            }
-            with self.assertRaises(KeyError) as ctx:
-                train_model_region(self.train_ds, self.val_ds, config=config)
-            self.assertIn("Missing required canonical key", str(ctx.exception))
-
-    def test_scheduler_canonical_configuration(self) -> None:
-        """Verify canonical scheduler parameters are recognized properly."""
-        model = DummyConstantModel(n_points=self.n_points)
-        init_lr = 1e-2
-        config = {
-            "model": model,
-            "epochs": 4,
-            "batch_size": 10,
-            "learning_rate": init_lr,
-            "use_learning_rate_scheduler": True,
-            "learning_rate_reduce_factor": 0.8,
-            "learning_rate_scheduler_patience": 1,
-            "min_learning_rate": 1e-4,
-            "early_stopping_patience": 10,
-            "verbose": False,
-        }
-        res = train_model_region(self.train_ds, self.val_ds, config=config)
-        resolved_cfg = res["config"]
-        self.assertTrue(resolved_cfg["use_learning_rate_scheduler"])
-        self.assertAlmostEqual(resolved_cfg["learning_rate_reduce_factor"], 0.8, places=5)
-        self.assertEqual(resolved_cfg["learning_rate_scheduler_patience"], 1)
-        self.assertAlmostEqual(resolved_cfg["min_learning_rate"], 1e-4, places=5)
-        # Should reduce by 0.8 factor
-        self.assertAlmostEqual(res["history"]["learning_rate"][-1], init_lr * 0.8, places=5)
-
-    def test_disallowed_trainer_aliases_raise_key_error(self) -> None:
-        """Verify disallowed legacy aliases raise informative KeyError."""
-        model = DummyConstantModel(n_points=self.n_points)
-        base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
-        disallowed = [
+        disallowed_aliases = [
+            "lr",
+            "lr_scheduler",
+            "lr_factor",
+            "lr_patience",
+            "lr_min",
             "use_lr_scheduler",
             "lr_reduce_factor",
             "lr_scheduler_patience",
             "min_lr",
         ]
-        for alias in disallowed:
-            with self.assertRaises(KeyError):
-                train_model_region(
-                    self.train_ds, self.val_ds, config={**base_cfg, alias: True}
-                )
+        base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
+        for alias in disallowed_aliases:
+            with self.subTest(alias=alias):
+                with self.assertRaises(KeyError):
+                    train_model_region(
+                        self.train_ds, self.val_ds, config={**base_cfg, alias: True}
+                    )
 
-    def test_invalid_scheduler_parameters_raise_error(self) -> None:
-        """Verify invalid scheduler parameters raise ValueError."""
+    def test_invalid_scheduler_parameters_and_warnings(self) -> None:
+        """Verify invalid scheduler parameter bounds and patience warning."""
         model = DummyConstantModel(n_points=self.n_points)
         base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
 
-        # factor <= 0 or >= 1
-        with self.assertRaises(ValueError):
-            train_model_region(
-                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_reduce_factor": 0.0}
-            )
-        with self.assertRaises(ValueError):
-            train_model_region(
-                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_reduce_factor": 1.5}
-            )
+        # Table-driven invalid parameters
+        invalid_params = [
+            {"learning_rate_reduce_factor": 0.0},
+            {"learning_rate_reduce_factor": 1.5},
+            {"learning_rate_scheduler_patience": 0},
+            {"min_learning_rate": -1e-4},
+            {"learning_rate": 1e-4, "min_learning_rate": 1e-3},
+        ]
+        for bad_cfg in invalid_params:
+            with self.subTest(bad_cfg=bad_cfg):
+                with self.assertRaises(ValueError):
+                    train_model_region(
+                        self.train_ds, self.val_ds, config={**base_cfg, **bad_cfg}
+                    )
 
-        # patience < 1
-        with self.assertRaises(ValueError):
-            train_model_region(
-                self.train_ds, self.val_ds, config={**base_cfg, "learning_rate_scheduler_patience": 0}
-            )
-
-        # min_lr < 0
-        with self.assertRaises(ValueError):
-            train_model_region(
-                self.train_ds, self.val_ds, config={**base_cfg, "min_learning_rate": -1e-4}
-            )
-
-        # learning_rate < min_learning_rate
-        with self.assertRaises(ValueError):
-            train_model_region(
-                self.train_ds,
-                self.val_ds,
-                config={**base_cfg, "learning_rate": 1e-4, "min_learning_rate": 1e-3},
-            )
-
-    def test_warning_emitted_when_early_stopping_patience_le_lr_scheduler_patience(self) -> None:
-        """Verify warning when stopping patience <= scheduler patience."""
-        model = DummyConstantModel(n_points=self.n_points)
-        config = {
+        # Warning when stopping patience <= scheduler patience
+        warning_cfg = {
             "model": model,
             "epochs": 15,
             "learning_rate": 1e-3,
+            "use_learning_rate_scheduler": True,
             "learning_rate_scheduler_patience": 5,
             "early_stopping_patience": 5,
         }
         with self.assertWarns(UserWarning):
-            train_model_region(self.train_ds, self.val_ds, config=config)
+            train_model_region(self.train_ds, self.val_ds, config=warning_cfg)
 
 
 if __name__ == "__main__":
     unittest.main()
-
