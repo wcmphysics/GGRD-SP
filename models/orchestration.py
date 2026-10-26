@@ -96,6 +96,75 @@ def _resolve_region_config(
     return sliding_window_config, resolved_train_config, resolved_bo_config
 
 
+_SHARED_WINDOW_HINT = (
+    "A unified model needs one input length: remove per-region window "
+    "overrides in 'dataset.region_configs', or set 'dataset.window_size' and "
+    "'dataset.stride' in points so every region resolves to the same values."
+)
+
+
+def _require_shared_region_value(
+    values_by_region: dict[str, int], description: str, hint: str
+) -> int:
+    """Return the value shared by all regions or raise a ValueError."""
+    if not values_by_region:
+        raise ValueError(
+            f"Cannot determine shared {description} from an empty set of regions."
+        )
+    if len(set(values_by_region.values())) > 1:
+        raise ValueError(
+            f"unified_model=True requires every region to share the same "
+            f"{description}, got {values_by_region}. {hint}"
+        )
+    return next(iter(values_by_region.values()))
+
+
+def _merge_regional_train_patches(
+    regional_datasets: dict[str, dict[str, Any]],
+    train_full: SpectrumPairDataset,
+    seq_len: int,
+) -> tuple[SpectrumPairDataset | SpectrumPatchDataset, int, int]:
+    """Merge per-region training patches that share one window and stride.
+
+    Regions without training samples are ignored. Returns the merged train
+    dataset with its window size and stride in points.
+    """
+    trained = {
+        region: bundle
+        for region, bundle in regional_datasets.items()
+        if len(bundle.get("dataset_train_full", bundle["dataset_train"])) > 0
+    }
+    patched = [
+        region
+        for region, bundle in trained.items()
+        if isinstance(bundle["dataset_train"], SpectrumPatchDataset)
+    ]
+    if not patched:
+        return train_full, seq_len, seq_len
+
+    unpatched = sorted(set(trained) - set(patched))
+    if unpatched:
+        raise ValueError(
+            "unified_model=True requires sliding window to be either on or off "
+            f"for all regions, but it is on for {patched} and off for "
+            f"{unpatched}. Align 'use_sliding_window' in 'dataset.region_configs'."
+        )
+    w_pts = _require_shared_region_value(
+        {r: int(trained[r]["window_size_points"]) for r in patched},
+        "sliding window size in points",
+        _SHARED_WINDOW_HINT,
+    )
+    s_pts = _require_shared_region_value(
+        {r: int(trained[r]["sliding_stride_points"]) for r in patched},
+        "sliding stride in points",
+        _SHARED_WINDOW_HINT,
+    )
+    merged = SpectrumPatchDataset.concatenate(
+        [trained[r]["dataset_train"] for r in patched]
+    )
+    return merged, w_pts, s_pts
+
+
 def _combine_regional_bundles(
     regional_datasets: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
@@ -115,6 +184,11 @@ def _combine_regional_bundles(
         for b in regional_datasets.values()
         if b.get("dataset_test") is not None
     ]
+    seq_len = _require_shared_region_value(
+        {r: int(d.x.shape[-1]) for r, d in zip(regional_datasets, train_full_items)},
+        "spectrum length (N_points)",
+        "Resample all regions onto a common number of points.",
+    )
 
     def _merge_pair_datasets(
         ds_list: list[SpectrumPairDataset],
@@ -138,25 +212,9 @@ def _combine_regional_bundles(
     val_full = _merge_pair_datasets(val_items)
     test_full = _merge_pair_datasets(test_items) if test_items else None
 
-    first_bundle = next(iter(regional_datasets.values()))
-    w_pts = int(
-        first_bundle.get(
-            "window_size_points", first_bundle.get("full_spectrum_length", 100)
-        )
+    train_ds, w_pts, s_pts = _merge_regional_train_patches(
+        regional_datasets, train_full, seq_len
     )
-    s_pts = int(first_bundle.get("sliding_stride_points", w_pts))
-    seq_len = int(first_bundle.get("full_spectrum_length", w_pts))
-
-    is_sw = any(
-        isinstance(b["dataset_train"], SpectrumPatchDataset)
-        for b in regional_datasets.values()
-    )
-    if is_sw:
-        train_ds: SpectrumPairDataset | SpectrumPatchDataset = SpectrumPatchDataset(
-            train_full, window_size=w_pts, stride=s_pts
-        )
-    else:
-        train_ds = train_full
 
     return {
         "dataset_train": train_ds,

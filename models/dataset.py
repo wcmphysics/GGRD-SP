@@ -151,6 +151,36 @@ class SpectrumPatchDataset(Dataset):
     def __len__(self) -> int:
         return len(self.x)
 
+    @classmethod
+    def concatenate(
+        cls, datasets: list[SpectrumPatchDataset]
+    ) -> SpectrumPatchDataset:
+        """Merge patch datasets that share one window size and stride."""
+        if not datasets:
+            raise ValueError("Cannot concatenate an empty list of patch datasets.")
+        geometries = {(d.window_size, d.stride) for d in datasets}
+        if len(geometries) > 1:
+            raise ValueError(
+                "Patch datasets must share (window_size, stride) to be "
+                f"concatenated, got {sorted(geometries)}."
+            )
+        has_meta = [len(d.meta_list) == len(d) for d in datasets]
+        if any(has_meta) and not all(has_meta):
+            raise ValueError(
+                "Cannot concatenate patch datasets where only some carry "
+                f"per-patch metadata (has_meta per dataset: {has_meta})."
+            )
+        merged = cls.__new__(cls)
+        merged.window_size, merged.stride = geometries.pop()
+        merged.x = torch.cat([d.x for d in datasets], dim=0)
+        merged.y = torch.cat([d.y for d in datasets], dim=0)
+        merged.max_vals = torch.cat([d.max_vals for d in datasets], dim=0)
+        merged.energy_bounds = torch.cat(
+            [d.energy_bounds for d in datasets], dim=0
+        )
+        merged.meta_list = [m for d in datasets for m in d.meta_list]
+        return merged
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         ret: dict[str, Any] = {
             "x": self.x[idx],
