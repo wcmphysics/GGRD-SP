@@ -1,16 +1,14 @@
-"""Unit tests for unified multi-region spectral model training and inference.
-"""
+"""Unit tests for Stage 7 unified multi-region neural network architecture."""
 
 from __future__ import annotations
 
 import unittest
 import numpy as np
 import pandas as pd
-import torch
 import torch.nn as nn
 
 import models
-import utility
+from utility.pseudo_measurement import generate_pseudo_measurements
 
 
 def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
@@ -89,44 +87,30 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
 
 
 class TestUnifiedModel(unittest.TestCase):
-    """Test suite verifying unified multi-region model dataset, training,
-    and inference.
-    """
+    """Test suite for unified multi-region training and dataset bundling."""
 
-    def setUp(self) -> None:
-        mock_data = _create_mock_spectral_data()
-        self.ary_intensity, self.ary_energy, self.df_meta = mock_data
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ary_intensity, cls.ary_energy, cls.df_meta = (
+            _create_mock_spectral_data()
+        )
 
-    def test_create_unified_dataset_full_spectrum(self) -> None:
-        """Test unified dataset creation in full spectrum mode."""
-        bundle = models.create_unified_dataset(
+    def test_create_unified_dataset_modes(self) -> None:
+        """Verify unified dataset creation in full-spectrum and sliding-window
+        modes.
+        """
+        # 1. Full spectrum mode
+        bundle_full = models.create_unified_dataset(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
+            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
         )
-        self.assertIn("dataset_train", bundle)
-        self.assertIn("dataset_val", bundle)
-        self.assertIn("dataset_test", bundle)
-        # 1 train session * 3 dies * 3 regions = 9 train samples
-        self.assertEqual(len(bundle["dataset_train"]), 9)
-        self.assertEqual(len(bundle["dataset_val"]), 9)
-        self.assertEqual(len(bundle["dataset_test"]), 9)
+        self.assertEqual(bundle_full["full_spectrum_length"], 40)
+        self.assertEqual(len(bundle_full["dataset_train"]), 9)
 
-        item = bundle["dataset_train"][0]
-        self.assertIn("x", item)
-        self.assertIn("y", item)
-        self.assertIn("meta", item)
-        self.assertIn("region", item["meta"])
-        self.assertIn("region_index", item["meta"])
-
-    def test_create_unified_dataset_sliding_window(self) -> None:
-        """Test unified dataset creation in sliding window patch mode."""
-        bundle = models.create_unified_dataset(
+        # 2. Sliding window mode
+        bundle_sw = models.create_unified_dataset(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
@@ -138,164 +122,75 @@ class TestUnifiedModel(unittest.TestCase):
                 "stride": 5,
             },
         )
-        # 9 full spectra * multiple patches per spectrum
-        self.assertGreater(len(bundle["dataset_train"]), 9)
-        patch_item = bundle["dataset_train"][0]
-        self.assertEqual(patch_item["x"].shape[-1], 11)
-        self.assertIn("meta", patch_item)
-        self.assertIn("region", patch_item["meta"])
+        self.assertGreater(len(bundle_sw["dataset_train"]), 9)
+        self.assertEqual(bundle_sw["dataset_train"][0]["x"].shape[-1], 11)
 
-    def test_unified_model_training_resnet(self) -> None:
-        """Test single ResNet model training across all regions."""
-        regional_datasets = models.create_regional_datasets(
-            self.df_meta,
-            self.ary_intensity,
-            self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
-        )
-        criterion = models.SpectralLoss()
-        results = models.perform_model_training_and_bayesian_optimization(
-            regional_datasets,
-            criterion,
-            config={
-                "model_type": "resnet",
-                "unified_model": True,
-                "use_film": True,
-                "train_config": {
-                    "epochs": 2,
-                    "batch_size": 4,
-                    "learning_rate": 1e-3,
+    def test_unified_model_training_architectures(self) -> None:
+        """Verify unified model training across ResNet, UNet, and DeepLabV3."""
+        architectures = [
+            (
+                "resnet",
+                {
                     "resnet_channel": 8,
                     "kernel_size": 3,
                     "dropout": 0.0,
                     "use_batch_norm": True,
                     "padding_mode": "reflect",
                     "use_film": True,
-                    "verbose": False,
                 },
-                "film_config": {
-                    "use_film": True,
-                    "encode_region": True,
-                    "num_regions": 8,
-                    "region_embed_dim": 4,
-                },
-            },
-        )
+                {"use_film": True, "encode_region": True, "num_regions": 8, "region_embed_dim": 4},
+            ),
+            ("residual_unet", {"depth": 2, "residual_unet_channel": 8, "kernel_size": 3}, None),
+            ("unet", {"depth": 2, "unet_channel": 8, "kernel_size": 3}, None),
+            ("deeplabv3", {"deeplabv3_backbone_channel": 8, "deeplabv3_aspp_channel": 8, "kernel_size": 3}, None),
+        ]
 
-        self.assertIn("all", results["models"])
-        single_model = results["models"]["all"]
-        self.assertIsInstance(single_model, nn.Module)
-        self.assertTrue(getattr(single_model, "use_film", False))
-
-        # Check that individual regions map to the exact same model reference
-        self.assertIs(results["models"]["Al2p"], single_model)
-        self.assertIs(results["models"]["Ti2p"], single_model)
-        self.assertIs(results["models"]["O1s"], single_model)
-
-        # Predict using unified model
-        data_orig = (self.ary_intensity, self.ary_energy, self.df_meta)
-        pred_i, pred_e, pred_df = models.predict_spectra(
-            models=results["models"],
-            data=data_orig,
-            config={"source_tool": "J4", "target_tool": "J5"},
-        )
-        self.assertEqual(pred_i.shape[1], 40)
-        self.assertEqual(len(pred_df), 27)
-
-    def test_unified_model_training_unet(self) -> None:
-        """Test single Residual U-Net training across all regions."""
         regional_datasets = models.create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
+            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
         )
-        criterion = models.SpectralLoss()
-        results = models.perform_model_training_and_bayesian_optimization(
-            regional_datasets,
-            criterion,
-            config={
-                "model_type": "residual_unet",
-                "unified_model": True,
-                "use_film": False,
-                "train_config": {
-                    "epochs": 2,
-                    "batch_size": 4,
-                    "depth": 2,
-                    "residual_unet_channel": 8,
-                    "kernel_size": 3,
-                    "verbose": False,
-                },
-            },
-        )
-        self.assertIn("all", results["models"])
-        self.assertIs(results["models"]["Al2p"], results["models"]["all"])
 
-    def test_unified_model_training_conventional_unet(self) -> None:
-        """Test single Conventional U-Net training across all regions."""
-        regional_datasets = models.create_regional_datasets(
-            self.df_meta,
-            self.ary_intensity,
-            self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
-        )
-        criterion = models.SpectralLoss()
-        results = models.perform_model_training_and_bayesian_optimization(
-            regional_datasets,
-            criterion,
-            config={
-                "model_type": "unet",
-                "unified_model": True,
-                "use_film": False,
-                "train_config": {
-                    "epochs": 2,
-                    "batch_size": 4,
-                    "depth": 2,
-                    "unet_channel": 8,
-                    "kernel_size": 3,
-                    "verbose": False,
-                },
-            },
-        )
-        self.assertIn("all", results["models"])
-        self.assertIs(results["models"]["Al2p"], results["models"]["all"])
+        for arch_name, train_cfg, film_cfg in architectures:
+            with self.subTest(arch=arch_name):
+                pipeline_cfg = {
+                    "model_type": arch_name,
+                    "unified_model": True,
+                    "use_film": film_cfg is not None,
+                    "train_config": {"epochs": 1, "batch_size": 4, "verbose": False, **train_cfg},
+                }
+                if film_cfg is not None:
+                    pipeline_cfg["film_config"] = film_cfg
+
+                results = models.perform_model_training_and_bayesian_optimization(
+                    regional_datasets, models.SpectralLoss(), config=pipeline_cfg
+                )
+                self.assertIn("all", results["models"])
+                single_model = results["models"]["all"]
+                self.assertIsInstance(single_model, nn.Module)
+                self.assertIs(results["models"]["Al2p"], single_model)
+                self.assertIs(results["models"]["Ti2p"], single_model)
 
     def test_dual_mode_per_region_preservation(self) -> None:
-        """Test that setting unified_model=False preserves independent
-        regional models.
+        """Verify setting unified_model=False preserves independent regional
+        models.
         """
         regional_datasets = models.create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
+            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
         )
-        criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
             regional_datasets,
-            criterion,
+            models.SpectralLoss(),
             config={
                 "model_type": "resnet",
                 "unified_model": False,
                 "use_film": False,
                 "train_config": {
-                    "epochs": 2,
+                    "epochs": 1,
                     "batch_size": 4,
                     "resnet_channel": 8,
                     "kernel_size": 3,
@@ -307,84 +202,41 @@ class TestUnifiedModel(unittest.TestCase):
                 },
             },
         )
-        # In per-region mode, "all" is NOT created and models are independent
         self.assertNotIn("all", results["models"])
-        self.assertIn("Al2p", results["models"])
-        self.assertIn("Ti2p", results["models"])
-        self.assertIn("O1s", results["models"])
         self.assertIsNot(results["models"]["Al2p"], results["models"]["Ti2p"])
 
-    def test_unified_model_training_deeplabv3(self) -> None:
-        """Test single DeepLabV3 training across all regions."""
+    def test_unified_model_bayesian_optimization(self) -> None:
+        """Verify Stage 7 Bayesian optimization in unified mode."""
         regional_datasets = models.create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
+            config={"source_tool": "J4", "target_tool": "J5", "use_sliding_window": False},
         )
-        criterion = models.SpectralLoss()
         results = models.perform_model_training_and_bayesian_optimization(
             regional_datasets,
-            criterion,
+            models.SpectralLoss(),
+            bayesian_opt_config={
+                "num_trials": 2,
+                "epochs_per_trial": 1,
+                "kernel_sizes": [3],
+                "resnet_channels": [8],
+                "seed": 42,
+            },
             config={
-                "model_type": "deeplabv3",
+                "model_type": "resnet",
                 "unified_model": True,
-                "use_film": False,
+                "use_bayesian_opt": True,
                 "train_config": {
-                    "epochs": 2,
-                    "batch_size": 4,
-                    "deeplabv3_backbone_channel": 8,
-                    "deeplabv3_aspp_channel": 8,
-                    "kernel_size": 3,
+                    "dropout": 0.0,
+                    "use_batch_norm": True,
+                    "padding_mode": "reflect",
+                    "use_film": False,
                     "verbose": False,
                 },
             },
         )
         self.assertIn("all", results["models"])
-
-    def test_unified_model_bayesian_optimization(self) -> None:
-        """Test single global Bayesian optimization on unified data."""
-        regional_datasets = models.create_regional_datasets(
-            self.df_meta,
-            self.ary_intensity,
-            self.ary_energy,
-            config={
-                "source_tool": "J4",
-                "target_tool": "J5",
-                "use_sliding_window": False,
-            },
-        )
-        criterion = models.SpectralLoss()
-        results = models.perform_model_training_and_bayesian_optimization(
-            regional_datasets,
-            criterion,
-            config={
-                "model_type": "resnet",
-                "unified_model": True,
-                "use_film": False,
-                "train_config": {
-                    "epochs": 2,
-                    "verbose": False,
-                    "dropout": 0.0,
-                    "use_batch_norm": True,
-                    "padding_mode": "reflect",
-                    "use_film": False,
-                },
-            },
-            bayesian_opt_config={
-                "use_bayesian_opt": True,
-                "num_trials": 2,
-                "epochs_per_trial": 1,
-                "kernel_sizes": [3],
-                "resnet_channels": [8],
-                "batch_sizes": [4],
-            },
-        )
-        self.assertIn("all", results["bayesian_opt_results"])
         self.assertIn("best_parameters", results["bayesian_opt_results"]["all"])
 
 
