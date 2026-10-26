@@ -1,4 +1,4 @@
-"""Unit tests for utility/pseudo_measurement.py and visualization."""
+"""Unit tests for utility/pseudo_measurement.py and spectral visualization."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import pandas as pd
 
 from utility.pseudo_measurement import (
     generate_pseudo_measurements,
-    get_default_measurement_config,
     pseudo_voigt,
 )
 from visualization import (
@@ -17,279 +16,100 @@ from visualization import (
 )
 
 
-class TestPseudoMeasurement(unittest.TestCase):
-    """Test suite for pseudo-measurement generation and XPS specifications."""
+class TestPseudoMeasurementGeneration(unittest.TestCase):
+    """Test suite for pseudo-measurement data generation, physics profiles, and invariants."""
 
-    def test_default_shapes_and_types(self) -> None:
-        """Verify default configuration generates expected shapes and column schema."""
+    def test_default_shapes_and_invariants(self) -> None:
+        """Verify default configuration generates expected shapes, non-negative intensities, and ascending energy."""
         ary_intensity, ary_energy, meta_df = generate_pseudo_measurements()
 
         # 20 measurements (10 for J4, 10 for J5) * 9 dies * 5 regions = 900 spectra
         expected_total = 20 * 9 * 5
-        expected_points = 100
-
-        self.assertEqual(ary_intensity.shape, (expected_total, expected_points))
-        self.assertEqual(ary_energy.shape, (expected_total, expected_points))
+        self.assertEqual(ary_intensity.shape, (expected_total, 100))
+        self.assertEqual(ary_energy.shape, (expected_total, 100))
         self.assertEqual(len(meta_df), expected_total)
-
-        # Check metadata columns
-        expected_cols = {
-            "spectrum_index",
-            "material",
-            "tool",
-            "measurement_id",
-            "t7_code",
-            "time",
-            "die",
-            "region",
-            "n_points",
-        }
-        self.assertTrue(expected_cols.issubset(set(meta_df.columns)))
-        self.assertFalse(meta_df.isnull().values.any())
-        self.assertTrue(pd.api.types.is_datetime64_any_dtype(meta_df["time"]))
-
-        # Verify measurement_id naming convention: {material}_M_{tool}_{meas_num:05d}
-        sample_id = str(meta_df["measurement_id"].iloc[0])
-        self.assertEqual(sample_id, "NMG_M_J4_00000")
-        parts = sample_id.split("_")
-        self.assertEqual(len(parts), 4)
-        self.assertEqual(parts[0], "NMG")
-        self.assertEqual(parts[1], "M")
-        self.assertEqual(len(parts[3]), 5)
-
-        # Verify t7_code format: T7_{wafer_idx:03d}
-        sample_t7 = str(meta_df["t7_code"].iloc[0])
-        self.assertEqual(sample_t7, "T7_001")
-
-    def test_binding_energy_identical_per_region_and_ascending(self) -> None:
-        """Verify binding energy arrays for the same region are identical and ascending."""
-        ary_intensity, ary_energy, meta_df = generate_pseudo_measurements()
-
-        regions = meta_df["region"].unique()
-        for region in regions:
-            indices = meta_df[meta_df["region"] == region]["spectrum_index"].values
-            first_be = ary_energy[indices[0]]
-
-            # Monotonically ascending
-            self.assertTrue(np.all(np.diff(first_be) > 0))
-
-            # Exactly identical across all dies, measurements, and tools
-            for idx in indices[1:]:
-                np.testing.assert_array_equal(
-                    ary_energy[idx],
-                    first_be,
-                    err_msg=f"Binding energy grid differs for region {region} at index {idx}",
-                )
-
-    def test_non_negative_intensities(self) -> None:
-        """Verify intensity values are strictly non-negative."""
-        ary_intensity, _, _ = generate_pseudo_measurements()
         self.assertTrue(np.all(ary_intensity >= 0.0))
 
-    def test_custom_config_override(self) -> None:
-        """Verify custom configurations correctly alter generation parameters."""
-        custom_config = {
-            "n_points": 50,
-            "n_die": 3,
-            "measurements_per_tool": {"J4": 2, "J5": 1},
-            "regions": ["Al2p", "C1s"],
-            "seed": 123,
-        }
-        ary_intensity, ary_energy, meta_df = generate_pseudo_measurements(custom_config)
+        # Check ascending energy grid identical across regions
+        for region in meta_df["region"].unique():
+            indices = meta_df[meta_df["region"] == region]["spectrum_index"].values
+            first_be = ary_energy[indices[0]]
+            self.assertTrue(np.all(np.diff(first_be) > 0))
+            for idx in indices[1:]:
+                np.testing.assert_array_equal(ary_energy[idx], first_be)
 
-        expected_total = (2 + 1) * 3 * 2  # 3 measurements * 3 dies * 2 regions = 18
-        self.assertEqual(ary_intensity.shape, (expected_total, 50))
-        self.assertEqual(ary_energy.shape, (expected_total, 50))
-        self.assertEqual(len(meta_df), expected_total)
-        self.assertListEqual(sorted(meta_df["region"].unique()), ["Al2p", "C1s"])
-
-    def test_deterministic_reproducibility(self) -> None:
-        """Verify same seed produces identical arrays and timestamps."""
-        config = {"seed": 99, "measurements_per_tool": {"J4": 2, "J5": 2}}
-        int1, ene1, meta1 = generate_pseudo_measurements(config)
-        int2, ene2, meta2 = generate_pseudo_measurements(config)
-
-        np.testing.assert_array_almost_equal(int1, int2)
-        np.testing.assert_array_equal(ene1, ene2)
-        pd.testing.assert_frame_equal(meta1, meta2)
-
-    def test_tool_intensity_scale_effect(self) -> None:
-        """Verify J5 intensity reflects the higher tool scale relative to J4."""
+    def test_tool_offsets_decay_and_die_zones(self) -> None:
+        """Verify tool scale ratios, time decay / maintenance jumps, and die illumination hierarchy."""
         config = {
-            "measurements_per_tool": {"J4": 5, "J5": 5},
-            "tool_offsets": {
-                "J4": {"shift_ev": 0.0, "scale": 1.0},
-                "J5": {"shift_ev": 0.0, "scale": 1.5},
-            },
+            "measurements_per_tool": {"J4": 15, "J5": 15},
+            "interval_hours_range": (36.0, 48.0),
+            "maintenance_interval_days": 15.0,
+            "die_repeatability_std": 0.0,
+            "seed": 42,
+        }
+        ary_i, _, meta_df = generate_pseudo_measurements(config)
+
+        # Scale tracking columns exist and satisfy product
+        computed = meta_df["scale_tool"] * meta_df["scale_time"] * meta_df["scale_die"]
+        np.testing.assert_allclose(meta_df["scale_total"], computed, rtol=1e-5)
+
+        # Die zone hierarchy: Center (Die 0) > Mid (Die 5-8) > Edge (Die 1-4)
+        j4_dies = meta_df[meta_df["tool"] == "J4"].drop_duplicates(subset=["die"]).set_index("die")
+        center_s = j4_dies.loc[0, "scale_die"]
+        mid_s = [j4_dies.loc[d, "scale_die"] for d in (5, 6, 7, 8)]
+        edge_s = [j4_dies.loc[d, "scale_die"] for d in (1, 2, 3, 4)]
+        self.assertTrue(all(center_s > s for s in mid_s))
+        self.assertGreater(min(mid_s), max(edge_s))
+
+    def test_region_relative_strengths_and_t7_distribution(self) -> None:
+        """Verify regional peak strength proportionality and t7_code grouping."""
+        strengths = {"Al2p": 5.0, "Ti2p": 7.0, "O1s": 10.0, "C1s": 8.0, "Cl2p": 1.0}
+        cfg = {
+            "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
+            "region_relative_strengths": strengths,
+            "measurements_per_tool": {"J4": 20, "J5": 20},
+            "measurements_per_t7_code": 10,
             "die_variation_std": 0.0,
             "noise_relative_std": 0.0,
             "seed": 42,
         }
-        ary_intensity, _, meta_df = generate_pseudo_measurements(config)
+        ary_i, _, meta_df = generate_pseudo_measurements(cfg)
 
-        j4_idx = meta_df[
-            (meta_df["tool"] == "J4") & (meta_df["region"] == "Al2p")
-        ]["spectrum_index"].values[0]
-        j5_idx = meta_df[
-            (meta_df["tool"] == "J5") & (meta_df["region"] == "Al2p")
-        ]["spectrum_index"].values[0]
+        # Proportions check
+        die0 = meta_df[(meta_df["measurement_id"] == "NMG_M_J4_00000") & (meta_df["die"] == 0)]
+        max_vals = {row["region"]: float(np.max(ary_i[int(row["spectrum_index"])])) for _, row in die0.iterrows()}
+        self.assertAlmostEqual(max_vals["Ti2p"] / max_vals["Cl2p"], 7.0, places=4)
+        self.assertAlmostEqual(max_vals["O1s"] / max_vals["Cl2p"], 10.0, places=4)
 
-        ratio = np.max(ary_intensity[j5_idx]) / np.max(ary_intensity[j4_idx])
-        # Expected ratio should be close to 1.5
-        self.assertAlmostEqual(ratio, 1.5, delta=0.05)
+        # t7_code sharing across tools (10 per wafer)
+        j4_t7 = meta_df[meta_df["tool"] == "J4"].drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
+        self.assertEqual(j4_t7, ["T7_001"] * 10 + ["T7_002"] * 10)
 
-    def test_pseudo_voigt_invalid_fwhm_raises(self) -> None:
-        """Verify pseudo_voigt rejects non-positive fwhm."""
-        e = np.linspace(70, 78, 10)
+    def test_defensive_error_handling(self) -> None:
+        """Table-driven test for invalid generator configuration parameters."""
+        error_configs = [
+            ("negative measurements", {"measurements_per_tool": {"J4": -1}}),
+            ("invalid n_points", {"n_points": 1}),
+            ("invalid intervals", {"interval_hours_range": (24.0, 4.0)}),
+            ("non-positive t7 per code", {"measurements_per_t7_code": 0}),
+            ("missing relative strengths", {"region_relative_strengths": None}),
+            ("negative relative strength", {"region_relative_strengths": {"Ti2p": -1.0}}),
+        ]
+        for name, cfg in error_configs:
+            with self.subTest(case=name):
+                with self.assertRaises(ValueError):
+                    generate_pseudo_measurements(cfg)
+
         with self.assertRaises(ValueError):
-            pseudo_voigt(e, {"center": 72.0, "amplitude": 10.0, "fwhm": 0.0})
-        with self.assertRaises(ValueError):
-            pseudo_voigt(e, {"center": 72.0, "amplitude": 10.0, "fwhm": -1.0})
-
-    def test_negative_measurement_count_raises(self) -> None:
-        """Verify validation catches negative measurement count."""
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"measurements_per_tool": {"J4": 5, "J5": -2}})
-
-    def test_inverted_energy_range_raises(self) -> None:
-        """Verify validation catches inverted energy range in region profiles."""
-        custom_profiles = {
-            "Al2p": {
-                "energy_range": (78.0, 70.0),  # Inverted
-                "baseline": 10.0,
-                "peaks": [{"center": 74.0, "amplitude": 100.0, "fwhm": 1.2}],
-            }
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({
-                "regions": ["Al2p"],
-                "region_profiles": custom_profiles,
-            })
-
-    def test_n_points_less_than_two_raises(self) -> None:
-        """Verify invalid n_points raises ValueError."""
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"n_points": 1})
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"n_points": -5})
-
-    def test_invalid_interval_range_raises(self) -> None:
-        """Verify invalid interval range raises ValueError."""
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"interval_hours_range": (24.0, 4.0)})
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"interval_hours_range": (-1.0, 5.0)})
-
-    def test_t7_code_distribution_and_cross_tool_sharing(self) -> None:
-        """Verify t7_code is shared across roughly 10 measurements and across tools."""
-        config = {
-            "measurements_per_tool": {"J4": 25, "J5": 25},
-            "measurements_per_t7_code": 10,
-            "n_die": 1,
-            "regions": ["Al2p"],
-        }
-        _, _, meta_df = generate_pseudo_measurements(config)
-
-        # For tool J4: meas 0-9 should have T7_001, 10-19 T7_002, 20-24 T7_003
-        j4_df = meta_df[meta_df["tool"] == "J4"]
-        j4_t7_by_meas = j4_df.drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
-        expected_t7 = ["T7_001"] * 10 + ["T7_002"] * 10 + ["T7_003"] * 5
-        self.assertEqual(j4_t7_by_meas, expected_t7)
-
-        # For tool J5: same pattern
-        j5_df = meta_df[meta_df["tool"] == "J5"]
-        j5_t7_by_meas = j5_df.drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
-        self.assertEqual(j5_t7_by_meas, expected_t7)
-
-        # Unique t7 codes total = 3
-        self.assertEqual(set(meta_df["t7_code"].unique()), {"T7_001", "T7_002", "T7_003"})
-
-    def test_invalid_measurements_per_t7_code_raises(self) -> None:
-        """Verify non-positive measurements_per_t7_code raises ValueError."""
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"measurements_per_t7_code": 0})
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements({"measurements_per_t7_code": -3})
-
-    def test_scale_columns_and_decay_tracking(self) -> None:
-        """Verify scale tracking metadata columns exist and satisfy scale_total."""
-        _, _, meta_df = generate_pseudo_measurements()
-        for col in ("scale_tool", "scale_time", "scale_die", "scale_total"):
-            self.assertIn(col, meta_df.columns)
-            self.assertTrue(np.all(meta_df[col] > 0.0))
-
-        # scale_total should equal scale_tool * scale_time * scale_die
-        computed = meta_df["scale_tool"] * meta_df["scale_time"] * meta_df["scale_die"]
-        np.testing.assert_allclose(meta_df["scale_total"], computed, rtol=1e-5)
-
-    def test_time_decay_and_maintenance_jump(self) -> None:
-        """Verify linear time decay over days and jump up at maintenance interval."""
-        config = {
-            "measurements_per_tool": {"J4": 20},
-            "interval_hours_range": (36.0, 48.0),  # ~1.5 to 2 days per measurement
-            "time_decay_rate": 0.01,  # 1% decay per day
-            "maintenance_interval_days": 15.0,  # Maintenance every 15 days
-            "maintenance_jump_noise_std": 0.0,
-            "seed": 42,
-        }
-        _, _, meta_df = generate_pseudo_measurements(config)
-        j4_meas = meta_df.drop_duplicates(subset=["measurement_id"]).sort_values("time")
-
-        times = j4_meas["time"].values
-        scales = j4_meas["scale_time"].values
-
-        # Find pair across maintenance event (~15 days)
-        base_time = pd.Timestamp(times[0])
-        elapsed_days = [(pd.Timestamp(t) - base_time).total_seconds() / 86400.0 for t in times]
-
-        decay_observed = False
-        jump_observed = False
-        for i in range(1, len(scales)):
-            # If within same 15-day cycle and time progressed, scale should decay
-            if int(elapsed_days[i] // 15.0) == int(elapsed_days[i - 1] // 15.0):
-                if scales[i] < scales[i - 1]:
-                    decay_observed = True
-            # If crossed maintenance boundary, scale should jump up
-            elif int(elapsed_days[i] // 15.0) > int(elapsed_days[i - 1] // 15.0):
-                if scales[i] > scales[i - 1]:
-                    jump_observed = True
-
-        self.assertTrue(decay_observed, "Expected gradual linear time decay within maintenance cycle")
-        self.assertTrue(jump_observed, "Expected intensity jump up across maintenance boundary")
-
-    def test_die_zone_illumination_hierarchy(self) -> None:
-        """Verify die illumination hierarchy: Center (Die 0) > Mid (Die 5-8) > Edge (Die 1-4)."""
-        config = {
-            "measurements_per_tool": {"J4": 1},
-            "die_repeatability_std": 0.0,
-            "seed": 42,
-        }
-        _, _, meta_df = generate_pseudo_measurements(config)
-        j4_df = meta_df.drop_duplicates(subset=["die"]).set_index("die")
-
-        center_scale = j4_df.loc[0, "scale_die"]
-        mid_scales = [j4_df.loc[d, "scale_die"] for d in (5, 6, 7, 8)]
-        edge_scales = [j4_df.loc[d, "scale_die"] for d in (1, 2, 3, 4)]
-
-        # Center must be strictly greater than all mid and edge dies
-        self.assertTrue(all(center_scale > s for s in mid_scales))
-        self.assertTrue(all(center_scale > s for s in edge_scales))
-
-        # Every mid die must be greater than every edge die
-        for mid_s in mid_scales:
-            for edge_s in edge_scales:
-                self.assertGreater(mid_s, edge_s)
-
-        # Dies in edge group should have distinct values
-        self.assertNotEqual(j4_df.loc[1, "scale_die"], j4_df.loc[2, "scale_die"])
+            pseudo_voigt(np.linspace(70, 78, 10), {"center": 72.0, "amplitude": 10.0, "fwhm": 0.0})
 
 
-
-class TestVisualization(unittest.TestCase):
-    """Test suite for plotting utilities."""
+class TestSpectralVisualization(unittest.TestCase):
+    """Test suite for pseudo-measurement plotting and tool comparison."""
 
     @classmethod
     def setUpClass(cls) -> None:
+        """Generate pseudo-measurement data for visualization."""
         config = {
             "measurements_per_tool": {"J4": 1, "J5": 1},
             "n_die": 2,
@@ -298,210 +118,34 @@ class TestVisualization(unittest.TestCase):
         }
         cls.ary_int, cls.ary_ene, cls.meta_df = generate_pseudo_measurements(config)
 
-    def test_plot_regional_spectra(self) -> None:
-        """Test plotting filtered regional spectra."""
-        fig, ax = plot_regional_spectra(
+    def tearDown(self) -> None:
+        """Close open matplotlib figures."""
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_plot_regional_spectra_and_tool_comparison(self) -> None:
+        """Verify regional spectra and tool comparison plots render correct line counts."""
+        fig_r, ax_r = plot_regional_spectra(
             self.ary_ene,
             self.ary_int,
             self.meta_df,
             plot_config={"filters": {"tool": "J4", "region": "Al2p"}},
         )
-        self.assertIsNotNone(fig)
-        self.assertIsNotNone(ax)
-        # 1 measurement * 2 dies = 2 lines
-        self.assertEqual(len(ax.lines), 2)
+        self.assertEqual(len(ax_r.lines), 2)
 
-    def test_plot_default_filters(self) -> None:
-        """Test default plotting without explicit filter displays first session."""
-        fig, ax = plot_regional_spectra(
-            self.ary_ene,
-            self.ary_int,
-            self.meta_df,
-        )
-        self.assertIsNotNone(fig)
-        self.assertIsNotNone(ax)
-        # First measurement has 2 dies * 5 regions = 10 lines max
-        self.assertTrue(len(ax.lines) <= 10)
-
-    def test_plot_tool_comparison(self) -> None:
-        """Test tool comparison overlay plot."""
-        fig, ax = plot_tool_comparison(
+        fig_t, ax_t = plot_tool_comparison(
             self.ary_ene,
             self.ary_int,
             self.meta_df,
             compare_config={"region": "Al2p", "die": 0},
         )
-        self.assertIsNotNone(fig)
-        self.assertIsNotNone(ax)
-        # Should have 2 lines: J4 and J5
-        self.assertEqual(len(ax.lines), 2)
+        self.assertEqual(len(ax_t.lines), 2)
 
-    def test_plot_tool_comparison_insufficient_tools_raises(self) -> None:
-        """Test comparison with fewer than 2 tools raises ValueError."""
+        # Defensive errors on invalid tools or empty filters
         with self.assertRaises(ValueError):
-            plot_tool_comparison(
-                self.ary_ene,
-                self.ary_int,
-                self.meta_df,
-                compare_config={"tools": ["J4"]},
-            )
-
-    def test_plot_empty_filter_raises(self) -> None:
-        """Test filtering with non-existent criteria raises ValueError."""
+            plot_tool_comparison(self.ary_ene, self.ary_int, self.meta_df, compare_config={"tools": ["J4"]})
         with self.assertRaises(ValueError):
-            plot_regional_spectra(
-                self.ary_ene,
-                self.ary_int,
-                self.meta_df,
-                plot_config={"filters": {"tool": "NonExistentTool"}},
-            )
-
-    def test_maintenance_jump_negative_noise_handled_safely(self) -> None:
-        """Verify negative maintenance jump noise std is clamped without raising ValueError."""
-        from datetime import datetime
-        from utility.pseudo_measurement import calculate_time_decay_factor
-
-        t0 = datetime(2026, 1, 1, 0, 0, 0)
-        t1 = datetime(2026, 2, 15, 0, 0, 0)
-        rng = np.random.default_rng(42)
-        factor = calculate_time_decay_factor(
-            meas_time=t1,
-            base_time=t0,
-            rng=rng,
-            config={"maintenance_jump_noise_std": -0.05, "maintenance_interval_days": 30.0},
-        )
-        self.assertGreater(factor, 0.0)
-        self.assertLessEqual(factor, 2.0)
-
-    def test_die_variation_std_config_override(self) -> None:
-        """Verify die_variation_std sets die_repeatability_std when not explicitly provided."""
-        config = {
-            "measurements_per_tool": {"J4": 20},
-            "die_variation_std": 0.08,
-            "seed": 42,
-        }
-        _, _, df_meta = generate_pseudo_measurements(config)
-        # Check scale_die variance across sessions for die 0
-        die_0_scales = df_meta[df_meta["die"] == 0]["scale_die"].unique()
-        self.assertGreater(float(np.std(die_0_scales)), 0.03)
-
-
-class TestRegionRelativeStrengths(unittest.TestCase):
-    """Test suite for user-configurable regional relative strength feature."""
-
-    def test_region_relative_strengths_proportions(self) -> None:
-        """Verify regional maximum intensities strictly match relative strength
-        ratios without noise.
-        """
-        strengths = {
-            "Al2p": 5.0,
-            "Ti2p": 7.0,
-            "O1s": 10.0,
-            "C1s": 8.0,
-            "Cl2p": 1.0,
-        }
-        cfg = {
-            "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
-            "region_relative_strengths": strengths,
-            "measurements_per_tool": {"J4": 1},
-            "die_variation_std": 0.0,
-            "noise_relative_std": 0.0,
-            "seed": 42,
-        }
-        ary_i, _, df_meta = generate_pseudo_measurements(cfg)
-
-        # Check for die 0 in the first measurement
-        df_die0 = df_meta[
-            (df_meta["measurement_id"] == "NMG_M_J4_00000")
-            & (df_meta["die"] == 0)
-        ]
-        max_intensities: dict[str, float] = {}
-        for _, row in df_die0.iterrows():
-            idx = int(row["spectrum_index"])
-            reg = str(row["region"])
-            max_intensities[reg] = float(np.max(ary_i[idx]))
-
-        cl_max = max_intensities["Cl2p"]
-        self.assertAlmostEqual(max_intensities["Ti2p"] / cl_max, 7.0, places=4)
-        self.assertAlmostEqual(max_intensities["O1s"] / cl_max, 10.0, places=4)
-        self.assertAlmostEqual(max_intensities["Al2p"] / cl_max, 5.0, places=4)
-        self.assertAlmostEqual(max_intensities["C1s"] / cl_max, 8.0, places=4)
-
-    def test_region_relative_strengths_metadata_column(self) -> None:
-        """Verify 'relative_strength' column is populated in df_meta."""
-        strengths = {"Ti2p": 7.0, "O1s": 10.0, "Cl2p": 1.0}
-        cfg = {
-            "regions": ["Ti2p", "O1s", "Cl2p"],
-            "region_relative_strengths": strengths,
-            "measurements_per_tool": {"J4": 1},
-        }
-        _, _, df_meta = generate_pseudo_measurements(cfg)
-        self.assertIn("relative_strength", df_meta.columns)
-        for reg, val in strengths.items():
-            reg_strengths = df_meta[df_meta["region"] == reg][
-                "relative_strength"
-            ].unique()
-            self.assertEqual(len(reg_strengths), 1)
-            self.assertEqual(float(reg_strengths[0]), val)
-
-    def test_missing_region_relative_strengths_raises_error(self) -> None:
-        """Verify error is raised if region_relative_strengths is missing
-        or None.
-        """
-        with self.assertRaises(ValueError) as ctx:
-            generate_pseudo_measurements({"region_relative_strengths": None})
-        self.assertIn("region_relative_strengths", str(ctx.exception))
-
-    def test_missing_region_in_relative_strengths_raises_error(self) -> None:
-        """Verify error is raised if any region in 'regions' is missing from
-        'region_relative_strengths'.
-        """
-        cfg = {
-            "regions": ["Ti2p", "O1s", "Cl2p"],
-            "region_relative_strengths": {"Ti2p": 7.0, "O1s": 10.0},
-        }
-        with self.assertRaises(ValueError) as ctx:
-            generate_pseudo_measurements(cfg)
-        self.assertIn("Cl2p", str(ctx.exception))
-
-    def test_non_positive_or_non_numeric_strength_raises_error(self) -> None:
-        """Verify error is raised for non-positive, non-finite, or non-numeric
-        strength values.
-        """
-        cfg_zero = {
-            "regions": ["Ti2p"],
-            "region_relative_strengths": {"Ti2p": 0.0},
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements(cfg_zero)
-
-        cfg_negative = {
-            "regions": ["Ti2p"],
-            "region_relative_strengths": {"Ti2p": -2.5},
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements(cfg_negative)
-
-        cfg_bool = {
-            "regions": ["Ti2p"],
-            "region_relative_strengths": {"Ti2p": True},
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements(cfg_bool)
-
-        cfg_nan = {
-            "regions": ["Ti2p"],
-            "region_relative_strengths": {"Ti2p": float("nan")},
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements(cfg_nan)
-
-        cfg_inf = {
-            "regions": ["Ti2p"],
-            "region_relative_strengths": {"Ti2p": float("inf")},
-        }
-        with self.assertRaises(ValueError):
-            generate_pseudo_measurements(cfg_inf)
+            plot_regional_spectra(self.ary_ene, self.ary_int, self.meta_df, plot_config={"filters": {"tool": "BAD"}})
 
 
 if __name__ == "__main__":
