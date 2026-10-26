@@ -41,46 +41,29 @@ def _parse_region_index(
     field_name: str = "region_index",
     region_mapping: dict[str, int] | None = None,
 ) -> int:
-    """Extract integer region index or default gracefully to 0."""
+    """Extract a non-negative integer region index or raise ValueError."""
     if val is None or pd.isna(val):
-        return 0
-    if isinstance(val, (int, np.integer)):
-        if int(val) < 0:
-            warnings.warn(
-                f"Negative region index {int(val)} in '{field_name}'; clamping to 0."
-            )
-            return 0
-        return int(val)
-    if isinstance(val, str):
-        if region_mapping and val in region_mapping:
-            return max(0, int(region_mapping[val]))
-        try:
-            parsed = int(val)
-            if parsed < 0:
-                warnings.warn(
-                    f"Negative region index {parsed} in '{field_name}'; clamping to 0."
-                )
-                return 0
-            return parsed
-        except (ValueError, TypeError):
-            warnings.warn(
-                f"Unmapped region string '{val}' in '{field_name}'; defaulting to index 0."
-            )
-            return 0
-    try:
-        raw_val = val.item() if hasattr(val, "item") else val
-        idx = int(raw_val)
-        if idx < 0:
-            warnings.warn(
-                f"Negative region index {idx} in '{field_name}'; clamping to 0."
-            )
-            return 0
-        return idx
-    except (ValueError, TypeError):
-        warnings.warn(
-            f"Invalid region value '{val}' in '{field_name}'; defaulting to 0."
+        raise ValueError(
+            f"Metadata field '{field_name}' is missing or null. Expected a "
+            "non-negative region index; ensure 'region_index' is populated "
+            "in df_meta."
         )
-        return 0
+    if isinstance(val, str) and region_mapping and val in region_mapping:
+        idx = int(region_mapping[val])
+    else:
+        try:
+            idx = int(val.item() if hasattr(val, "item") else val)
+        except (ValueError, TypeError) as err:
+            raise ValueError(
+                f"Invalid region value '{val}' in '{field_name}'. Expected a "
+                f"non-negative int or a region name in region_index_mapping "
+                f"{sorted(region_mapping) if region_mapping else None}."
+            ) from err
+    if idx < 0:
+        raise ValueError(
+            f"Region index in '{field_name}' cannot be negative, got {idx}."
+        )
+    return idx
 
 
 def _parse_tool_index(val: Any, field_name: str) -> int:
@@ -326,11 +309,11 @@ def prepare_film_condition_tensor(
             multi_hot_list, dtype=torch.float32, device=device
         )
 
-    reg_mapping = cfg.get("region_index_mapping")
-    reg_vals = _extract_meta_column(meta, "region_index", n)
-    if all(x is None for x in reg_vals):
-        reg_vals = _extract_meta_column(meta, "region", n)
-    if encode_region or any(x is not None for x in reg_vals):
+    if encode_region:
+        reg_mapping = cfg.get("region_index_mapping")
+        reg_vals = _extract_meta_column(meta, "region_index", n)
+        if all(x is None for x in reg_vals):
+            reg_vals = _extract_meta_column(meta, "region", n)
         ret["region"] = torch.tensor(
             [
                 _parse_region_index(
@@ -572,25 +555,17 @@ class FiLMGenerator(nn.Module):
         if self.encode_region:
             reg_t = cond_dev.get("region")
             if reg_t is None:
-                b_size = next(
-                    (
-                        v.shape[0]
-                        for v in cond_dev.values()
-                        if isinstance(v, torch.Tensor)
-                    ),
-                    1,
+                raise KeyError(
+                    "FiLMGenerator expects 'region' in conditioning dictionary "
+                    "when encode_region=True."
                 )
-                reg_t = torch.zeros(
-                    b_size, dtype=torch.long, device=target_device
+            max_allowed = self.region_embedding.num_embeddings - 1
+            if (reg_t > max_allowed).any() or (reg_t < 0).any():
+                raise ValueError(
+                    f"Region indices {sorted(set(reg_t.reshape(-1).tolist()))} "
+                    f"fall outside the embedding range [0, {max_allowed}]. "
+                    "Increase 'num_regions' or fix 'region_index' in df_meta."
                 )
-            else:
-                max_allowed = self.region_embedding.num_embeddings - 1
-                if (reg_t > max_allowed).any() or (reg_t < 0).any():
-                    warnings.warn(
-                        f"Region index outside expected [0, {max_allowed}]; "
-                        f"clamping indices to [0, {max_allowed}]."
-                    )
-                    reg_t = torch.clamp(reg_t, 0, max_allowed)
             feat_list.append(self.region_embedding(reg_t))
         if self.encode_flux:
             flux_t = cond_dev.get("total_flux_single_die_standardized")
