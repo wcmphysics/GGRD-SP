@@ -145,6 +145,19 @@ class TestSlidingWindowPipeline(unittest.TestCase):
                         config={"model_type": "resnet", "use_sliding_window": True, **cfg},
                     )
 
+    def test_concatenate_heterogeneous_spectrum_lengths(self) -> None:
+        """Verify concatenate merges patch datasets of different full lengths."""
+        ds1 = SpectrumPairDataset(torch.randn(4, 80), torch.randn(4, 80))
+        p1 = SpectrumPatchDataset(ds1, window_size=12, stride=4)
+        ds2 = SpectrumPairDataset(torch.randn(6, 120), torch.randn(6, 120))
+        p2 = SpectrumPatchDataset(ds2, window_size=12, stride=4)
+
+        merged = SpectrumPatchDataset.concatenate([p1, p2])
+        self.assertEqual(len(merged), len(p1) + len(p2))
+        self.assertEqual(merged[0]["x"].shape, (1, 12))
+        self.assertEqual(merged[len(p1)]["x"].shape, (1, 12))
+        self.assertEqual(merged.x.shape, (len(merged), 1, 12))
+
 
 if __name__ == "__main__":
     unittest.main()

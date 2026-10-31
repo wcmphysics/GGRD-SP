@@ -99,6 +99,8 @@ class SpectrumPatchDataset(Dataset):
         self, full_dataset: SpectrumPairDataset, window_size: int, stride: int
     ) -> None:
         self.full_dataset = full_dataset
+        self.full_datasets: list[SpectrumPairDataset] = [full_dataset]
+        self.cum_dataset_sizes: list[int] = [len(full_dataset)]
         self.window_size, self.stride = window_size, stride
         patch_indices: list[tuple[int, int, int]] = []
         max_vals_list: list[float] = []
@@ -163,6 +165,17 @@ class SpectrumPatchDataset(Dataset):
     def __len__(self) -> int:
         return len(self.patch_indices)
 
+    def _get_full_spectrum_item(self, global_spec_idx: int) -> dict[str, Any]:
+        """Retrieve full spectrum item across single or concatenated datasets."""
+        if len(self.full_datasets) == 1:
+            return self.full_datasets[0][global_spec_idx]
+        import bisect
+
+        ds_idx = bisect.bisect_right(self.cum_dataset_sizes, global_spec_idx)
+        prev_cum = self.cum_dataset_sizes[ds_idx - 1] if ds_idx > 0 else 0
+        local_idx = global_spec_idx - prev_cum
+        return self.full_datasets[ds_idx][local_idx]
+
     @property
     def x(self) -> torch.Tensor:
         """Dynamic stacked view of patches for backwards compatibility."""
@@ -195,29 +208,40 @@ class SpectrumPatchDataset(Dataset):
         merged = cls.__new__(cls)
         merged.window_size, merged.stride = geometries.pop()
 
-        merged_x = torch.cat([d.full_dataset.x for d in datasets], dim=0)
-        merged_y = torch.cat([d.full_dataset.y for d in datasets], dim=0)
-        has_all_energy = all(
-            d.full_dataset.energy is not None for d in datasets
-        )
-        merged_energy = (
-            torch.cat([d.full_dataset.energy for d in datasets], dim=0)
-            if has_all_energy
-            else None
-        )
-        merged_meta: list[dict[str, Any]] = [
-            m for d in datasets for m in d.full_dataset.metadata
+        merged.full_datasets = [
+            fd for d in datasets for fd in d.full_datasets
         ]
-        merged.full_dataset = SpectrumPairDataset(
-            merged_x, merged_y, energy=merged_energy, metadata=merged_meta
-        )
+        cum_sizes: list[int] = []
+        total = 0
+        for fd in merged.full_datasets:
+            total += len(fd)
+            cum_sizes.append(total)
+        merged.cum_dataset_sizes = cum_sizes
+
+        # Provide full_dataset attribute when sequence lengths match
+        lengths = {int(fd.x.shape[-1]) for fd in merged.full_datasets}
+        if len(lengths) == 1:
+            merged_x = torch.cat([fd.x for fd in merged.full_datasets], dim=0)
+            merged_y = torch.cat([fd.y for fd in merged.full_datasets], dim=0)
+            has_all_e = all(fd.energy is not None for fd in merged.full_datasets)
+            merged_e = (
+                torch.cat([fd.energy for fd in merged.full_datasets], dim=0)
+                if has_all_e
+                else None
+            )
+            merged_m = [m for fd in merged.full_datasets for m in fd.metadata]
+            merged.full_dataset = SpectrumPairDataset(
+                merged_x, merged_y, energy=merged_e, metadata=merged_m
+            )
+        else:
+            merged.full_dataset = merged.full_datasets[0]
 
         merged_indices: list[tuple[int, int, int]] = []
         offset = 0
         for d in datasets:
             for spec_idx, s, e in d.patch_indices:
                 merged_indices.append((spec_idx + offset, s, e))
-            offset += len(d.full_dataset)
+            offset += sum(len(fd) for fd in d.full_datasets)
 
         merged.patch_indices = merged_indices
         merged.max_vals = torch.cat([d.max_vals for d in datasets], dim=0)
@@ -229,7 +253,7 @@ class SpectrumPatchDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         spec_idx, s, e = self.patch_indices[idx]
-        item = self.full_dataset[spec_idx]
+        item = self._get_full_spectrum_item(spec_idx)
         ret: dict[str, Any] = {
             "x": item["x"][..., s:e],
             "y": item["y"][..., s:e],
