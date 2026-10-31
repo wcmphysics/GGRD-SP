@@ -109,6 +109,157 @@ def predict_sliding_window_spectrum(
     return np.clip(recon, 0.0, None) if clamp_non_negative else recon
 
 
+def _accumulate_overlapping_patches(
+    preds: torch.Tensor,
+    start_indices: list[int],
+    seq_len: int,
+    window_size: int,
+    device: torch.device,
+    clamp_non_negative: bool,
+) -> torch.Tensor:
+    """Accumulate overlapping window predictions and normalize by overlap
+    count.
+    """
+    n_samples = preds.shape[0]
+    accum = torch.zeros(
+        n_samples, 1, seq_len, device=device, dtype=preds.dtype
+    )
+    counts = torch.zeros(1, 1, seq_len, device=device, dtype=preds.dtype)
+
+    # Accumulate overlapping patch predictions and track patch counts.
+    for k, s in enumerate(start_indices):
+        accum[:, :, s : s + window_size] += preds[:, k, :, :]
+        counts[:, :, s : s + window_size] += 1.0
+
+    recon = accum / counts.clamp(min=1.0)
+    if clamp_non_negative:
+        recon = torch.clamp(recon, min=0.0)
+    return recon
+
+
+def predict_sliding_window_tensor(
+    model: nn.Module,
+    x: torch.Tensor,
+    config: dict[str, Any] | None = None,
+) -> torch.Tensor:
+    """Predict and reconstruct full spectra using vectorized window batches
+    in PyTorch.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Trained patch model.
+    x : torch.Tensor
+        Input spectral tensor of shape (N, 1, L) or (N, L).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing 'window_size', 'stride',
+        'clamp_non_negative', 'batch_size', 'device'.
+
+    Returns
+    -------
+    torch.Tensor
+        Reconstructed 3D tensor of shape (N, 1, L).
+    """
+    cfg = config or {}
+    w_size = int(cfg.get("window_size", 15))
+    s_step = int(cfg.get("stride", max(1, w_size // 2)))
+    clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
+    batch_size = int(cfg.get("batch_size", 64))
+
+    if w_size < 1:
+        raise ValueError(f"window_size must be >= 1, got {w_size}")
+    if s_step < 1:
+        raise ValueError(f"stride must be >= 1, got {s_step}")
+    if s_step > w_size:
+        raise ValueError(
+            f"stride ({s_step}) cannot exceed window_size ({w_size}) "
+            "as it creates reconstruction gaps."
+        )
+
+    # Standardize input to 3D tensor (N, 1, L).
+    x_tensor = x.unsqueeze(1) if x.dim() == 2 else x
+    if x_tensor.dim() != 3 or x_tensor.shape[1] != 1:
+        raise ValueError(
+            f"Expected input tensor of shape (N, 1, L) or (N, L), "
+            f"got {tuple(x.shape)}"
+        )
+
+    n_samples, _, seq_len = x_tensor.shape
+    if w_size > seq_len:
+        raise ValueError(
+            f"window_size ({w_size}) cannot exceed spectrum length ({seq_len})"
+        )
+
+    model_dev = next(
+        (p.device for p in model.parameters()), torch.device("cpu")
+    )
+    device = torch.device(cfg.get("device") or model_dev)
+    model_dtype = next((p.dtype for p in model.parameters()), torch.float32)
+    x_dev = x_tensor.to(device=device, dtype=model_dtype)
+
+    # Build window start indices with right-edge anchoring.
+    start_indices = list(range(0, seq_len - w_size + 1, s_step))
+    last_possible = seq_len - w_size
+    if start_indices and start_indices[-1] < last_possible:
+        start_indices.append(last_possible)
+
+    patches = torch.stack(
+        [x_dev[:, :, s : s + w_size] for s in start_indices], dim=1
+    )
+    flat_patches = patches.view(-1, 1, w_size)
+
+    # Evaluate patches through model in mini-batches.
+    model.eval()
+    with torch.no_grad():
+        if flat_patches.shape[0] <= batch_size:
+            flat_preds = model(flat_patches)
+        else:
+            flat_preds = torch.cat(
+                [
+                    model(flat_patches[i : i + batch_size])
+                    for i in range(0, flat_patches.shape[0], batch_size)
+                ],
+                dim=0,
+            )
+
+    preds = flat_preds.view(n_samples, len(start_indices), 1, w_size)
+    return _accumulate_overlapping_patches(
+        preds, start_indices, seq_len, w_size, device, clamp_non_negative
+    )
+
+
+def predict_sliding_window_spectra(
+    model: nn.Module,
+    spectra: np.ndarray | torch.Tensor,
+    config: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Predict and reconstruct multiple full spectra using vectorized
+    PyTorch batches.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Trained patch model.
+    spectra : np.ndarray | torch.Tensor
+        Array or tensor of spectra of shape (N, L) or (N, 1, L).
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing 'window_size', 'stride',
+        'clamp_non_negative', 'batch_size', 'device'.
+
+    Returns
+    -------
+    np.ndarray
+        Reconstructed 2D NumPy array of shape (N, L).
+    """
+    arr = torch.as_tensor(spectra, dtype=torch.float32)
+    if arr.dim() == 1:
+        arr = arr.unsqueeze(0).unsqueeze(0)
+    elif arr.dim() == 2:
+        arr = arr.unsqueeze(1)
+    recon = predict_sliding_window_tensor(model, arr, config=config)
+    return recon.squeeze(1).detach().cpu().numpy()
+
+
 def format_predicted_measurement_id(
     source_measurement_id: str, source_tool: str, target_tool: str
 ) -> str:
@@ -276,6 +427,16 @@ def _predict_sliding_window_region(
     sw_cfg = {"window_size": w_size, "stride": s_step, "device": m_dev}
     energy_arr = cfg.get("ary_energy")
     target_tool = str(cfg.get("target_tool", "H1"))
+
+    if len(region_x) == 0:
+        return np.zeros((0, 0), dtype=np.float32)
+
+    sw_cfg["clamp_non_negative"] = bool(cfg.get("clamp_non_negative", True))
+    sw_cfg["batch_size"] = int(cfg.get("batch_size", 64))
+
+    # Fast path: vectorized batch evaluation when FiLM conditioning is off.
+    if not getattr(m_obj, "use_film", False):
+        return predict_sliding_window_spectra(m_obj, region_x, config=sw_cfg)
 
     # Predict sliding window spectra for each sample and stack horizontally.
     return np.vstack(

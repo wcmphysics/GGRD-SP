@@ -22,8 +22,10 @@ from models.dataset import (
     default_spectrum_collate,
 )
 from models.factory import MODEL_CLASS_MAP, instantiate_model
-from models.film import prepare_film_condition_tensor
-from models.inference import predict_sliding_window_spectrum
+from models.inference import (
+    predict_sliding_window_spectrum,
+    predict_sliding_window_tensor,
+)
 from models.layers import validate_odd_kernel_size, validate_positive_int
 
 _MODEL_CLASS_MAP = MODEL_CLASS_MAP
@@ -185,38 +187,98 @@ def evaluate(
     )
 
 
+def _extract_from_tensor_attrs(
+    dataset: Any,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Extract stacked (x, y) tensors from direct attributes or Subset."""
+    # Check direct dataset tensor attributes.
+    if (
+        hasattr(dataset, "x")
+        and hasattr(dataset, "y")
+        and isinstance(dataset.x, torch.Tensor)
+        and isinstance(dataset.y, torch.Tensor)
+    ):
+        x = dataset.x.unsqueeze(1) if dataset.x.dim() == 2 else dataset.x
+        y = dataset.y.unsqueeze(1) if dataset.y.dim() == 2 else dataset.y
+        if (
+            x.dim() == 3
+            and y.dim() == 3
+            and x.shape[0] == y.shape[0]
+            and x.shape[-1] == y.shape[-1]
+        ):
+            return x.float(), y.float()
+
+    # Check PyTorch Subset wrapper.
+    if hasattr(dataset, "dataset") and hasattr(dataset, "indices"):
+        parent, indices = dataset.dataset, dataset.indices
+        if (
+            hasattr(parent, "x")
+            and hasattr(parent, "y")
+            and isinstance(parent.x, torch.Tensor)
+            and isinstance(parent.y, torch.Tensor)
+        ):
+            x = parent.x[indices]
+            y = parent.y[indices]
+            x = x.unsqueeze(1) if x.dim() == 2 else x
+            y = y.unsqueeze(1) if y.dim() == 2 else y
+            if (
+                x.dim() == 3
+                and y.dim() == 3
+                and x.shape[0] == y.shape[0]
+                and x.shape[-1] == y.shape[-1]
+            ):
+                return x.float(), y.float()
+
+    return None
+
+
+def _extract_from_items(
+    dataset: Any,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Extract and validate stacked (x, y) tensors from dataset items."""
+    try:
+        n = len(dataset)
+        if n == 0:
+            return None
+        xs: list[torch.Tensor] = []
+        ys: list[torch.Tensor] = []
+        seq_len: int | None = None
+
+        # Inspect and standardize each item's tensors.
+        for i in range(n):
+            item = dataset[i]
+            if "x" not in item or "y" not in item:
+                return None
+            x_t = torch.as_tensor(item["x"], dtype=torch.float32)
+            y_t = torch.as_tensor(item["y"], dtype=torch.float32)
+            x_t = x_t.unsqueeze(0) if x_t.dim() == 1 else x_t
+            y_t = y_t.unsqueeze(0) if y_t.dim() == 1 else y_t
+            if x_t.dim() != 2 or y_t.dim() != 2:
+                return None
+            if seq_len is None:
+                seq_len = x_t.shape[-1]
+                if y_t.shape[-1] != seq_len:
+                    return None
+            elif x_t.shape[-1] != seq_len or y_t.shape[-1] != seq_len:
+                return None
+            xs.append(x_t)
+            ys.append(y_t)
+
+        stacked_x = torch.stack(xs, dim=0)
+        stacked_y = torch.stack(ys, dim=0)
+        return stacked_x, stacked_y
+    except Exception:
+        return None
+
+
 def _extract_dataset_tensors(
     dataset: Any,
 ) -> tuple[torch.Tensor, torch.Tensor] | None:
     """Extract stacked (x, y) tensors if dataset is homogeneous, else None."""
-    try:
-        if (
-            hasattr(dataset, "x")
-            and hasattr(dataset, "y")
-            and isinstance(dataset.x, torch.Tensor)
-            and isinstance(dataset.y, torch.Tensor)
-        ):
-            if (
-                dataset.x.dim() == 3
-                and dataset.y.dim() == 3
-                and dataset.x.shape[0] == dataset.y.shape[0]
-                and dataset.x.shape[-1] == dataset.y.shape[-1]
-            ):
-                return dataset.x, dataset.y
-        xs = [dataset[i]["x"] for i in range(len(dataset))]
-        ys = [dataset[i]["y"] for i in range(len(dataset))]
-        stacked_x = torch.stack(xs, dim=0) if xs[0].dim() == 2 else torch.cat(xs, dim=0)
-        stacked_y = torch.stack(ys, dim=0) if ys[0].dim() == 2 else torch.cat(ys, dim=0)
-        if (
-            stacked_x.dim() == 3
-            and stacked_y.dim() == 3
-            and stacked_x.shape[0] == stacked_y.shape[0]
-            and stacked_x.shape[-1] == stacked_y.shape[-1]
-        ):
-            return stacked_x, stacked_y
-        return None
-    except (RuntimeError, ValueError, KeyError, TypeError, IndexError):
-        return None
+    tensors = _extract_from_tensor_attrs(dataset)
+    if tensors is not None:
+        return tensors
+    return _extract_from_items(dataset)
 
 
 def _evaluate_sliding_window_sample_by_sample(
@@ -239,17 +301,26 @@ def _evaluate_sliding_window_sample_by_sample(
     total = 0.0
     for idx in range(len(full_val_dataset)):
         item = full_val_dataset[idx]
+        x_raw = item["x"]
+        x_np = (
+            x_raw.cpu().numpy().squeeze()
+            if isinstance(x_raw, torch.Tensor)
+            else np.asarray(x_raw).squeeze()
+        )
         rec = predict_sliding_window_spectrum(
             model,
-            item["x"].cpu().numpy().squeeze(),
+            x_np,
             config=p_cfg,
             cond=_batch_cond(model, item, device, 1),
             energy=item.get("energy"),
         )
-        yp = torch.from_numpy(rec).float().view(1, 1, -1).to(device)
-        total += criterion(
-            yp, item["y"].unsqueeze(0).to(device), model=None
-        ).item()
+        yp = torch.as_tensor(
+            rec, dtype=torch.float32, device=device
+        ).view(1, 1, -1)
+        yt = torch.as_tensor(
+            item["y"], dtype=torch.float32, device=device
+        ).view(1, 1, -1)
+        total += criterion(yp, yt, model=None).item()
     return total / len(full_val_dataset)
 
 
@@ -265,47 +336,14 @@ def _vectorized_sliding_window_predict(
     """Predict and reconstruct full spectra using vectorized window batches
     in PyTorch.
     """
-    n_samples, _, seq_len = val_x.shape
-    start_indices = list(range(0, seq_len - window_size + 1, stride))
-    last_possible = seq_len - window_size
-    if start_indices and start_indices[-1] < last_possible:
-        start_indices.append(last_possible)
-
-    val_x_dev = val_x.to(device)
-    patches = torch.stack(
-        [val_x_dev[:, :, s : s + window_size] for s in start_indices], dim=1
-    )
-    num_windows = len(start_indices)
-    flat_patches = patches.view(-1, 1, window_size)
-
-    # Evaluate patches through model in batches.
-    with torch.no_grad():
-        if flat_patches.shape[0] <= batch_size:
-            flat_preds = model(flat_patches)
-        else:
-            flat_preds = torch.cat(
-                [
-                    model(flat_patches[i : i + batch_size])
-                    for i in range(0, flat_patches.shape[0], batch_size)
-                ],
-                dim=0,
-            )
-
-    preds = flat_preds.view(n_samples, num_windows, 1, window_size)
-    accum = torch.zeros(
-        n_samples, 1, seq_len, device=device, dtype=val_x.dtype
-    )
-    counts = torch.zeros(1, 1, seq_len, device=device, dtype=val_x.dtype)
-
-    # Accumulate overlapping patch predictions and normalize.
-    for k, s in enumerate(start_indices):
-        accum[:, :, s : s + window_size] += preds[:, k, :, :]
-        counts[:, :, s : s + window_size] += 1.0
-
-    recon = accum / counts.clamp(min=1.0)
-    if clamp_non_negative:
-        recon = torch.clamp(recon, min=0.0)
-    return recon
+    p_cfg = {
+        "window_size": window_size,
+        "stride": stride,
+        "device": device,
+        "clamp_non_negative": clamp_non_negative,
+        "batch_size": batch_size,
+    }
+    return predict_sliding_window_tensor(model, val_x, config=p_cfg)
 
 
 def evaluate_sliding_window(
@@ -385,7 +423,7 @@ def evaluate_sliding_window(
         clamp_non_negative=clamp_non_negative,
         batch_size=eval_batch_size,
     )
-    val_y_dev = val_y.to(device)
+    val_y_dev = val_y.to(device=device, dtype=recon.dtype)
     loss = crit(recon, val_y_dev, model=None).item()
     return float(loss)
 

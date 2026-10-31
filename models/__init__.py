@@ -38,7 +38,9 @@ from models.gp_flux import (
 from models.inference import (
     assemble_prediction_metadata,
     format_predicted_measurement_id,
+    predict_sliding_window_spectra,
     predict_sliding_window_spectrum,
+    predict_sliding_window_tensor,
     predict_spectra,
 )
 from models.orchestration import (
@@ -92,6 +94,8 @@ __all__ = [
     "assemble_prediction_metadata",
     "predict_spectra",
     "predict_sliding_window_spectrum",
+    "predict_sliding_window_spectra",
+    "predict_sliding_window_tensor",
     # Gaussian Process die flux prediction
     "DieFluxExactGPModel",
     "SigmoidStepKernel",
