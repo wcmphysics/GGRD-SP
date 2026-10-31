@@ -175,36 +175,9 @@ class DieFluxExactGPModel(gpytorch.models.ExactGP):
 
 def get_default_gp_flux_config() -> dict[str, Any]:
     """Return default configuration options for GP die flux prediction."""
-    return {
-        "reference_date": "2026-01-01",
-        "unpaired_split": "train",
-        "target_column": "total_flux_single_die",
-        "kernel": {
-            "time_continuous": {
-                "type": "rbf",
-                "initial_lengthscale": 5.0,
-            },
-            "time_jump": {
-                "enabled": True,
-                "initial_step_time_days": 10.0,
-                "initial_steepness": 2.0,
-                "learn_step_time": True,
-            },
-            "die": {
-                "type": "index",
-                "num_dies": 9,
-                "rank": 2,
-            },
-            "composition": "product_with_jump",
-        },
-        "training": {
-            "num_iterations": 150,
-            "learning_rate": 0.05,
-        },
-        "plot": {
-            "plot_die": 0,
-        },
-    }
+    from utility.config_schema import GPFluxConfig
+
+    return GPFluxConfig().model_dump()
 
 
 def build_gp_flux_dataset(
