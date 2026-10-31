@@ -240,6 +240,9 @@
           },
           "title": "Tool Offsets",
           "type": "object"
+        },
+        "shirley_background": {
+          "$ref": "#/$defs/ShirleyGenerationConfig"
         }
       },
       "required": [
@@ -1180,6 +1183,26 @@
         "rsf_table"
       ],
       "title": "QuantificationConfig",
+      "type": "object"
+    },
+    "ShirleyGenerationConfig": {
+      "additionalProperties": true,
+      "description": "Configuration for synthetic Shirley background generation.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "step_ratio": {
+          "default": 0.1,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Step Ratio",
+          "type": "number"
+        }
+      },
+      "title": "ShirleyGenerationConfig",
       "type": "object"
     },
     "SplittingConfig": {

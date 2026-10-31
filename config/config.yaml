@@ -59,6 +59,9 @@ data_generation:
     J5:
       shift_ev: 1.1
       scale: 14000.0
+  shirley_background:
+    enabled: true
+    step_ratio: 0.10
 
 pairing:
   time_threshold_hours: 8.0

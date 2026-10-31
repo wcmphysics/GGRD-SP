@@ -45,6 +45,14 @@ class ToolOffsetConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class ShirleyGenerationConfig(BaseModel):
+    """Configuration for synthetic Shirley background generation."""
+
+    enabled: bool = True
+    step_ratio: float = Field(0.10, ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="allow")
+
+
 class DataGenerationConfig(BaseModel):
     """Synthetic spectral data generation parameters."""
 
@@ -58,6 +66,9 @@ class DataGenerationConfig(BaseModel):
     noise_relative_std: float = Field(0.015, ge=0.0)
     seed: int | None = None
     tool_offsets: dict[str, ToolOffsetConfig] = Field(default_factory=dict)
+    shirley_background: ShirleyGenerationConfig = Field(
+        default_factory=ShirleyGenerationConfig
+    )
     model_config = ConfigDict(extra="allow")
 
 
@@ -508,6 +519,7 @@ __all__ = [
     "PipelineConfig",
     "PredictionConfig",
     "QuantificationConfig",
+    "ShirleyGenerationConfig",
     "SplittingConfig",
     "TrainingSectionConfig",
     "VisualizationConfig",

@@ -249,6 +249,7 @@ def get_default_measurement_config() -> dict[str, Any]:
         "maintenance_jump_noise_std": 0.03,
         "decay_floor": 0.2,
         "noise_relative_std": 0.015,
+        "shirley_background": {"enabled": True, "step_ratio": 0.10},
         "region_profiles": DEFAULT_REGION_PROFILES,
         "seed": 42,
     }
@@ -345,6 +346,51 @@ def _validate_config(config: dict[str, Any]) -> None:
             f"got {interval_range}"
         )
 
+    if "shirley_background" in config and config["shirley_background"] is not None:
+        shirley_cfg = config["shirley_background"]
+        if hasattr(shirley_cfg, "model_dump"):
+            shirley_cfg = shirley_cfg.model_dump()
+        if not isinstance(shirley_cfg, dict):
+            raise ValueError(
+                f"'shirley_background' must be a dictionary, got {type(shirley_cfg).__name__}"
+            )
+        if "enabled" in shirley_cfg and not isinstance(
+            shirley_cfg["enabled"], bool
+        ):
+            raise ValueError(
+                f"'shirley_background.enabled' must be a boolean, got {shirley_cfg['enabled']}"
+            )
+        if "step_ratio" in shirley_cfg:
+            step_ratio = shirley_cfg["step_ratio"]
+            if (
+                isinstance(step_ratio, bool)
+                or not isinstance(step_ratio, (int, float))
+                or not np.isfinite(step_ratio)
+                or step_ratio < 0.0
+                or step_ratio > 1.0
+            ):
+                raise ValueError(
+                    f"'shirley_background.step_ratio' must be a float in [0.0, 1.0], "
+                    f"got {step_ratio}"
+                )
+
+    region_profiles = config.get("region_profiles", {})
+    if isinstance(region_profiles, dict):
+        for reg_name, profile in region_profiles.items():
+            if isinstance(profile, dict) and "shirley_step_ratio" in profile:
+                reg_step = profile["shirley_step_ratio"]
+                if (
+                    isinstance(reg_step, bool)
+                    or not isinstance(reg_step, (int, float))
+                    or not np.isfinite(reg_step)
+                    or reg_step < 0.0
+                    or reg_step > 1.0
+                ):
+                    raise ValueError(
+                        f"Region '{reg_name}' shirley_step_ratio must be a float in [0.0, 1.0], "
+                        f"got {reg_step}"
+                    )
+
 
 def generate_tool_timeline(
     tools: list[str],
@@ -399,14 +445,16 @@ def generate_tool_timeline(
 def _synthesize_regional_spectrum(
     e_grid: np.ndarray,
     profile: dict[str, Any],
-    synth_params: dict[str, float],
+    synth_params: dict[str, Any],
     rng: np.random.Generator,
 ) -> np.ndarray:
     """Synthesize a regional XPS spectrum with peaks, baseline, and noise."""
-    tool_shift = synth_params["tool_shift"]
-    total_scale = synth_params["total_scale"]
-    noise_relative_std = synth_params["noise_relative_std"]
+    tool_shift = float(synth_params["tool_shift"])
+    total_scale = float(synth_params["total_scale"])
+    noise_relative_std = float(synth_params["noise_relative_std"])
     intensity = np.zeros_like(e_grid)
+
+    # 1. Synthesize pure pseudo-Voigt peaks
     for peak in profile["peaks"]:
         peak_shifted = {
             "center": peak["center"] + tool_shift,
@@ -416,6 +464,33 @@ def _synthesize_regional_spectrum(
         }
         intensity += pseudo_voigt(energy=e_grid, peak_params=peak_shifted)
 
+    # 2. Add Shirley inelastic scattering background step if enabled
+    shirley_cfg = synth_params.get("shirley_background") or {}
+    if hasattr(shirley_cfg, "model_dump"):
+        shirley_cfg = shirley_cfg.model_dump()
+    elif not isinstance(shirley_cfg, dict):
+        shirley_cfg = {}
+
+    is_enabled = bool(shirley_cfg.get("enabled", True))
+    if "shirley_enabled" in profile:
+        is_enabled = bool(profile["shirley_enabled"])
+
+    step_ratio_raw = profile.get(
+        "shirley_step_ratio", shirley_cfg.get("step_ratio", 0.10)
+    )
+    step_ratio = float(step_ratio_raw) if step_ratio_raw is not None else 0.0
+
+    if is_enabled and step_ratio > 0.0 and len(e_grid) >= 2:
+        peak_max = float(np.max(intensity))
+        if peak_max > 0.0:
+            dx = np.diff(e_grid)
+            trap_steps = 0.5 * (intensity[:-1] + intensity[1:]) * dx
+            cum_area = np.concatenate(([0.0], np.cumsum(trap_steps)))
+            total_area = float(cum_area[-1])
+            if total_area > 0.0:
+                intensity += step_ratio * peak_max * (cum_area / total_area)
+
+    # 3. Add flat baseline and Gaussian noise
     intensity += profile.get("baseline", 10.0) * total_scale
     noise_sigma = float(np.max(intensity)) * noise_relative_std
     intensity += rng.normal(0.0, noise_sigma, size=len(e_grid))
@@ -581,6 +656,7 @@ def generate_pseudo_measurements(
                     die_scale = base_die
 
                 total_scale = float(tool_scale * time_scale * die_scale)
+                shirley_cfg = merged_config.get("shirley_background") or {}
                 for region_name in regions:
                     e_grid = region_energy_grids[region_name]
                     reg_factor = region_norm_factors[region_name]
@@ -588,6 +664,7 @@ def generate_pseudo_measurements(
                         "tool_shift": tool_shift,
                         "total_scale": total_scale * reg_factor,
                         "noise_relative_std": noise_relative_std,
+                        "shirley_background": shirley_cfg,
                     }
                     ary_intensity[spectrum_idx] = _synthesize_regional_spectrum(
                         e_grid=e_grid,
