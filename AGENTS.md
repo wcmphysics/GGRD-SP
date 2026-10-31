@@ -18,7 +18,7 @@ GGRD-SP is a sequence-to-sequence machine-learning project for **cross-tool XPS 
 | `docs/` | Documentation |
 
 ## Tech Stack
-Python 3 · PyTorch · GPyTorch · Ax/BoTorch · Pydantic · NumPy · Pandas · SciPy · scikit-learn · PyWavelets · Matplotlib/Seaborn
+Python 3 (CPU-only) · PyTorch · GPyTorch · Ax/BoTorch · Pydantic · NumPy · Pandas · SciPy · scikit-learn · PyWavelets · Matplotlib/Seaborn
 
 ## Core Data Model
 - **Measurement (session)**: one XPS run of one material on one tool at one time. It produces `N_die` full spectra, each from a die (default 9 dies) on a wafer.
@@ -137,7 +137,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
   - normalized MSE;
   - raw RMSE;
   - `peak_error_percentage`: relative error at the true peak location [need to check its calculation definition]
-  - `max_error_percentage`: largest point-wise relative error. [need to check its calculation definition]
+  - `chebyshev_error_peak_normalized_percentage`: largest point-wise relative error (Chebyshev / L-infinity norm normalized by target maximum intensity).
 - Prints side-by-side train/test tables.
 
 ### 12. Quantification
@@ -169,9 +169,10 @@ Plots should go here and controlled by the dispatcher with one boolean toggle pe
 ## Agent Instructions
 
 ### 1. Environment
+- Execution is strictly CPU-only (CUDA/GPU is disabled and should not be used).
 - Run Python only through `.\.venv\Scripts\python.exe`, from the repository root.
 - Run tests with `.\.venv\Scripts\python.exe -m unittest discover -s tests`.
-- Run main.py in headless mode (by passing the argument `--headless`) to suppress plotting window during test, othersie the program never ends 
+- Run main.py in headless mode (by passing the argument `--headless`) to suppress plotting window during test, otherwise the program never ends 
 
 ### 2. Workflow
 1. **Clarify:** if anything is ambiguous, ask before acting.
