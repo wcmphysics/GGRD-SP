@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from models.factory import NO_SLIDING_WINDOW_MODEL_TYPES
+
 _SEARCH_SPACE_KEYS = (
     "batch_sizes",
     "window_size_choices",
@@ -22,6 +24,12 @@ _SEARCH_SPACE_KEYS = (
     "unet_channels",
     "deeplabv3_backbone_channels",
     "deeplabv3_aspp_channels",
+    "inception_channels",
+    "bottleneck_channels",
+    "num_blocks",
+    "tcn_channels",
+    "fpn_base_channels",
+    "fpn_pyramid_channels",
     "learning_rate_bounds",
     "l2_bounds",
 )
@@ -41,6 +49,11 @@ _CHANNEL_SEARCH_KEYS = (
     "unet_channels",
     "deeplabv3_backbone_channels",
     "deeplabv3_aspp_channels",
+    "inception_channels",
+    "bottleneck_channels",
+    "tcn_channels",
+    "fpn_base_channels",
+    "fpn_pyramid_channels",
 )
 
 
@@ -259,6 +272,12 @@ def _build_architecture_parameters(
     use_sw: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, list[int]], dict[str, Any] | None]:
     """Build candidate parameter definitions for the chosen architecture."""
+    if model_type in NO_SLIDING_WINDOW_MODEL_TYPES and use_sw:
+        raise ValueError(
+            f"Sliding window mode (use_sliding_window=True) is not supported "
+            f"for model_type={model_type!r} in Bayesian optimization."
+        )
+
     # Build candidate batch size and sliding window parameter specs.
     parameters: list[dict[str, Any]] = []
     if "batch_sizes" in cfg:
@@ -272,12 +291,30 @@ def _build_architecture_parameters(
         if use_sw:
             parameters.append(window_spec)
 
-    for ch_key in (*_CHANNEL_SEARCH_KEYS, "depths"):
+    for ch_key in (*_CHANNEL_SEARCH_KEYS, "depths", "num_blocks"):
         if ch_key in cfg:
             _choice(ch_key[:-1], cfg[ch_key], min_val=1)
 
-    # Configure architecture specifications according to model architecture family.
-    if "deeplab" in model_type:
+    # Configure architecture specifications per model family.
+    if "inception" in model_type:
+        arch_specs = [
+            ("inception_channel", "inception_channels", [8, 16, 32]),
+            ("bottleneck_channels", "bottleneck_channels", [8, 16, 32]),
+            ("num_blocks", "num_blocks", [2, 3, 4]),
+        ]
+    elif "tcn" in model_type:
+        arch_specs = [
+            ("kernel_size", "kernel_sizes", [3, 5, 7]),
+            ("tcn_channel", "tcn_channels", [16, 32, 64]),
+        ]
+    elif "fpn" in model_type:
+        arch_specs = [
+            ("kernel_size", "kernel_sizes", [3, 5]),
+            ("fpn_base_channel", "fpn_base_channels", [8, 16, 32]),
+            ("fpn_pyramid_channel", "fpn_pyramid_channels", [16, 32, 64]),
+            ("depth", "depths", [2, 3]),
+        ]
+    elif "deeplab" in model_type:
         arch_specs = [
             ("kernel_size", "kernel_sizes", [3, 5]),
             ("deeplabv3_backbone_channel", "deeplabv3_backbone_channels", [16, 32, 64]),
@@ -320,12 +357,6 @@ def _validate_architecture_constraints(
     use_sw: bool,
 ) -> None:
     """Validate kernel size and depth consistency against sequence length."""
-    kernel_vals = resolved_arch["kernel_size"]
-    if any(k % 2 == 0 for k in kernel_vals):
-        raise ValueError(
-            f"All kernel_sizes must be positive odd integers, got {kernel_vals}"
-        )
-
     if window_spec is not None:
         min_seq_len = min(window_spec["values"])
     elif use_sw:
@@ -333,11 +364,18 @@ def _validate_architecture_constraints(
     else:
         min_seq_len = full_len
 
-    if max(kernel_vals) > min_seq_len:
-        raise ValueError(
-            f"kernel_size ({max(kernel_vals)}) cannot be larger than "
-            f"window_size / n_points ({min_seq_len})."
-        )
+    if "kernel_size" in resolved_arch:
+        kernel_vals = resolved_arch["kernel_size"]
+        if any(k % 2 == 0 for k in kernel_vals):
+            raise ValueError(
+                f"All kernel_sizes must be positive odd integers, got {kernel_vals}"
+            )
+        if max(kernel_vals) > min_seq_len:
+            raise ValueError(
+                f"kernel_size ({max(kernel_vals)}) cannot be larger than "
+                f"window_size / n_points ({min_seq_len})."
+            )
+
     if "depth" in resolved_arch:
         max_depth = max(resolved_arch["depth"])
         if 2**max_depth > min_seq_len:

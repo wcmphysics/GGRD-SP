@@ -102,6 +102,48 @@
           },
           "title": "Depths",
           "type": "array"
+        },
+        "inception_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Inception Channels",
+          "type": "array"
+        },
+        "bottleneck_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Bottleneck Channels",
+          "type": "array"
+        },
+        "num_blocks": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Num Blocks",
+          "type": "array"
+        },
+        "tcn_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Tcn Channels",
+          "type": "array"
+        },
+        "fpn_base_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Fpn Base Channels",
+          "type": "array"
+        },
+        "fpn_pyramid_channels": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Fpn Pyramid Channels",
+          "type": "array"
         }
       },
       "title": "BayesianOptConfig",
@@ -1442,6 +1484,67 @@
           "default": true,
           "title": "Film Internal Layers",
           "type": "boolean"
+        },
+        "inception_channel": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Inception Channel",
+          "type": "integer"
+        },
+        "bottleneck_channels": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Bottleneck Channels",
+          "type": "integer"
+        },
+        "kernel_sizes": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Kernel Sizes",
+          "type": "array"
+        },
+        "num_blocks": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "title": "Num Blocks",
+          "type": "integer"
+        },
+        "modules_per_block": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Modules Per Block",
+          "type": "integer"
+        },
+        "use_bottleneck": {
+          "default": true,
+          "title": "Use Bottleneck",
+          "type": "boolean"
+        },
+        "tcn_channel": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Tcn Channel",
+          "type": "integer"
+        },
+        "dilations": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Dilations",
+          "type": "array"
+        },
+        "fpn_base_channel": {
+          "default": 16,
+          "exclusiveMinimum": 0,
+          "title": "Fpn Base Channel",
+          "type": "integer"
+        },
+        "fpn_pyramid_channel": {
+          "default": 32,
+          "exclusiveMinimum": 0,
+          "title": "Fpn Pyramid Channel",
+          "type": "integer"
         }
       },
       "title": "TrainConfig",

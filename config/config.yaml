@@ -20,6 +20,7 @@ materials:
 
 global:
   material: "NMG"
+  # Model architecture: resnet, resnet_scaled_short, unet, residual_unet, deeplabv3, inception_time, tcn, fpn
   model_type: "resnet"
   use_sliding_window: false
   use_film: false

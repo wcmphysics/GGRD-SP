@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from models.bayesian_opt import optimize_model_hyperparameters
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
+from models.factory import NO_SLIDING_WINDOW_MODEL_TYPES
 from models.trainer import instantiate_model, train_model_region
 
 _CONTAINER_KEYS = {
@@ -354,6 +355,15 @@ def perform_model_training_and_bayesian_optimization(
         )
 
         is_sw = isinstance(dataset_train, SpectrumPatchDataset)
+        if region_model_type in NO_SLIDING_WINDOW_MODEL_TYPES and (
+            is_sw or region_train_config.get("use_sliding_window", False)
+        ):
+            raise ValueError(
+                f"Sliding window mode (use_sliding_window=True) is not supported "
+                f"for model_type={region_model_type!r}. Multi-field-of-view "
+                "architectures process full regional spectra directly. "
+                "Please set 'use_sliding_window: false'."
+            )
         input_sequence_length = (
             window_size_points if is_sw else full_spectrum_length
         )

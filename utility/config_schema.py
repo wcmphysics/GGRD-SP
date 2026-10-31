@@ -340,6 +340,11 @@ class FiLMConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+NO_SLIDING_WINDOW_MODEL_TYPES: frozenset[str] = frozenset(
+    {"inception_time", "tcn", "fpn"}
+)
+
+
 class BayesianOptConfig(BaseModel):
     """Ax Bayesian optimization search space and trial budget."""
 
@@ -364,6 +369,14 @@ class BayesianOptConfig(BaseModel):
         default_factory=lambda: [16, 32, 64]
     )
     depths: list[int] = Field(default_factory=lambda: [2, 3])
+    inception_channels: list[int] = Field(default_factory=lambda: [8, 16, 32])
+    bottleneck_channels: list[int] = Field(default_factory=lambda: [8, 16, 32])
+    num_blocks: list[int] = Field(default_factory=lambda: [2, 3, 4])
+    tcn_channels: list[int] = Field(default_factory=lambda: [16, 32, 64])
+    fpn_base_channels: list[int] = Field(default_factory=lambda: [8, 16, 32])
+    fpn_pyramid_channels: list[int] = Field(
+        default_factory=lambda: [16, 32, 64]
+    )
     model_config = ConfigDict(extra="allow")
 
 
@@ -391,6 +404,16 @@ class TrainConfig(BaseModel):
     energy_scale_ev: float = Field(1000.0, gt=0.0)
     num_layers: int = Field(3, ge=2)
     film_internal_layers: bool = True
+    inception_channel: int = Field(16, gt=0)
+    bottleneck_channels: int = Field(16, gt=0)
+    kernel_sizes: list[int] = Field(default_factory=lambda: [3, 7, 15, 31])
+    num_blocks: int = Field(3, gt=0)
+    modules_per_block: int = Field(2, gt=0)
+    use_bottleneck: bool = True
+    tcn_channel: int = Field(32, gt=0)
+    dilations: list[int] = Field(default_factory=lambda: [1, 2, 4, 8, 16])
+    fpn_base_channel: int = Field(16, gt=0)
+    fpn_pyramid_channel: int = Field(32, gt=0)
     model_config = ConfigDict(extra="allow")
 
     @field_validator("kernel_size")
@@ -473,12 +496,31 @@ class PipelineConfig(BaseModel):
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
+    @model_validator(mode="after")
+    def validate_sliding_window_compatibility(self) -> PipelineConfig:
+        """Reject sliding window mode for multi-field-of-view architectures."""
+        model_type = self.global_.model_type.lower()
+        if (
+            self.global_.use_sliding_window
+            and model_type in NO_SLIDING_WINDOW_MODEL_TYPES
+        ):
+            raise ValueError(
+                f"Sliding window mode (use_sliding_window=True) is not supported "
+                f"for model_type={self.global_.model_type!r}. Multi-field-of-view "
+                "architectures process full regional spectra directly. "
+                "Please set 'global.use_sliding_window: false'."
+            )
+        return self
+
     @classmethod
     def from_yaml(cls, file_path: str | Path) -> PipelineConfig:
         """Load and validate pipeline configuration directly from YAML."""
         path = Path(file_path)
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
+        from utility.config_loader import merge_dedicated_model_config
+
+        merge_dedicated_model_config(raw, path.parent)
         return cls.model_validate(raw)
 
     def to_dict(self) -> dict[str, Any]:
@@ -513,6 +555,7 @@ __all__ = [
     "GPFluxConfig",
     "MaterialSpec",
     "MetricsReportConfig",
+    "NO_SLIDING_WINDOW_MODEL_TYPES",
     "NoiseAnalysisConfig",
     "NormalizationConfig",
     "PairingConfig",

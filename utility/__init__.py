@@ -2,10 +2,13 @@
 """
 
 from utility.config_loader import (
+    MODEL_CONFIG_MAP,
+    NO_SLIDING_WINDOW_MODEL_TYPES,
     extract_element_vocabulary,
     load_config,
     load_material_elements,
     load_yaml,
+    merge_dedicated_model_config,
     resolve_pipeline_config,
 )
 from utility.config_schema import PipelineConfig
@@ -61,6 +64,9 @@ __all__ = [
     "extract_element_vocabulary",
     "load_config",
     "resolve_pipeline_config",
+    "merge_dedicated_model_config",
+    "MODEL_CONFIG_MAP",
+    "NO_SLIDING_WINDOW_MODEL_TYPES",
     # Data generation
     "generate_pseudo_measurements",
     "generate_tool_timeline",

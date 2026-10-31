@@ -57,6 +57,73 @@ def load_yaml(file_path: str | Path) -> dict[str, Any]:
     return content
 
 
+MODEL_CONFIG_MAP: dict[str, str] = {
+    "resnet": "resnet.yaml",
+    "resnet_scaled_short": "resnet.yaml",
+    "unet": "unet.yaml",
+    "residual_unet": "unet.yaml",
+    "deeplabv3": "deeplabv3.yaml",
+    "inception_time": "inception_time.yaml",
+    "tcn": "tcn.yaml",
+    "fpn": "fpn.yaml",
+}
+
+NO_SLIDING_WINDOW_MODEL_TYPES: frozenset[str] = frozenset(
+    {"inception_time", "tcn", "fpn"}
+)
+
+
+def merge_dedicated_model_config(
+    raw_config: dict[str, Any],
+    config_dir: str | Path | None = None,
+) -> None:
+    """Merge dedicated per-model YAML configuration defaults into raw config."""
+    global_cfg = raw_config.get("global", {})
+    if not isinstance(global_cfg, dict):
+        return
+    model_type = str(global_cfg.get("model_type", "resnet")).lower()
+    config_file_name = MODEL_CONFIG_MAP.get(model_type)
+    if not config_file_name:
+        return
+
+    candidates: list[Path] = []
+    if config_dir is not None:
+        candidates.append(Path(config_dir) / config_file_name)
+    candidates.append(Path("config") / config_file_name)
+
+    model_path = next((p for p in candidates if p.is_file()), None)
+    if model_path is None:
+        return
+
+    model_raw = load_yaml(model_path)
+    if not isinstance(model_raw, dict):
+        return
+
+    # Merge model-specific training hyperparameters and region overrides.
+    training = raw_config.setdefault("training", {})
+    if isinstance(training, dict):
+        train_cfg = training.setdefault("train_config", {})
+        if isinstance(train_cfg, dict) and "train_config" in model_raw:
+            for k, v in model_raw["train_config"].items():
+                train_cfg.setdefault(k, v)
+        region_cfgs = training.setdefault("region_configs", {})
+        if isinstance(region_cfgs, dict) and "region_configs" in model_raw:
+            for k, v in model_raw["region_configs"].items():
+                region_cfgs.setdefault(k, v)
+
+    # Merge model-specific Bayesian optimization search bounds.
+    bo_cfg = raw_config.setdefault("bayesian_opt", {})
+    if isinstance(bo_cfg, dict) and "bayesian_opt" in model_raw:
+        for k, v in model_raw["bayesian_opt"].items():
+            bo_cfg.setdefault(k, v)
+
+    # Merge model-specific FiLM conditioning settings.
+    film_cfg = raw_config.setdefault("film", {})
+    if isinstance(film_cfg, dict) and "film" in model_raw:
+        for k, v in model_raw["film"].items():
+            film_cfg.setdefault(k, v)
+
+
 def load_material_elements(
     config_or_path: dict[str, Any] | str | Path,
 ) -> dict[str, list[str]]:
@@ -415,12 +482,23 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         Resolved configuration dictionary with fully populated stage configs.
     """
     resolved = dict(config)
+    merge_dedicated_model_config(resolved)
     _resolve_materials_and_vocab(resolved)
 
     global_cfg = resolved.get("global", {})
     source_tool = str(global_cfg.get("source_tool", "J4"))
     target_tool = str(global_cfg.get("target_tool", "J5"))
     material, regions = _resolve_material_and_regions(resolved, global_cfg)
+    model_type = str(global_cfg.get("model_type", "resnet")).lower()
+    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
+
+    if use_sliding_window and model_type in NO_SLIDING_WINDOW_MODEL_TYPES:
+        raise ValueError(
+            f"Sliding window mode (use_sliding_window=True) is not supported "
+            f"for model_type={model_type!r}. Multi-field-of-view architectures "
+            "process full regional spectra directly. "
+            "Please set 'global.use_sliding_window: false'."
+        )
 
     _inject_spatial_temporal_settings(
         resolved, global_cfg, source_tool, target_tool, material
@@ -434,7 +512,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     _inject_model_and_training_settings(
         resolved,
         global_cfg,
-        str(global_cfg.get("model_type", "resnet")),
+        model_type,
         bool(global_cfg.get("unified_model", True)),
         regions,
     )
@@ -465,6 +543,8 @@ def load_config(
         Fully resolved top-level pipeline configuration dictionary.
     """
     raw = load_yaml(file_path)
+    config_dir = Path(file_path).parent
+    merge_dedicated_model_config(raw, config_dir)
     if validate:
         from utility.config_schema import PipelineConfig
 

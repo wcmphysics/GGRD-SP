@@ -1,0 +1,55 @@
+# Dedicated network structure and training setup for InceptionTime1D
+train_config:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.001
+  early_stopping_patience: 20
+  use_learning_rate_scheduler: true
+  learning_rate_reduce_factor: 0.9
+  learning_rate_scheduler_patience: 10
+  min_learning_rate: 0.00001
+  inception_channel: 16
+  bottleneck_channels: 16
+  kernel_sizes: [3, 7, 15, 31]
+  num_blocks: 3
+  modules_per_block: 2
+  use_bottleneck: true
+  use_batch_norm: true
+  dropout: 0.1
+  activation: "relu"
+  residual: true
+  padding_mode: "reflect"
+  energy_scale_ev: 1000.0
+  verbose: true
+
+region_configs: {}
+
+bayesian_opt:
+  use_bayesian_opt: false
+  num_trials: 10
+  epochs_per_trial: 15
+  early_stopping_patience: 5
+  seed: 42
+  verbose: false
+  learning_rate_bounds: [0.0001, 0.01]
+  l2_bounds: [0.000001, 0.01]
+  batch_sizes: [8, 16]
+  inception_channels: [8, 16, 32]
+  bottleneck_channels: [8, 16, 32]
+  num_blocks: [2, 3, 4]
+
+film:
+  encode_die: true
+  encode_tool: true
+  encode_flux: true
+  encode_time: true
+  encode_energy: true
+  encode_region: true
+  encode_relative_intensity: true
+  encode_elements: true
+  region_embed_dim: 4
+  energy_scale_ev: 1000.0
+  die_embed_dim: 4
+  tool_embed_dim: 4
+  hidden_dim: 32
+  relative_learning_rate: 0.1

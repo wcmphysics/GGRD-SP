@@ -21,7 +21,11 @@ from models.dataset import (
     create_dataloaders,
     default_spectrum_collate,
 )
-from models.factory import MODEL_CLASS_MAP, instantiate_model
+from models.factory import (
+    MODEL_CLASS_MAP,
+    NO_SLIDING_WINDOW_MODEL_TYPES,
+    instantiate_model,
+)
 from models.inference import (
     predict_sliding_window_spectrum,
     predict_sliding_window_tensor,
@@ -40,6 +44,13 @@ _POSITIVE_INT_CONFIG_KEYS = (
     "unet_channel",
     "deeplabv3_backbone_channel",
     "deeplabv3_aspp_channel",
+    "inception_channel",
+    "bottleneck_channels",
+    "num_blocks",
+    "modules_per_block",
+    "tcn_channel",
+    "fpn_base_channel",
+    "fpn_pyramid_channel",
 )
 
 
@@ -533,6 +544,14 @@ def _setup_training_dataloaders(
     batch_size = validate_positive_int(cfg.get("batch_size", 16), "batch_size")
     full_len = int(train_dataset[0]["x"].shape[-1])
     explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
+    model_type = str(cfg.get("model_type", "")).lower()
+    is_patched = isinstance(train_dataset, SpectrumPatchDataset)
+    if model_type in NO_SLIDING_WINDOW_MODEL_TYPES and (use_sw or is_patched):
+        raise ValueError(
+            f"Sliding window mode (use_sliding_window=True) is not supported "
+            f"for model_type={model_type!r}. Multi-field-of-view architectures "
+            "process full regional spectra directly. Please set 'use_sliding_window: false'."
+        )
 
     # Configure sliding window patch dataset or standard whole-spectrum loaders.
     if use_sw:
@@ -808,6 +827,16 @@ def _init_training_config(
         raise ValueError("Cannot train on an empty train_dataset.")
     has_val = val_dataset is not None and len(val_dataset) > 0
     cfg = dict(config or {})
+    model_type = str(cfg.get("model_type", "")).lower()
+    use_sw = bool(cfg.get("use_sliding_window", False))
+    if model_type in NO_SLIDING_WINDOW_MODEL_TYPES and (
+        use_sw or isinstance(train_dataset, SpectrumPatchDataset)
+    ):
+        raise ValueError(
+            f"Sliding window mode (use_sliding_window=True) is not supported "
+            f"for model_type={model_type!r}. Multi-field-of-view architectures "
+            "process full regional spectra directly. Please set 'use_sliding_window: false'."
+        )
     epochs = validate_positive_int(cfg.get("epochs", 50), "epochs")
     lr_params = _validate_training_hyperparameters(cfg, epochs)
     dev_str = cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")

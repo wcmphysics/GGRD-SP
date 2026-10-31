@@ -1,0 +1,51 @@
+# Dedicated network structure and training setup for ResNet1D & ResNetScaledShort1D
+train_config:
+  epochs: 100
+  batch_size: 16
+  learning_rate: 0.0001
+  depth: 3
+  num_layers: 3
+  kernel_size: 9
+  resnet_channel: 32
+  dropout: 0.0
+  use_batch_norm: true
+  padding_mode: "reflect"
+  energy_scale_ev: 1000.0
+  use_learning_rate_scheduler: true
+  learning_rate_reduce_factor: 0.9
+  learning_rate_scheduler_patience: 10
+  early_stopping_patience: 20
+  verbose: true
+
+region_configs:
+  Al2p:
+    batch_size: 16
+    learning_rate: 0.0001
+
+bayesian_opt:
+  use_bayesian_opt: false
+  num_trials: 5
+  epochs_per_trial: 15
+  verbose: true
+  learning_rate_bounds: [0.0001, 0.01]
+  l2_bounds: [0.000001, 0.01]
+  batch_sizes: [16, 32, 64]
+  window_size_choices: [15]
+  kernel_sizes: [3, 5, 7]
+  resnet_channels: [16, 32, 64]
+
+film:
+  encode_die: true
+  encode_tool: true
+  encode_flux: true
+  encode_time: true
+  encode_energy: true
+  encode_region: true
+  encode_relative_intensity: true
+  encode_elements: true
+  region_embed_dim: 4
+  energy_scale_ev: 1000.0
+  die_embed_dim: 4
+  tool_embed_dim: 4
+  hidden_dim: 32
+  relative_learning_rate: 0.1
