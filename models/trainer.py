@@ -270,21 +270,17 @@ def train_model_region(
         raise ValueError("Cannot train on an empty train_dataset.")
     has_val = val_dataset is not None and len(val_dataset) > 0
 
-    cfg = dict(config or {})
-
-    model_type = str(cfg.get("model_type", "resnet")).lower()
-    use_sw = bool(cfg.get("use_sliding_window", False))
-    epochs = validate_positive_int(cfg.get("epochs", 50), "epochs")
-    batch_size = validate_positive_int(cfg.get("batch_size", 16), "batch_size")
-
+def _validate_training_hyperparameters(
+    cfg: dict[str, Any],
+    epochs: int,
+) -> dict[str, Any]:
+    """Validate and return learning rate, scheduler, and patience settings."""
     for int_key in _POSITIVE_INT_CONFIG_KEYS:
         if int_key in cfg:
             validate_positive_int(cfg[int_key], int_key)
 
     learning_rate = float(cfg.get("learning_rate", 1e-3))
-    weight_decay = float(cfg.get("weight_decay", 0.0))
     l2_weight = float(cfg.get("l2_weight", 1e-4))
-    verbose = bool(cfg.get("verbose", False))
     relative_learning_rate = float(cfg.get("relative_learning_rate", 0.1))
     if relative_learning_rate <= 0.0:
         raise ValueError(
@@ -343,12 +339,40 @@ def train_model_region(
             stacklevel=2,
         )
 
-    device = torch.device(
-        cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    return {
+        "lr": learning_rate,
+        "l2_weight": l2_weight,
+        "use_sched": use_lr_sched,
+        "reduce_factor": learning_rate_reduce_factor,
+        "sched_patience": learning_rate_scheduler_patience,
+        "min_lr": min_learning_rate,
+        "patience": patience,
+    }
 
+
+def _setup_loss_criterion(cfg: dict[str, Any], l2_weight: float) -> SpectralLoss:
+    """Instantiate or configure the SpectralLoss criterion."""
+    passed_criterion = cfg.get("criterion")
+    if passed_criterion is not None:
+        criterion = copy.copy(passed_criterion)
+        if "l2_weight" in cfg and hasattr(criterion, "l2_weight"):
+            criterion.l2_weight = l2_weight
+        return criterion
+    return SpectralLoss(config={**cfg, "l2_weight": l2_weight})
+
+
+def _setup_training_dataloaders(
+    train_dataset: SpectrumPairDataset,
+    val_dataset: SpectrumPairDataset | None,
+    use_sw: bool,
+    cfg: dict[str, Any],
+) -> tuple[DataLoader, DataLoader | None, int, int, int]:
+    """Configure training and validation DataLoaders and spatial lengths."""
+    has_val = val_dataset is not None and len(val_dataset) > 0
+    batch_size = validate_positive_int(cfg.get("batch_size", 16), "batch_size")
     full_len = int(train_dataset[0]["x"].shape[-1])
     explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
+
     if use_sw:
         is_patched = isinstance(train_dataset, SpectrumPatchDataset)
         ws_cfg_val = explicit_ws if explicit_ws is not None else 15
@@ -396,18 +420,28 @@ def train_model_region(
     if "kernel_size" in cfg:
         validate_odd_kernel_size(cfg["kernel_size"], max_allowed=effective_max_k)
 
-    model = cfg.get("model")
-    if model is None:
-        model = instantiate_model(model_type, seq_len=seq_len, config=cfg)
-    model = model.to(device)
+    return train_loader, val_loader, seq_len, w_size, s_step
 
-    passed_criterion = cfg.get("criterion")
-    if passed_criterion is not None:
-        criterion = copy.copy(passed_criterion)
-        if "l2_weight" in cfg and hasattr(criterion, "l2_weight"):
-            criterion.l2_weight = l2_weight
-    else:
-        criterion = SpectralLoss(config={**cfg, "l2_weight": l2_weight})
+
+def _setup_optimizer_and_scheduler(
+    model: nn.Module,
+    cfg: dict[str, Any],
+    learning_rate: float,
+    min_learning_rate: float,
+    use_lr_sched: bool,
+) -> tuple[torch.optim.Optimizer, ReduceLROnPlateau | None]:
+    """Configure Adam optimizer with potential parameter groups and
+    scheduler.
+    """
+    weight_decay = float(cfg.get("weight_decay", 0.0))
+    relative_learning_rate = float(cfg.get("relative_learning_rate", 0.1))
+    learning_rate_reduce_factor = float(
+        cfg.get("learning_rate_reduce_factor", 0.9)
+    )
+    learning_rate_scheduler_patience = int(
+        cfg.get("learning_rate_scheduler_patience", 10)
+    )
+
     if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
         shortcut_lr = learning_rate * relative_learning_rate
         if shortcut_lr < min_learning_rate:
@@ -436,6 +470,7 @@ def train_model_region(
         optimizer = torch.optim.Adam(
             model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
+
     scheduler = (
         ReduceLROnPlateau(
             optimizer,
@@ -447,6 +482,30 @@ def train_model_region(
         if use_lr_sched
         else None
     )
+    return optimizer, scheduler
+
+
+def _execute_training_epochs(
+    model: nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader | None,
+    optimizer: torch.optim.Optimizer,
+    scheduler: ReduceLROnPlateau | None,
+    criterion: SpectralLoss,
+    val_dataset: SpectrumPairDataset | None,
+    exec_cfg: dict[str, Any],
+) -> tuple[float, int, dict[str, list[float]]]:
+    """Execute training and evaluation loop across all epochs with early
+    stopping.
+    """
+    epochs = int(exec_cfg["epochs"])
+    use_sw = bool(exec_cfg["use_sw"])
+    has_val = bool(exec_cfg["has_val"])
+    patience = int(exec_cfg["patience"])
+    device: torch.device = exec_cfg["device"]
+    verbose = bool(exec_cfg["verbose"])
+    w_size = int(exec_cfg["w_size"])
+    s_step = int(exec_cfg["s_step"])
 
     history: dict[str, list[float]] = {
         "train_loss": [],
@@ -525,22 +584,37 @@ def train_model_region(
     if best_state is not None:
         model.load_state_dict(best_state)
 
+    return best_loss, best_epoch, history
+
+
+def _package_training_result(
+    model: nn.Module,
+    best_loss: float,
+    best_epoch: int,
+    history: dict[str, list[float]],
+    cfg: dict[str, Any],
+    lr_params: dict[str, Any],
+    exec_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Collate training outcomes and updated configuration into return
+    dictionary.
+    """
     cfg.update(
         {
-            "epochs": epochs,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "l2_weight": l2_weight,
-            "early_stopping_patience": patience,
-            "model_type": model_type,
-            "use_sliding_window": use_sw,
-            "use_learning_rate_scheduler": use_lr_sched,
-            "learning_rate_reduce_factor": learning_rate_reduce_factor,
-            "learning_rate_scheduler_patience": learning_rate_scheduler_patience,
-            "min_learning_rate": min_learning_rate,
-            "window_size": w_size,
-            "stride": s_step,
-            "seq_len": seq_len,
+            "epochs": exec_meta["epochs"],
+            "batch_size": exec_meta["batch_size"],
+            "learning_rate": lr_params["lr"],
+            "l2_weight": lr_params["l2_weight"],
+            "early_stopping_patience": lr_params["patience"],
+            "model_type": exec_meta["model_type"],
+            "use_sliding_window": exec_meta["use_sw"],
+            "use_learning_rate_scheduler": lr_params["use_sched"],
+            "learning_rate_reduce_factor": lr_params["reduce_factor"],
+            "learning_rate_scheduler_patience": lr_params["sched_patience"],
+            "min_learning_rate": lr_params["min_lr"],
+            "window_size": exec_meta["w_size"],
+            "stride": exec_meta["s_step"],
+            "seq_len": exec_meta["seq_len"],
         }
     )
     return {
@@ -549,6 +623,112 @@ def train_model_region(
         "best_epoch": best_epoch,
         "history": history,
         "config": cfg,
-        "window_size": w_size,
-        "stride": s_step,
+        "window_size": exec_meta["w_size"],
+        "stride": exec_meta["s_step"],
     }
+
+
+def _init_training_config(
+    train_dataset: SpectrumPairDataset,
+    val_dataset: SpectrumPairDataset | None,
+    config: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], torch.device, bool]:
+    """Validate datasets and extract training configuration parameters."""
+    if len(train_dataset) == 0:
+        raise ValueError("Cannot train on an empty train_dataset.")
+    has_val = val_dataset is not None and len(val_dataset) > 0
+    cfg = dict(config or {})
+    epochs = validate_positive_int(cfg.get("epochs", 50), "epochs")
+    lr_params = _validate_training_hyperparameters(cfg, epochs)
+    dev_str = cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
+    return cfg, lr_params, torch.device(dev_str), has_val
+
+
+def _build_training_model(
+    cfg: dict[str, Any], seq_len: int, device: torch.device
+) -> nn.Module:
+    """Instantiate or retrieve target model and move to computation device."""
+    model_type = str(cfg.get("model_type", "resnet")).lower()
+    model = cfg.get("model") or instantiate_model(
+        model_type, seq_len=seq_len, config=cfg
+    )
+    return model.to(device)
+
+
+def _prepare_training_execution(
+    cfg: dict[str, Any],
+    lr_params: dict[str, Any],
+    device: torch.device,
+    use_sw: bool,
+    has_val: bool,
+    w_size: int,
+    s_step: int,
+    seq_len: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build execution configuration and metadata dictionaries."""
+    exec_cfg = {
+        "epochs": cfg.get("epochs", 50),
+        "use_sw": use_sw,
+        "has_val": has_val,
+        "patience": lr_params["patience"],
+        "device": device,
+        "verbose": bool(cfg.get("verbose", False)),
+        "w_size": w_size,
+        "s_step": s_step,
+    }
+    exec_meta = {
+        "epochs": cfg.get("epochs", 50),
+        "batch_size": cfg.get("batch_size", 16),
+        "model_type": str(cfg.get("model_type", "resnet")).lower(),
+        "use_sw": use_sw,
+        "w_size": w_size,
+        "s_step": s_step,
+        "seq_len": seq_len,
+    }
+    return exec_cfg, exec_meta
+
+
+def train_model_region(
+    train_dataset: SpectrumPairDataset,
+    val_dataset: SpectrumPairDataset | None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Train a neural network model for a single spectral region.
+
+    Parameters
+    ----------
+    train_dataset : SpectrumPairDataset
+        Training dataset for this region.
+    val_dataset : SpectrumPairDataset | None
+        Validation dataset for this region.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary containing training hyperparameters.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary containing trained model, best_val_loss, best_epoch,
+        history, and resolved configuration.
+    """
+    cfg, lr_params, device, has_val = _init_training_config(
+        train_dataset, val_dataset, config
+    )
+    use_sw = bool(cfg.get("use_sliding_window", False))
+    train_loader, val_loader, seq_len, w_size, s_step = _setup_training_dataloaders(
+        train_dataset, val_dataset, use_sw, cfg
+    )
+    model = _build_training_model(cfg, seq_len, device)
+    criterion = _setup_loss_criterion(cfg, lr_params["l2_weight"])
+    optimizer, scheduler = _setup_optimizer_and_scheduler(
+        model, cfg, lr_params["lr"], lr_params["min_lr"], lr_params["use_sched"]
+    )
+
+    exec_cfg, exec_meta = _prepare_training_execution(
+        cfg, lr_params, device, use_sw, has_val, w_size, s_step, seq_len
+    )
+    best_loss, best_epoch, history = _execute_training_epochs(
+        model, train_loader, val_loader, optimizer, scheduler, criterion, val_dataset, exec_cfg
+    )
+    return _package_training_result(
+        model, best_loss, best_epoch, history, cfg, lr_params, exec_meta
+    )

@@ -122,6 +122,241 @@ def _extract_meta_column(meta: Any, key: str, n: int) -> list[Any]:
     return [None] * n
 
 
+def _extract_categorical_condition_tensors(
+    meta: Any,
+    n: int,
+    device: torch.device | None,
+    cfg: dict[str, Any],
+) -> dict[str, torch.Tensor]:
+    """Extract discrete categorical condition tensors (die, tools, region)."""
+    ret: dict[str, torch.Tensor] = {}
+    encode_die = bool(cfg.get("encode_die", True))
+    encode_tool = bool(cfg.get("encode_tool", True))
+    encode_region = bool(cfg.get("encode_region", False))
+    reg_mapping = cfg.get("region_index_mapping")
+
+    # Extract die index bounded within valid physical range.
+    if encode_die:
+        ret["die"] = torch.tensor(
+            [_parse_die(x) for x in _extract_meta_column(meta, "die", n)],
+            dtype=torch.long,
+            device=device,
+        )
+
+    # Extract source and target tool categorical indices.
+    if encode_tool:
+        t_src = [
+            _parse_tool_index(x, "source_tool_index")
+            for x in _extract_meta_column(meta, "source_tool_index", n)
+        ]
+        t_tgt = [
+            _parse_tool_index(x, "target_tool_index")
+            for x in _extract_meta_column(meta, "target_tool_index", n)
+        ]
+        ret["source_tool_index"] = torch.tensor(
+            t_src, dtype=torch.long, device=device
+        )
+        ret["target_tool_index"] = torch.tensor(
+            t_tgt, dtype=torch.long, device=device
+        )
+
+    # Extract regional categorical index.
+    if encode_region:
+        reg_vals = _extract_meta_column(meta, "region_index", n)
+        if all(x is None for x in reg_vals):
+            reg_vals = _extract_meta_column(meta, "region", n)
+        ret["region"] = torch.tensor(
+            [
+                _parse_region_index(
+                    x, "region_index", region_mapping=reg_mapping
+                )
+                for x in reg_vals
+            ],
+            dtype=torch.long,
+            device=device,
+        )
+
+    return ret
+
+
+def _extract_continuous_condition_tensors(
+    meta: Any,
+    n: int,
+    device: torch.device | None,
+    cfg: dict[str, Any],
+) -> dict[str, torch.Tensor]:
+    """Extract continuous numerical condition tensors (flux, time, rel_int)."""
+    ret: dict[str, torch.Tensor] = {}
+    encode_flux = bool(cfg.get("encode_flux", True))
+    encode_time = bool(cfg.get("encode_time", True))
+    encode_rel_int = bool(cfg.get("encode_relative_intensity", False))
+
+    # Extract standardized total flux per die.
+    if encode_flux:
+        flux_vals = _extract_meta_column(
+            meta, "total_flux_single_die_standardized", n
+        )
+        ret["total_flux_single_die_standardized"] = torch.tensor(
+            [
+                _parse_required_float(x, "total_flux_single_die_standardized")
+                for x in flux_vals
+            ],
+            dtype=torch.float32,
+            device=device,
+        ).unsqueeze(-1)
+
+    # Extract standardized measurement time.
+    if encode_time:
+        time_vals = [
+            _parse_required_float(x, "time_standardized")
+            for x in _extract_meta_column(meta, "time_standardized", n)
+        ]
+        ret["time_standardized"] = torch.tensor(
+            time_vals, dtype=torch.float32, device=device
+        ).unsqueeze(-1)
+
+    # Extract regional relative intensity with safe fallback.
+    if encode_rel_int:
+        rel_vals = _extract_meta_column(
+            meta, "relative_intensity_single_region", n
+        )
+        if all(x is None for x in rel_vals):
+            reg_means = _extract_meta_column(
+                meta, "mean_intensity_single_region", n
+            )
+            die_means = _extract_meta_column(meta, "mean_intensity_single_die", n)
+            if any(x is not None for x in reg_means) and any(
+                x is not None for x in die_means
+            ):
+                rel_vals = [
+                    float(r) / max(float(d), 1e-12)
+                    for r, d in zip(reg_means, die_means)
+                ]
+            else:
+                rel_vals = [1.0] * n
+        ret["relative_intensity_single_region"] = torch.tensor(
+            [
+                _parse_required_float(x, "relative_intensity_single_region")
+                for x in rel_vals
+            ],
+            dtype=torch.float32,
+            device=device,
+        ).unsqueeze(-1)
+
+    return ret
+
+
+def _extract_element_and_energy_tensors(
+    meta: Any,
+    n: int,
+    device: torch.device | None,
+    cfg: dict[str, Any],
+    energy_bounds: torch.Tensor | np.ndarray | None,
+) -> dict[str, torch.Tensor]:
+    """Extract material element multi-hot and scaled energy bounds tensors."""
+    ret: dict[str, torch.Tensor] = {}
+    encode_elements = bool(cfg.get("encode_elements", False))
+    encode_energy = bool(cfg.get("encode_energy", False))
+    energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
+
+    # Extract multi-hot material elemental composition vector.
+    if encode_elements:
+        raw_mat = cfg.get("material_elements")
+        if raw_mat is None:
+            raise ValueError(
+                "prepare_film_condition_tensor requires 'material_elements' "
+                "in config when encode_elements=True."
+            )
+
+        # Normalize raw_mat to dict[str, list[str]]
+        mat_elements: dict[str, list[str]] = {}
+        for m_k, m_v in raw_mat.items():
+            if isinstance(m_v, dict) and "elements" in m_v:
+                mat_elements[str(m_k)] = [
+                    str(x).strip() for x in m_v["elements"]
+                ]
+            elif isinstance(m_v, (list, tuple, set)):
+                mat_elements[str(m_k)] = [str(x).strip() for x in m_v]
+            else:
+                mat_elements[str(m_k)] = [str(m_v).strip()]
+
+        elem_vocab = cfg.get("element_vocab")
+        if elem_vocab is None or len(elem_vocab) == 0:
+            from utility.config_loader import extract_element_vocabulary
+
+            elem_vocab = extract_element_vocabulary(mat_elements)
+
+        mat_names = _extract_meta_column(meta, "material", n)
+        multi_hot_list: list[list[float]] = []
+        for m in mat_names:
+            if m is None or pd.isna(m):
+                raise ValueError("Metadata field 'material' is missing or null.")
+            m_str = str(m)
+            if m_str not in mat_elements:
+                raise KeyError(
+                    f"Material '{m_str}' not found in material definitions. "
+                    f"Available materials: {sorted(mat_elements.keys())}."
+                )
+            active_set = set(mat_elements[m_str])
+            multi_hot_list.append(
+                [1.0 if elem in active_set else 0.0 for elem in elem_vocab]
+            )
+        ret["element_multi_hot"] = torch.tensor(
+            multi_hot_list, dtype=torch.float32, device=device
+        )
+
+    # Extract and scale bounding binding energy interval.
+    we_data = energy_bounds
+    if we_data is None:
+        we_from_meta = _extract_meta_column(meta, "energy_bounds", n)
+        if any(x is not None for x in we_from_meta):
+            we_data = we_from_meta
+
+    if we_data is not None:
+        we_t = (
+            we_data.clone().detach().float()
+            if isinstance(we_data, torch.Tensor)
+            else torch.as_tensor(np.asarray(we_data), dtype=torch.float32)
+        )
+        we_2d = we_t.view(n, 2) if we_t.numel() == 2 * n else we_t.view(-1, 2)
+        scaled_we = we_2d / max(energy_scale_ev, 1e-6)
+        scaled_we_dev = (
+            scaled_we.to(device) if device is not None else scaled_we
+        )
+        ret["energy_bounds"] = scaled_we_dev
+    elif encode_energy:
+        warnings.warn(
+            "encode_energy=True but no energy bounds were provided to "
+            "prepare_film_condition_tensor; defaulting to zeros."
+        )
+        scaled_we = torch.zeros((n, 2), dtype=torch.float32, device=device)
+        ret["energy_bounds"] = scaled_we
+
+    return ret
+
+
+def _resolve_sample_count(
+    metadata: list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None,
+    default_num_samples: int,
+) -> tuple[Any, int]:
+    """Normalize metadata container and determine batch sample count."""
+    meta = (
+        metadata.to_dict(orient="records")
+        if isinstance(metadata, pd.DataFrame)
+        else metadata
+    )
+    if isinstance(meta, dict):
+        seq_lens = [
+            len(v)
+            for v in meta.values()
+            if isinstance(v, (list, tuple, np.ndarray, torch.Tensor))
+        ]
+        return meta, (seq_lens[0] if seq_lens else default_num_samples)
+    if isinstance(meta, list) and meta:
+        return meta, len(meta)
+    return meta, default_num_samples
+
+
 def prepare_film_condition_tensor(
     metadata: list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None = None,
     config: dict[str, Any] | None = None,
@@ -174,183 +409,13 @@ def prepare_film_condition_tensor(
         - 'energy_bounds': FloatTensor (B, 2) (if provided)
     """
     cfg = config or {}
-    num_samples = int(cfg.get("num_samples", 1))
-    energy_scale_ev = float(cfg.get("energy_scale_ev", 1000.0))
-    encode_die = bool(cfg.get("encode_die", True))
-    encode_tool = bool(cfg.get("encode_tool", True))
-    encode_flux = bool(cfg.get("encode_flux", True))
-    encode_time = bool(cfg.get("encode_time", True))
-    encode_region = bool(cfg.get("encode_region", False))
-    encode_rel_int = bool(cfg.get("encode_relative_intensity", False))
-    encode_elements = bool(cfg.get("encode_elements", False))
-    encode_energy = bool(cfg.get("encode_energy", False))
-
-    meta = (
-        metadata.to_dict(orient="records")
-        if isinstance(metadata, pd.DataFrame)
-        else metadata
-    )
-    if isinstance(meta, dict):
-        seq_lens = [
-            len(v)
-            for v in meta.values()
-            if isinstance(v, (list, tuple, np.ndarray, torch.Tensor))
-        ]
-        n = seq_lens[0] if seq_lens else num_samples
-    elif isinstance(meta, list) and meta:
-        n = len(meta)
-    else:
-        n = num_samples
-
+    meta, n = _resolve_sample_count(metadata, int(cfg.get("num_samples", 1)))
     ret: dict[str, torch.Tensor] = {}
-
-    if encode_die:
-        ret["die"] = torch.tensor(
-            [_parse_die(x) for x in _extract_meta_column(meta, "die", n)],
-            dtype=torch.long,
-            device=device,
-        )
-
-    if encode_tool:
-        t_src = [
-            _parse_tool_index(x, "source_tool_index")
-            for x in _extract_meta_column(meta, "source_tool_index", n)
-        ]
-        t_tgt = [
-            _parse_tool_index(x, "target_tool_index")
-            for x in _extract_meta_column(meta, "target_tool_index", n)
-        ]
-        ret["source_tool_index"] = torch.tensor(
-            t_src, dtype=torch.long, device=device
-        )
-        ret["target_tool_index"] = torch.tensor(
-            t_tgt, dtype=torch.long, device=device
-        )
-
-    if encode_flux:
-        flux_vals = _extract_meta_column(
-            meta, "total_flux_single_die_standardized", n
-        )
-        ret["total_flux_single_die_standardized"] = torch.tensor(
-            [
-                _parse_required_float(x, "total_flux_single_die_standardized")
-                for x in flux_vals
-            ],
-            dtype=torch.float32,
-            device=device,
-        ).unsqueeze(-1)
-
-    if encode_time:
-        time_vals = [
-            _parse_required_float(x, "time_standardized")
-            for x in _extract_meta_column(meta, "time_standardized", n)
-        ]
-        ret["time_standardized"] = torch.tensor(
-            time_vals, dtype=torch.float32, device=device
-        ).unsqueeze(-1)
-
-    if encode_rel_int:
-        rel_vals = _extract_meta_column(meta, "relative_intensity_single_region", n)
-        if all(x is None for x in rel_vals):
-            reg_means = _extract_meta_column(meta, "mean_intensity_single_region", n)
-            die_means = _extract_meta_column(meta, "mean_intensity_single_die", n)
-            if any(x is not None for x in reg_means) and any(x is not None for x in die_means):
-                rel_vals = [
-                    float(r) / max(float(d), 1e-12)
-                    for r, d in zip(reg_means, die_means)
-                ]
-            else:
-                rel_vals = [1.0] * n
-        ret["relative_intensity_single_region"] = torch.tensor(
-            [_parse_required_float(x, "relative_intensity_single_region") for x in rel_vals],
-            dtype=torch.float32,
-            device=device,
-        ).unsqueeze(-1)
-
-    if encode_elements:
-        raw_mat = cfg.get("material_elements")
-        if raw_mat is None:
-            raise ValueError(
-                "prepare_film_condition_tensor requires 'material_elements' "
-                "in config when encode_elements=True."
-            )
-
-        # Normalize raw_mat to dict[str, list[str]]
-        mat_elements: dict[str, list[str]] = {}
-        for m_k, m_v in raw_mat.items():
-            if isinstance(m_v, dict) and "elements" in m_v:
-                mat_elements[str(m_k)] = [str(x).strip() for x in m_v["elements"]]
-            elif isinstance(m_v, (list, tuple, set)):
-                mat_elements[str(m_k)] = [str(x).strip() for x in m_v]
-            else:
-                mat_elements[str(m_k)] = [str(m_v).strip()]
-
-        elem_vocab = cfg.get("element_vocab")
-        if elem_vocab is None or len(elem_vocab) == 0:
-            from utility.config_loader import extract_element_vocabulary
-            elem_vocab = extract_element_vocabulary(mat_elements)
-
-        mat_names = _extract_meta_column(meta, "material", n)
-        multi_hot_list: list[list[float]] = []
-        for m in mat_names:
-            if m is None or pd.isna(m):
-                raise ValueError("Metadata field 'material' is missing or null.")
-            m_str = str(m)
-            if m_str not in mat_elements:
-                raise KeyError(
-                    f"Material '{m_str}' not found in material definitions. "
-                    f"Available materials: {sorted(mat_elements.keys())}."
-                )
-            active_set = set(mat_elements[m_str])
-            multi_hot_list.append(
-                [1.0 if elem in active_set else 0.0 for elem in elem_vocab]
-            )
-        ret["element_multi_hot"] = torch.tensor(
-            multi_hot_list, dtype=torch.float32, device=device
-        )
-
-    if encode_region:
-        reg_mapping = cfg.get("region_index_mapping")
-        reg_vals = _extract_meta_column(meta, "region_index", n)
-        if all(x is None for x in reg_vals):
-            reg_vals = _extract_meta_column(meta, "region", n)
-        ret["region"] = torch.tensor(
-            [
-                _parse_region_index(
-                    x, "region_index", region_mapping=reg_mapping
-                )
-                for x in reg_vals
-            ],
-            dtype=torch.long,
-            device=device,
-        )
-
-    we_data = energy_bounds
-    if we_data is None:
-        we_from_meta = _extract_meta_column(meta, "energy_bounds", n)
-        if any(x is not None for x in we_from_meta):
-            we_data = we_from_meta
-
-    if we_data is not None:
-        we_t = (
-            we_data.clone().detach().float()
-            if isinstance(we_data, torch.Tensor)
-            else torch.as_tensor(np.asarray(we_data), dtype=torch.float32)
-        )
-        we_2d = we_t.view(n, 2) if we_t.numel() == 2 * n else we_t.view(-1, 2)
-        scaled_we = we_2d / max(energy_scale_ev, 1e-6)
-        scaled_we_dev = (
-            scaled_we.to(device) if device is not None else scaled_we
-        )
-        ret["energy_bounds"] = scaled_we_dev
-    elif encode_energy:
-        warnings.warn(
-            "encode_energy=True but no energy bounds were provided to "
-            "prepare_film_condition_tensor; defaulting to zeros."
-        )
-        scaled_we = torch.zeros((n, 2), dtype=torch.float32, device=device)
-        ret["energy_bounds"] = scaled_we
-
+    ret.update(_extract_categorical_condition_tensors(meta, n, device, cfg))
+    ret.update(_extract_continuous_condition_tensors(meta, n, device, cfg))
+    ret.update(
+        _extract_element_and_energy_tensors(meta, n, device, cfg, energy_bounds)
+    )
     return ret
 
 

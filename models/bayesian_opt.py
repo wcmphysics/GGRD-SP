@@ -300,26 +300,13 @@ def optimize_model_hyperparameters(
         Dictionary with 'best_parameters', 'best_val_loss',
         'trials_data', and 'ax_client'.
     """
-    from models.trainer import train_model_region
-
-    cfg = dict(config or {})
-
-    for search_key in _SEARCH_SPACE_KEYS:
-        if search_key in cfg and cfg[search_key] is None:
-            raise ValueError(
-                f"'{search_key}' cannot be None in Bayesian optimization config."
-            )
-
-    model_type = str(cfg.get("model_type", "resnet")).lower()
-    use_sw = bool(cfg.get("use_sliding_window", False))
-    full_len = (
-        int(train_dataset[0]["x"].shape[-1]) if len(train_dataset) > 0 else 100
-    )
-
-    raw_lr_bounds = cfg.get("learning_rate_bounds", (1e-4, 1e-2))
-    lr_range_spec = _range("learning_rate", raw_lr_bounds)
-    l2_range_spec = _range("l2_weight", cfg.get("l2_bounds", (1e-6, 1e-2)))
-
+def _build_architecture_parameters(
+    model_type: str,
+    cfg: dict[str, Any],
+    full_len: int,
+    use_sw: bool,
+) -> tuple[list[dict[str, Any]], dict[str, list[int]], dict[str, Any] | None]:
+    """Build candidate parameter definitions for the chosen architecture."""
     parameters: list[dict[str, Any]] = []
     if "batch_sizes" in cfg:
         parameters.append(_choice("batch_size", cfg["batch_sizes"], min_val=1))
@@ -368,6 +355,16 @@ def optimize_model_hyperparameters(
         resolved_arch[singular_name] = spec["values"]
         parameters.append(spec)
 
+    return parameters, resolved_arch, window_spec
+
+
+def _validate_architecture_constraints(
+    resolved_arch: dict[str, list[int]],
+    window_spec: dict[str, Any] | None,
+    full_len: int,
+    use_sw: bool,
+) -> None:
+    """Validate kernel size and depth consistency against sequence length."""
     kernel_vals = resolved_arch["kernel_size"]
     if any(k % 2 == 0 for k in kernel_vals):
         raise ValueError(
@@ -394,8 +391,97 @@ def optimize_model_hyperparameters(
                 f"depth {max_depth}. Requires at least {2**max_depth} points (2**depth)."
             )
 
-    parameters.extend([lr_range_spec, l2_range_spec])
 
+def _validate_search_space_keys(cfg: dict[str, Any]) -> None:
+    """Ensure search space bounds and candidate lists are not None."""
+    for search_key in _SEARCH_SPACE_KEYS:
+        if search_key in cfg and cfg[search_key] is None:
+            raise ValueError(
+                f"'{search_key}' cannot be None in Bayesian optimization config."
+            )
+
+
+def _build_search_parameters(
+    model_type: str,
+    cfg: dict[str, Any],
+    full_len: int,
+    use_sw: bool,
+) -> list[dict[str, Any]]:
+    """Construct full list of search parameters including architecture and
+    optimization.
+    """
+    parameters, resolved_arch, window_spec = _build_architecture_parameters(
+        model_type, cfg, full_len, use_sw
+    )
+    _validate_architecture_constraints(
+        resolved_arch, window_spec, full_len, use_sw
+    )
+    parameters.extend([
+        _range("learning_rate", cfg.get("learning_rate_bounds", (1e-4, 1e-2))),
+        _range("l2_weight", cfg.get("l2_bounds", (1e-6, 1e-2))),
+    ])
+    return parameters
+
+
+def optimize_model_hyperparameters(
+    train_dataset: Dataset,
+    val_dataset: Dataset,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Perform Bayesian optimization over model hyperparameters with Ax.
+
+    Supports 'resnet', 'residual_unet', 'unet', and 'deeplabv3'
+    architectures, as well as sliding window search (window_size_choices).
+
+    Parameters
+    ----------
+    train_dataset : Dataset
+        Training dataset.
+    val_dataset : Dataset
+        Validation dataset.
+    config : dict[str, Any] | None, optional
+        Configuration dictionary (plural keys for search spaces):
+        - 'model_type' (str): 'resnet', 'residual_unet', 'unet', or
+          'deeplabv3' (default 'resnet').
+        - 'use_sliding_window' (bool): Whether sliding window is
+          active (default False).
+        - 'window_size_choices' (list[int]): Candidate window sizes in
+          points when sliding window is active.
+        - 'batch_sizes' (list[int]): Candidate batch sizes.
+        - 'kernel_sizes' (list[int]): Candidate odd kernel sizes.
+        - 'depths' (list[int]): Candidate U-Net depths.
+        - 'resnet_channels' (list[int]): Candidate ResNet channels.
+        - 'residual_unet_channels' (list[int]): Candidate Residual U-Net
+          channels.
+        - 'unet_channels' (list[int]): Candidate Conventional U-Net channels.
+        - 'deeplabv3_backbone_channels' (list[int]): Candidate DeepLabV3
+          backbone channels.
+        - 'deeplabv3_aspp_channels' (list[int]): Candidate DeepLabV3 ASPP
+          channels.
+        - 'learning_rate_bounds' (tuple[float, float]):
+          Learning rate search bounds (default (1e-4, 1e-2)).
+        - 'l2_bounds' (tuple[float, float]): L2 regularization bounds
+          (default (1e-6, 1e-2)).
+        - 'num_trials' (int): Total Ax trials (default 10).
+        - 'epochs_per_trial' (int): Max epochs per trial (default 20).
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary with 'best_parameters', 'best_val_loss',
+        'trials_data', and 'ax_client'.
+    """
+    from models.trainer import train_model_region
+
+    cfg = dict(config or {})
+    _validate_search_space_keys(cfg)
+    model_type = str(cfg.get("model_type", "resnet")).lower()
+    use_sw = bool(cfg.get("use_sliding_window", False))
+    full_len = (
+        int(train_dataset[0]["x"].shape[-1]) if len(train_dataset) > 0 else 100
+    )
+
+    parameters = _build_search_parameters(model_type, cfg, full_len, use_sw)
     opt_cfg = dict(cfg)
     opt_cfg.setdefault(
         "experiment_name", f"{model_type}_spectral_transfer_optimization"
