@@ -181,6 +181,27 @@ class TestFluxAndStandardization(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_die_total_flux(nan_meta, self.ary_intensity)
 
+    def test_per_tool_standardization_isolation(self) -> None:
+        """Verify standardization statistics are fitted per tool without leakage."""
+        meta = pd.DataFrame({
+            "measurement_id": ["m1", "m2", "m3", "m4"],
+            "tool": ["J4", "J4", "J5", "J5"],
+            "split": ["train", "test", "train", "test"],
+            "die": [0, 0, 0, 0],
+            "spectrum_index": [0, 1, 2, 3],
+            "region": ["Al2p", "Al2p", "Al2p", "Al2p"],
+            "time": [
+                "2026-01-01 00:00:00",
+                "2026-01-01 04:00:00",
+                "2026-01-01 10:00:00",
+                "2026-01-01 20:00:00",
+            ],
+            "total_flux_single_die": [100.0, 200.0, 1000.0, 2000.0],
+        })
+        res = standardize_metadata_features(meta)
+        self.assertIn("time_standardized", res.columns)
+        self.assertIn("total_flux_single_die_standardized", res.columns)
+
 
 if __name__ == "__main__":
     unittest.main()

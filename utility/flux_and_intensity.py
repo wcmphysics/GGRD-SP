@@ -240,22 +240,42 @@ def _standardize_die_flux_in_place(
     df_res: pd.DataFrame,
     fit_split: str,
 ) -> None:
-    """Standardize total_flux_single_die in-place using fit_split dies."""
-    die_summary = df_res.drop_duplicates(subset=["measurement_id", "die"])
-    die_fit = die_summary[die_summary["split"] == fit_split]
-    die_flux_vals = die_fit["total_flux_single_die"].to_numpy(dtype=np.float64)
-    flux_mean = float(np.mean(die_flux_vals))
-    flux_std = float(np.std(die_flux_vals))
-    if flux_std == 0.0:
-        warnings.warn(
-            f"Standard deviation of total_flux_single_die across '{fit_split}' "
-            "dies is 0.0; setting total_flux_single_die_standardized to 0.0."
+    """Standardize total_flux_single_die per tool using fit_split dies."""
+    has_tool = "tool" in df_res.columns
+    tools = (
+        sorted(df_res["tool"].dropna().unique())
+        if has_tool
+        else [None]
+    )
+    df_res["total_flux_single_die_standardized"] = np.float32(0.0)
+
+    for tool_val in tools:
+        tool_mask = (
+            df_res["tool"] == tool_val
+            if tool_val is not None
+            else pd.Series(True, index=df_res.index)
         )
-        df_res["total_flux_single_die_standardized"] = np.float32(0.0)
-    else:
-        df_res["total_flux_single_die_standardized"] = (
-            (df_res["total_flux_single_die"] - flux_mean) / flux_std
-        ).astype(np.float32)
+        sub_df = df_res[tool_mask]
+        die_summary = sub_df.drop_duplicates(subset=["measurement_id", "die"])
+        die_fit = die_summary[die_summary["split"] == fit_split]
+        die_flux_vals = die_fit["total_flux_single_die"].to_numpy(dtype=np.float64)
+
+        if len(die_flux_vals) == 0:
+            continue
+
+        flux_mean = float(np.mean(die_flux_vals))
+        flux_std = float(np.std(die_flux_vals))
+        tool_str = f" for tool '{tool_val}'" if tool_val is not None else ""
+        if flux_std == 0.0:
+            warnings.warn(
+                f"Standard deviation of total_flux_single_die across '{fit_split}' "
+                f"dies{tool_str} is 0.0; setting total_flux_single_die_standardized to 0.0."
+            )
+            df_res.loc[tool_mask, "total_flux_single_die_standardized"] = np.float32(0.0)
+        else:
+            df_res.loc[tool_mask, "total_flux_single_die_standardized"] = (
+                (sub_df["total_flux_single_die"] - flux_mean) / flux_std
+            ).astype(np.float32)
 
 
 def calculate_standardized_time(
@@ -320,30 +340,57 @@ def calculate_standardized_time(
         )
 
     try:
-        all_ts = pd.to_datetime(df_res["time"])
+        pd.to_datetime(df_res["time"])
     except (ValueError, TypeError) as err:
         raise ValueError(
             f"Failed to parse timestamps in df_meta['time']: {err}"
         ) from err
 
-    meas_summary = df_res.drop_duplicates(subset=["measurement_id"])
-    meas_fit = meas_summary[meas_summary["split"] == fit_split]
+    has_tool = "tool" in df_res.columns
+    tools = (
+        sorted(df_res["tool"].dropna().unique())
+        if has_tool
+        else [None]
+    )
+    df_res["time_standardized"] = np.float32(0.0)
 
-    meas_ts = pd.to_datetime(meas_fit["time"])
-    mean_ts = meas_ts.mean()
-
-    meas_diff_sec = (meas_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
-    all_diff_sec = (all_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
-    std_sec = float(np.std(meas_diff_sec))
-
-    if std_sec == 0.0:
-        warnings.warn(
-            f"Standard deviation of measurement time differences across '{fit_split}' "
-            "sessions is 0.0; setting time_standardized to 0.0."
+    for tool_val in tools:
+        tool_mask = (
+            df_res["tool"] == tool_val
+            if tool_val is not None
+            else pd.Series(True, index=df_res.index)
         )
-        df_res["time_standardized"] = np.float32(0.0)
-    else:
-        df_res["time_standardized"] = (all_diff_sec / std_sec).astype(np.float32)
+        sub_df = df_res[tool_mask]
+        meas_summary = sub_df.drop_duplicates(subset=["measurement_id"])
+        meas_fit = meas_summary[meas_summary["split"] == fit_split]
+
+        if meas_fit.empty:
+            continue
+
+        meas_ts = pd.to_datetime(meas_fit["time"])
+        mean_ts = meas_ts.mean()
+
+        meas_diff_sec = (
+            (meas_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
+        )
+        all_diff_sec = (
+            (pd.to_datetime(sub_df["time"]) - mean_ts)
+            .dt.total_seconds()
+            .to_numpy(dtype=np.float64)
+        )
+        std_sec = float(np.std(meas_diff_sec))
+
+        tool_str = f" for tool '{tool_val}'" if tool_val is not None else ""
+        if std_sec == 0.0:
+            warnings.warn(
+                f"Standard deviation of measurement time differences across '{fit_split}' "
+                f"sessions{tool_str} is 0.0; setting time_standardized to 0.0."
+            )
+            df_res.loc[tool_mask, "time_standardized"] = np.float32(0.0)
+        else:
+            df_res.loc[tool_mask, "time_standardized"] = (
+                all_diff_sec / std_sec
+            ).astype(np.float32)
 
     return df_res
 
