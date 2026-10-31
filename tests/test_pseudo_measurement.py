@@ -9,6 +9,8 @@ import pandas as pd
 
 from utility.pseudo_measurement import (
     DEFAULT_REGION_PROFILES,
+    _calculate_shirley_step,
+    _synthesize_regional_spectrum,
     generate_pseudo_measurements,
     pseudo_voigt,
 )
@@ -102,7 +104,8 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
         ary_i, _, _ = generate_pseudo_measurements(cfg)
         spectrum = ary_i[0]
         # At index 0 (lowest BE), cum_area is 0, so Shirley step is 0.
-        # At index -1 (highest BE), cum_area reaches total_area, giving full step.
+        # At index -1 (highest BE), cum_area reaches total_area,
+        # giving the full step.
         low_be_intensity = spectrum[0]
         high_be_intensity = spectrum[-1]
         self.assertGreater(high_be_intensity, low_be_intensity)
@@ -193,6 +196,72 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
             elif region == "Cl2p":
                 self.assertGreater(step[-1] - step[0], 0.0)
 
+    def test_shirley_background_descending_energy_grid(self) -> None:
+        """Verify Shirley background correctly elevates high BE when energy is descending."""
+        e_asc = np.linspace(50.0, 60.0, 100)
+        e_desc = e_asc[::-1]
+        profile = {
+            "peaks": [{"center": 55.0, "amplitude": 100.0, "fwhm": 1.2, "eta": 0.3}],
+            "baseline": 0.0,
+        }
+        params = {
+            "tool_shift": 0.0,
+            "total_scale": 1.0,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": 0.10},
+        }
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(42)
+        spec_asc = _synthesize_regional_spectrum(e_asc, profile, params, rng1)
+        spec_desc = _synthesize_regional_spectrum(e_desc, profile, params, rng2)
+        np.testing.assert_allclose(spec_desc, spec_asc[::-1], atol=1e-12)
+        self.assertGreater(spec_desc[0] - spec_desc[-1], 0.0)
+
+    def test_shirley_background_zero_peak_and_small_grid(self) -> None:
+        """Verify Shirley background step safely returns zero for degenerate inputs."""
+        e_grid = np.linspace(50.0, 60.0, 100)
+        zero_peak = np.zeros_like(e_grid)
+        step_zero = _calculate_shirley_step(e_grid, zero_peak, 0.10)
+        np.testing.assert_allclose(step_zero, 0.0)
+
+        step_single = _calculate_shirley_step(
+            np.array([50.0]), np.array([10.0]), 0.10
+        )
+        np.testing.assert_allclose(step_single, 0.0)
+
+    def test_per_region_shirley_enabled_override(self) -> None:
+        """Verify regional shirley_enabled: False disables background for that region."""
+        custom_profiles = copy.deepcopy(DEFAULT_REGION_PROFILES)
+        custom_profiles["Ti2p"]["shirley_enabled"] = False
+
+        cfg = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Ti2p", "Cl2p"],
+            "region_profiles": custom_profiles,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": 0.10},
+            "seed": 42,
+        }
+        ary_i, _, meta_df = generate_pseudo_measurements(cfg)
+
+        cfg_dis = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Ti2p", "Cl2p"],
+            "region_profiles": custom_profiles,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": False},
+            "seed": 42,
+        }
+        ary_dis, _, _ = generate_pseudo_measurements(cfg_dis)
+
+        ti_idx = meta_df[meta_df["region"] == "Ti2p"]["spectrum_index"].values[0]
+        cl_idx = meta_df[meta_df["region"] == "Cl2p"]["spectrum_index"].values[0]
+
+        np.testing.assert_allclose(ary_i[ti_idx], ary_dis[ti_idx], atol=1e-12)
+        self.assertGreater(ary_i[cl_idx][-1] - ary_dis[cl_idx][-1], 0.0)
+
     def test_defensive_error_handling(self) -> None:
         """Table-driven test for invalid generator configuration parameters."""
         error_configs = [
@@ -209,6 +278,10 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
             (
                 "negative regional shirley step",
                 {"region_profiles": {"Ti2p": {"shirley_step_ratio": -0.05}}},
+            ),
+            (
+                "invalid regional shirley_enabled",
+                {"region_profiles": {"Ti2p": {"shirley_enabled": "not_bool"}}},
             ),
         ]
         for name, cfg in error_configs:
