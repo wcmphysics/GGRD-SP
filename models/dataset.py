@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -80,6 +81,10 @@ class SpectrumPairDataset(Dataset):
 class SpectrumPatchDataset(Dataset):
     """PyTorch Dataset yielding paired sliding window spectral patches.
 
+    Stores lightweight index tuples (spectrum_index, start_point, end_point)
+    and slices patches on-the-fly during __getitem__ from the underlying
+    SpectrumPairDataset without duplicating full arrays.
+
     Parameters
     ----------
     full_dataset : SpectrumPairDataset
@@ -93,8 +98,10 @@ class SpectrumPatchDataset(Dataset):
     def __init__(
         self, full_dataset: SpectrumPairDataset, window_size: int, stride: int
     ) -> None:
+        self.full_dataset = full_dataset
         self.window_size, self.stride = window_size, stride
-        x_patches_list, y_patches_list, max_vals_list = [], [], []
+        patch_indices: list[tuple[int, int, int]] = []
+        max_vals_list: list[float] = []
         meta_list: list[dict[str, Any]] = []
         energy_bounds_list: list[list[float]] = []
 
@@ -102,17 +109,27 @@ class SpectrumPatchDataset(Dataset):
             item = full_dataset[idx]
             x_np = item["x"].cpu().numpy()
             y_np = item["y"].cpu().numpy()
-            x_win, start_indices = extract_sliding_windows(
+            _, start_indices = extract_sliding_windows(
                 x_np, window_size, stride
             )
-            y_win, _ = extract_sliding_windows(y_np, window_size, stride)
-            n_win = len(x_win)
+            n_win = len(start_indices)
 
-            x_patches_list.append(x_win)
-            y_patches_list.append(y_win)
-            max_vals_list.extend(
-                [max(float(np.max(np.abs(y_np))), 1e-4)] * n_win
-            )
+            for s in start_indices:
+                patch_indices.append((idx, s, s + window_size))
+
+            scale_ref = float(np.max(np.abs(y_np)))
+            eps = max(1e-12, 1e-7 * float(scale_ref))
+            if scale_ref <= eps:
+                warnings.warn(
+                    f"Denominator scale <= eps ({eps:.4e}) encountered in "
+                    "patch dataset; scale is tiny/near-zero and dynamic "
+                    "eps was used.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            max_val = max(scale_ref, eps)
+            max_vals_list.extend([max_val] * n_win)
+
             if "meta" in item:
                 meta_list.extend([item["meta"]] * n_win)
 
@@ -131,15 +148,10 @@ class SpectrumPatchDataset(Dataset):
             else:
                 energy_bounds_list.extend([[0.0, 0.0]] * n_win)
 
-        if not x_patches_list:
+        if not patch_indices:
             raise ValueError("No patches could be extracted from the dataset.")
 
-        self.x = torch.from_numpy(
-            np.vstack(x_patches_list).astype(np.float32)
-        ).unsqueeze(1)
-        self.y = torch.from_numpy(
-            np.vstack(y_patches_list).astype(np.float32)
-        ).unsqueeze(1)
+        self.patch_indices = patch_indices
         self.max_vals = torch.tensor(
             max_vals_list, dtype=torch.float32
         ).view(-1, 1, 1)
@@ -149,7 +161,17 @@ class SpectrumPatchDataset(Dataset):
         )
 
     def __len__(self) -> int:
-        return len(self.x)
+        return len(self.patch_indices)
+
+    @property
+    def x(self) -> torch.Tensor:
+        """Dynamic stacked view of patches for backwards compatibility."""
+        return torch.stack([self[i]["x"] for i in range(len(self))], dim=0)
+
+    @property
+    def y(self) -> torch.Tensor:
+        """Dynamic stacked view of target patches for backwards compatibility."""
+        return torch.stack([self[i]["y"] for i in range(len(self))], dim=0)
 
     @classmethod
     def concatenate(
@@ -172,8 +194,32 @@ class SpectrumPatchDataset(Dataset):
             )
         merged = cls.__new__(cls)
         merged.window_size, merged.stride = geometries.pop()
-        merged.x = torch.cat([d.x for d in datasets], dim=0)
-        merged.y = torch.cat([d.y for d in datasets], dim=0)
+
+        merged_x = torch.cat([d.full_dataset.x for d in datasets], dim=0)
+        merged_y = torch.cat([d.full_dataset.y for d in datasets], dim=0)
+        has_all_energy = all(
+            d.full_dataset.energy is not None for d in datasets
+        )
+        merged_energy = (
+            torch.cat([d.full_dataset.energy for d in datasets], dim=0)
+            if has_all_energy
+            else None
+        )
+        merged_meta: list[dict[str, Any]] = [
+            m for d in datasets for m in d.full_dataset.metadata
+        ]
+        merged.full_dataset = SpectrumPairDataset(
+            merged_x, merged_y, energy=merged_energy, metadata=merged_meta
+        )
+
+        merged_indices: list[tuple[int, int, int]] = []
+        offset = 0
+        for d in datasets:
+            for spec_idx, s, e in d.patch_indices:
+                merged_indices.append((spec_idx + offset, s, e))
+            offset += len(d.full_dataset)
+
+        merged.patch_indices = merged_indices
         merged.max_vals = torch.cat([d.max_vals for d in datasets], dim=0)
         merged.energy_bounds = torch.cat(
             [d.energy_bounds for d in datasets], dim=0
@@ -182,9 +228,11 @@ class SpectrumPatchDataset(Dataset):
         return merged
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
+        spec_idx, s, e = self.patch_indices[idx]
+        item = self.full_dataset[spec_idx]
         ret: dict[str, Any] = {
-            "x": self.x[idx],
-            "y": self.y[idx],
+            "x": item["x"][..., s:e],
+            "y": item["y"][..., s:e],
             "max_val": self.max_vals[idx],
             "energy_bounds": self.energy_bounds[idx],
         }
@@ -537,6 +585,28 @@ def create_unified_dataset(
     bundle = _build_split_dataset_bundle(
         df_paired, ary_intensity, ary_energy, use_sw, sw_cfg
     )
+
+    # Warn about region geometry variations under fixed point window
+    if use_sw and len(df_paired) > 0:
+        first_region = str(df_paired["region"].iloc[0])
+        w_pts = bundle["window_size_points"]
+        spans: dict[str, str] = {}
+        for reg in regions:
+            reg_rows = df_paired[df_paired["region"] == reg]
+            if not reg_rows.empty:
+                spec_idx = int(reg_rows["spectrum_index"].iloc[0])
+                reg_e = ary_energy[spec_idx]
+                end_idx = min(w_pts - 1, len(reg_e) - 1)
+                span_ev = abs(float(reg_e[end_idx] - reg_e[0]))
+                spans[reg] = f"{span_ev:.2f} eV"
+        warnings.warn(
+            f"Sliding window in unified dataset: point conversion derived from "
+            f"first region '{first_region}'. Physical eV span under {w_pts} points "
+            f"across regions: {spans}.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     return {
         **bundle,
         "regions": regions,
