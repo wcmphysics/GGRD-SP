@@ -112,7 +112,7 @@ class SplittingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_ratios_sum_to_one(self) -> SplittingConfig:
-        """Verify partition proportions sum to 1.0 or direct assignment is set."""
+        """Verify partition ratios sum to 1.0 or direct assignment is set."""
         if self.method == "random":
             total = self.train_ratio + self.val_ratio + self.test_ratio
             if abs(total - 1.0) > 1e-4:
@@ -379,6 +379,17 @@ class BayesianOptConfig(BaseModel):
     )
     model_config = ConfigDict(extra="allow")
 
+    @field_validator("kernel_sizes")
+    @classmethod
+    def validate_bo_kernel_sizes_odd(cls, val: list[int]) -> list[int]:
+        """Ensure all candidate kernel sizes are positive odd integers."""
+        for k in val:
+            if not isinstance(k, int) or k <= 0 or k % 2 == 0:
+                raise ValueError(
+                    f"All candidate kernel_sizes must be positive odd integers, got {val}"
+                )
+        return val
+
 
 class TrainConfig(BaseModel):
     """Deep neural network training hyperparameters."""
@@ -422,6 +433,19 @@ class TrainConfig(BaseModel):
         """Ensure convolutional kernel size is a positive odd integer."""
         if val % 2 == 0:
             raise ValueError(f"kernel_size must be an odd integer, got {val}")
+        return val
+
+    @field_validator("kernel_sizes")
+    @classmethod
+    def validate_kernel_sizes_odd(cls, val: list[int]) -> list[int]:
+        """Ensure all convolutional kernel sizes are positive odd integers."""
+        if not val:
+            raise ValueError("kernel_sizes must not be empty.")
+        for k in val:
+            if not isinstance(k, int) or k <= 0 or k % 2 == 0:
+                raise ValueError(
+                    f"All kernel_sizes must be positive odd integers, got {val}"
+                )
         return val
 
 
@@ -495,6 +519,16 @@ class PipelineConfig(BaseModel):
     quantification: QuantificationConfig
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def merge_model_dedicated_defaults(cls, data: Any) -> Any:
+        """Merge dedicated per-model configuration defaults into input dict."""
+        if isinstance(data, dict):
+            from utility.config_loader import merge_dedicated_model_config
+
+            merge_dedicated_model_config(data)
+        return data
 
     @model_validator(mode="after")
     def validate_sliding_window_compatibility(self) -> PipelineConfig:

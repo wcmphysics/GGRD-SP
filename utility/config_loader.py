@@ -73,6 +73,20 @@ NO_SLIDING_WINDOW_MODEL_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _merge_subdict_defaults(
+    container: dict[str, Any],
+    key: str,
+    source_subdict: dict[str, Any] | None,
+) -> None:
+    """Merge missing keys from source_subdict into container[key]."""
+    if not isinstance(source_subdict, dict):
+        return
+    dest = container.setdefault(key, {})
+    if isinstance(dest, dict):
+        for k, v in source_subdict.items():
+            dest.setdefault(k, v)
+
+
 def merge_dedicated_model_config(
     raw_config: dict[str, Any],
     config_dir: str | Path | None = None,
@@ -99,29 +113,20 @@ def merge_dedicated_model_config(
     if not isinstance(model_raw, dict):
         return
 
-    # Merge model-specific training hyperparameters and region overrides.
+    # Merge model-specific training, Bayesian opt, and FiLM settings.
     training = raw_config.setdefault("training", {})
     if isinstance(training, dict):
-        train_cfg = training.setdefault("train_config", {})
-        if isinstance(train_cfg, dict) and "train_config" in model_raw:
-            for k, v in model_raw["train_config"].items():
-                train_cfg.setdefault(k, v)
-        region_cfgs = training.setdefault("region_configs", {})
-        if isinstance(region_cfgs, dict) and "region_configs" in model_raw:
-            for k, v in model_raw["region_configs"].items():
-                region_cfgs.setdefault(k, v)
+        _merge_subdict_defaults(
+            training, "train_config", model_raw.get("train_config")
+        )
+        _merge_subdict_defaults(
+            training, "region_configs", model_raw.get("region_configs")
+        )
 
-    # Merge model-specific Bayesian optimization search bounds.
-    bo_cfg = raw_config.setdefault("bayesian_opt", {})
-    if isinstance(bo_cfg, dict) and "bayesian_opt" in model_raw:
-        for k, v in model_raw["bayesian_opt"].items():
-            bo_cfg.setdefault(k, v)
-
-    # Merge model-specific FiLM conditioning settings.
-    film_cfg = raw_config.setdefault("film", {})
-    if isinstance(film_cfg, dict) and "film" in model_raw:
-        for k, v in model_raw["film"].items():
-            film_cfg.setdefault(k, v)
+    _merge_subdict_defaults(
+        raw_config, "bayesian_opt", model_raw.get("bayesian_opt")
+    )
+    _merge_subdict_defaults(raw_config, "film", model_raw.get("film"))
 
 
 def load_material_elements(
@@ -407,7 +412,7 @@ def _inject_evaluation_settings(
             existing_metrics = [mse_metric, *existing_metrics]
         metrics_rep["metrics"] = existing_metrics
 
-    # Propagate visualization stage global tools, sample IDs, and sliding window.
+    # Propagate visualization global tools, sample IDs, and sliding window.
     noise_plot = resolved.setdefault("noise_plot", {})
     vis = resolved.setdefault("visualization", {})
     if isinstance(vis, dict):
