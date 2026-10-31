@@ -249,7 +249,7 @@ metrics_report:
     - "test"
   metrics:
     - "peak_error_percentage"
-    - "max_error_percentage"
+    - "chebyshev_error_peak_normalized_percentage"
 
 quantification:
   rsf_table:

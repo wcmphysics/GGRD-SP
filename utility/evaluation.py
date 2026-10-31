@@ -175,7 +175,7 @@ def calculate_prediction_metrics(
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'regions' (list[str] | None): Specific regions to evaluate.
-        - 'eps' (float): Epsilon floor for maximum normalization (default 1e-4).
+        - 'eps' (float): Epsilon floor for maximum normalization (default 1e-12).
 
     Returns
     -------
@@ -187,7 +187,7 @@ def calculate_prediction_metrics(
 
     cfg = config or {}
     regions_filter = cfg.get("regions")
-    eps = max(float(cfg.get("eps", 1e-4)), 1e-12)
+    eps = max(float(cfg.get("eps", 1e-12)), 1e-12)
     norm_by_tgt_max = bool(cfg.get("normalized_by_target_max", True))
     mse_col = "MSE_normalized_by_target" if norm_by_tgt_max else "MSE"
 
@@ -226,7 +226,17 @@ def calculate_prediction_metrics(
             y_pred = ary_intensity_pred[pred_idx]
             diff = y_pred - y_true
 
-            max_true = max(float(np.max(np.abs(y_true))), eps)
+            raw_max_true = float(np.max(np.abs(y_true)))
+            if raw_max_true < eps:
+                warnings.warn(
+                    f"Target spectrum max intensity {raw_max_true} is smaller than {eps}; "
+                    f"flooring denominator to {eps} to prevent division by zero.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                max_true = eps
+            else:
+                max_true = raw_max_true
             max_pred = float(np.max(np.abs(y_pred)))
 
             mse_val = float(
@@ -236,7 +246,7 @@ def calculate_prediction_metrics(
             )
             raw_rmse = float(np.sqrt(np.mean(diff**2)))
             peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
-            max_err_pct = float(np.max(np.abs(diff)) / max_true * 100.0)
+            chebyshev_err_pct = float(np.max(np.abs(diff)) / max_true * 100.0)
 
             records.append({
                 "source_measurement_id": src_meas_id,
@@ -247,7 +257,7 @@ def calculate_prediction_metrics(
                 mse_col: mse_val,
                 "rmse": raw_rmse,
                 "peak_error_percentage": peak_err_pct,
-                "max_error_percentage": max_err_pct,
+                "chebyshev_error_peak_normalized_percentage": chebyshev_err_pct,
             })
 
     df_per_sample = pd.DataFrame(records)
@@ -266,14 +276,19 @@ def calculate_prediction_metrics(
                 "rmse_std",
                 "peak_error_percentage_mean",
                 "peak_error_percentage_std",
-                "max_error_percentage_mean",
-                "max_error_percentage_std",
+                "chebyshev_error_peak_normalized_percentage_mean",
+                "chebyshev_error_peak_normalized_percentage_std",
             ]
         )
         return df_per_sample, df_summary
 
     group_cols = list(cfg.get("group_by", ["region"]))
-    metrics_to_agg = [mse_col, "rmse", "peak_error_percentage", "max_error_percentage"]
+    metrics_to_agg = [
+        mse_col,
+        "rmse",
+        "peak_error_percentage",
+        "chebyshev_error_peak_normalized_percentage",
+    ]
     df_summary = (
         df_per_sample.groupby(group_cols)[metrics_to_agg]
         .agg(["mean", "std"])
@@ -298,9 +313,9 @@ _PEAK_ERR_SPEC = (
     "peak_error_percentage",
     lambda m, s: f"{m:.2f}% ± {s:.2f}%",
 )
-_MAX_ERR_SPEC = (
-    "max_error_percentage",
-    "max_error_percentage",
+_CHEBYSHEV_ERR_SPEC = (
+    "chebyshev_error_peak_normalized_percentage",
+    "chebyshev_error_peak_normalized_percentage",
     lambda m, s: f"{m:.2f}% ± {s:.2f}%",
 )
 
@@ -312,7 +327,7 @@ METRIC_SPECS: dict[str, tuple[str, str, Any]] = {
     "rmse": _RMSE_SPEC,
     "rms": _RMSE_SPEC,
     "peak_error_percentage": _PEAK_ERR_SPEC,
-    "max_error_percentage": _MAX_ERR_SPEC,
+    "chebyshev_error_peak_normalized_percentage": _CHEBYSHEV_ERR_SPEC,
 }
 
 
@@ -346,20 +361,20 @@ def format_side_by_side_metrics(
 
     Produces a clean comparison table comparing model performance across
     configured splits ('train', 'test', etc.) and metrics ('norm_mse',
-    'peak_error_percentage', 'max_error_percentage', etc.) for each spectral
-    region, with columns grouped by split.
+    'peak_error_percentage', 'chebyshev_error_peak_normalized_percentage', etc.)
+    for each spectral region, with columns grouped by split.
 
     Parameters
     ----------
     df_per_sample : pd.DataFrame
         DataFrame of per-sample evaluation metrics containing 'region',
         'split', 'normalized_mse', 'rmse', 'peak_error_percentage', and
-        'max_error_percentage'.
+        'chebyshev_error_peak_normalized_percentage'.
     config : dict[str, Any] | None, optional
         Configuration dictionary:
         - 'splits' (list[str]): Splits to display (default ['train', 'test']).
         - 'metrics' (list[str]): Metrics to display (default ['norm_mse',
-          'peak_error_percentage', 'max_error_percentage']).
+          'peak_error_percentage', 'chebyshev_error_peak_normalized_percentage']).
         - 'format_str' (bool): Format as 'mean ± std' string (default True).
 
     Returns
@@ -381,7 +396,14 @@ def format_side_by_side_metrics(
         )
     default_mse_key = "norm_mse" if is_normalized else "mse"
     chosen_metrics = list(
-        cfg.get("metrics", [default_mse_key, "peak_error_percentage", "max_error_percentage"])
+        cfg.get(
+            "metrics",
+            [
+                default_mse_key,
+                "peak_error_percentage",
+                "chebyshev_error_peak_normalized_percentage",
+            ],
+        )
     )
 
     # Resolve metric specifications

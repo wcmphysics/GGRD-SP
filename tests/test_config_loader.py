@@ -164,7 +164,10 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(resolved["dataset"]["use_sliding_window"])
         # Metrics report defaults to canonical names
         self.assertIn("peak_error_percentage", resolved["metrics_report"]["metrics"])
-        self.assertIn("max_error_percentage", resolved["metrics_report"]["metrics"])
+        self.assertIn(
+            "chebyshev_error_peak_normalized_percentage",
+            resolved["metrics_report"]["metrics"],
+        )
         self.assertNotIn("peak_err%", resolved["metrics_report"]["metrics"])
         # Element vocabulary and materials populated in film
         self.assertEqual(resolved["film"]["element_vocab"], ["O", "Ti"])

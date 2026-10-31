@@ -69,17 +69,21 @@ class TestEvaluationMetrics(unittest.TestCase):
         self.assertAlmostEqual(df_per_sample["MSE_normalized_by_target"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["rmse"].iloc[0], 0.0)
         self.assertAlmostEqual(df_per_sample["peak_error_percentage"].iloc[0], 0.0)
-        self.assertAlmostEqual(df_per_sample["max_error_percentage"].iloc[0], 0.0)
+        self.assertAlmostEqual(
+            df_per_sample["chebyshev_error_peak_normalized_percentage"].iloc[0], 0.0
+        )
         self.assertEqual(len(df_summary), 1)
         self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
-        self.assertIn("max_error_percentage_mean", df_summary.columns)
+        self.assertIn(
+            "chebyshev_error_peak_normalized_percentage_mean", df_summary.columns
+        )
 
     def test_imperfect_prediction_metrics(self) -> None:
         """Verify metric calculation under a known constant offset."""
         # Target is 20.0, pred is 10.0 -> diff is 10.0, max_true is 20.0
         # normalized_mse = (10/20)^2 = 0.25, rmse = 10.0
         # peak_error_percentage = |10 - 20|/20 * 100 = 50%
-        # max_error_percentage = 10.0 / 20.0 * 100 = 50%
+        # chebyshev_error_peak_normalized_percentage = 10.0 / 20.0 * 100 = 50%
         intensity_pred = np.array([np.ones(self.n_points) * 10.0])
         energy_pred = np.array([np.linspace(0, 10, self.n_points)])
 
@@ -91,7 +95,9 @@ class TestEvaluationMetrics(unittest.TestCase):
         self.assertAlmostEqual(df_per_sample["MSE_normalized_by_target"].iloc[0], 0.25)
         self.assertAlmostEqual(df_per_sample["rmse"].iloc[0], 10.0)
         self.assertAlmostEqual(df_per_sample["peak_error_percentage"].iloc[0], 50.0)
-        self.assertAlmostEqual(df_per_sample["max_error_percentage"].iloc[0], 50.0)
+        self.assertAlmostEqual(
+            df_per_sample["chebyshev_error_peak_normalized_percentage"].iloc[0], 50.0
+        )
 
     def test_unnormalized_mse_metric(self) -> None:
         """Verify unnormalized MSE metric computation when
@@ -110,8 +116,10 @@ class TestEvaluationMetrics(unittest.TestCase):
         self.assertAlmostEqual(df_per_sample["MSE"].iloc[0], 100.0)
         self.assertIn("MSE_mean", df_summary.columns)
 
-    def test_distinct_peak_and_max_err(self) -> None:
-        """Verify that peak_error_percentage and max_error_percentage capture distinct spectral discrepancies."""
+    def test_distinct_peak_and_chebyshev_err(self) -> None:
+        """Verify that peak_error_percentage and
+        chebyshev_error_peak_normalized_percentage capture distinct spectral discrepancies.
+        """
         # Target has peak 20.0 at index 0, 10.0 elsewhere
         y_true = np.ones(self.n_points) * 10.0
         y_true[0] = 20.0
@@ -126,8 +134,10 @@ class TestEvaluationMetrics(unittest.TestCase):
         )
         # Peak error is 0% because peak heights both equal 20.0
         self.assertAlmostEqual(df_per_sample["peak_error_percentage"].iloc[0], 0.0)
-        # Max error is |15.0 - 10.0| / 20.0 * 100 = 25.0%
-        self.assertAlmostEqual(df_per_sample["max_error_percentage"].iloc[0], 25.0)
+        # Chebyshev error is |15.0 - 10.0| / 20.0 * 100 = 25.0%
+        self.assertAlmostEqual(
+            df_per_sample["chebyshev_error_peak_normalized_percentage"].iloc[0], 25.0
+        )
 
     def test_region_filtering_and_empty_results(self) -> None:
         """Filter for non-matching region should yield empty DataFrames gracefully."""
@@ -143,34 +153,42 @@ class TestEvaluationMetrics(unittest.TestCase):
         self.assertTrue(df_per_sample.empty)
         self.assertTrue(df_summary.empty)
         self.assertIn("MSE_normalized_by_target_mean", df_summary.columns)
-        self.assertIn("max_error_percentage_mean", df_summary.columns)
+        self.assertIn(
+            "chebyshev_error_peak_normalized_percentage_mean", df_summary.columns
+        )
 
     def test_format_side_by_side_metrics_structure(self) -> None:
         """Verify format_side_by_side_metrics produces multi-split columns."""
         df_samples = pd.DataFrame([
             {
                 "region": "Al2p", "split": "train", "normalized_mse": 0.001,
-                "rmse": 10.0, "peak_error_percentage": 2.0, "max_error_percentage": 4.0,
+                "rmse": 10.0, "peak_error_percentage": 2.0,
+                "chebyshev_error_peak_normalized_percentage": 4.0,
             },
             {
                 "region": "Al2p", "split": "val", "normalized_mse": 0.002,
-                "rmse": 12.0, "peak_error_percentage": 2.5, "max_error_percentage": 5.0,
+                "rmse": 12.0, "peak_error_percentage": 2.5,
+                "chebyshev_error_peak_normalized_percentage": 5.0,
             },
             {
                 "region": "Al2p", "split": "test", "normalized_mse": 0.003,
-                "rmse": 14.0, "peak_error_percentage": 3.0, "max_error_percentage": 6.0,
+                "rmse": 14.0, "peak_error_percentage": 3.0,
+                "chebyshev_error_peak_normalized_percentage": 6.0,
             },
             {
                 "region": "O1s", "split": "train", "normalized_mse": 0.004,
-                "rmse": 20.0, "peak_error_percentage": 1.5, "max_error_percentage": 3.0,
+                "rmse": 20.0, "peak_error_percentage": 1.5,
+                "chebyshev_error_peak_normalized_percentage": 3.0,
             },
             {
                 "region": "O1s", "split": "val", "normalized_mse": 0.005,
-                "rmse": 22.0, "peak_error_percentage": 1.8, "max_error_percentage": 3.5,
+                "rmse": 22.0, "peak_error_percentage": 1.8,
+                "chebyshev_error_peak_normalized_percentage": 3.5,
             },
             {
                 "region": "O1s", "split": "test", "normalized_mse": 0.006,
-                "rmse": 25.0, "peak_error_percentage": 2.2, "max_error_percentage": 4.5,
+                "rmse": 25.0, "peak_error_percentage": 2.2,
+                "chebyshev_error_peak_normalized_percentage": 4.5,
             },
         ])
 
@@ -181,22 +199,40 @@ class TestEvaluationMetrics(unittest.TestCase):
 
         expected_default_cols = [
             "region",
-            "norm_mse_train", "peak_error_percentage_train", "max_error_percentage_train",
-            "norm_mse_test", "peak_error_percentage_test", "max_error_percentage_test",
+            "norm_mse_train",
+            "peak_error_percentage_train",
+            "chebyshev_error_peak_normalized_percentage_train",
+            "norm_mse_test",
+            "peak_error_percentage_test",
+            "chebyshev_error_peak_normalized_percentage_test",
         ]
         self.assertEqual(list(df_default.columns), expected_default_cols)
 
         # 2. Custom splits & metrics configuration: 3 splits and 4 metrics
         custom_cfg = {
             "splits": ["train", "val", "test"],
-            "metrics": ["norm_mse", "rmse", "peak_error_percentage", "max_error_percentage"],
+            "metrics": [
+                "norm_mse",
+                "rmse",
+                "peak_error_percentage",
+                "chebyshev_error_peak_normalized_percentage",
+            ],
         }
         df_custom = format_side_by_side_metrics(df_samples, config=custom_cfg)
         expected_custom_cols = [
             "region",
-            "norm_mse_train", "rmse_train", "peak_error_percentage_train", "max_error_percentage_train",
-            "norm_mse_val", "rmse_val", "peak_error_percentage_val", "max_error_percentage_val",
-            "norm_mse_test", "rmse_test", "peak_error_percentage_test", "max_error_percentage_test",
+            "norm_mse_train",
+            "rmse_train",
+            "peak_error_percentage_train",
+            "chebyshev_error_peak_normalized_percentage_train",
+            "norm_mse_val",
+            "rmse_val",
+            "peak_error_percentage_val",
+            "chebyshev_error_peak_normalized_percentage_val",
+            "norm_mse_test",
+            "rmse_test",
+            "peak_error_percentage_test",
+            "chebyshev_error_peak_normalized_percentage_test",
         ]
         self.assertEqual(list(df_custom.columns), expected_custom_cols)
 
@@ -205,15 +241,22 @@ class TestEvaluationMetrics(unittest.TestCase):
             df_samples,
             config={
                 "splits": ["train", "test"],
-                "metrics": ["norm_mse", "max_error_percentage"],
+                "metrics": [
+                    "norm_mse",
+                    "chebyshev_error_peak_normalized_percentage",
+                ],
                 "format_str": False,
             },
         )
         al2p_row = df_numeric[df_numeric["region"] == "Al2p"].iloc[0]
         self.assertAlmostEqual(al2p_row["norm_mse_train_mean"], 0.001)
-        self.assertAlmostEqual(al2p_row["max_error_percentage_train_mean"], 4.0)
+        self.assertAlmostEqual(
+            al2p_row["chebyshev_error_peak_normalized_percentage_train_mean"], 4.0
+        )
         self.assertAlmostEqual(al2p_row["norm_mse_test_mean"], 0.003)
-        self.assertAlmostEqual(al2p_row["max_error_percentage_test_mean"], 6.0)
+        self.assertAlmostEqual(
+            al2p_row["chebyshev_error_peak_normalized_percentage_test_mean"], 6.0
+        )
 
         # 4. Error on unknown metric
         with self.assertRaises(ValueError):
@@ -249,14 +292,14 @@ class TestEvaluationMetrics(unittest.TestCase):
                 "split": "train",
                 "MSE": 0.05,
                 "peak_error_percentage": 2.0,
-                "max_error_percentage": 4.0,
+                "chebyshev_error_peak_normalized_percentage": 4.0,
             },
             {
                 "region": "Al2p",
                 "split": "test",
                 "MSE": 0.06,
                 "peak_error_percentage": 2.5,
-                "max_error_percentage": 4.5,
+                "chebyshev_error_peak_normalized_percentage": 4.5,
             },
         ])
         df_res = format_side_by_side_metrics(df_samples)
@@ -264,12 +307,28 @@ class TestEvaluationMetrics(unittest.TestCase):
             "region",
             "MSE_train",
             "peak_error_percentage_train",
-            "max_error_percentage_train",
+            "chebyshev_error_peak_normalized_percentage_train",
             "MSE_test",
             "peak_error_percentage_test",
-            "max_error_percentage_test",
+            "chebyshev_error_peak_normalized_percentage_test",
         ]
         self.assertEqual(list(df_res.columns), expected_cols)
+
+    def test_near_zero_denominator_warning(self) -> None:
+        """Verify UserWarning is emitted when max_true is below 1e-12."""
+        intensity_zero = np.zeros((2, self.n_points))
+        intensity_pred = np.zeros((1, self.n_points))
+        energy_pred = np.array([np.linspace(0, 10, self.n_points)])
+
+        with self.assertWarns(UserWarning):
+            df_per_sample, _ = calculate_prediction_metrics(
+                (intensity_zero, self.energy_orig, self.meta_orig),
+                (intensity_pred, energy_pred, self.meta_pred),
+            )
+        self.assertEqual(len(df_per_sample), 1)
+        self.assertAlmostEqual(
+            df_per_sample["chebyshev_error_peak_normalized_percentage"].iloc[0], 0.0
+        )
 
 
 class TestMatchPredictionSourceTargetIndices(unittest.TestCase):

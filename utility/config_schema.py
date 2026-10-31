@@ -413,7 +413,7 @@ class MetricsReportConfig(BaseModel):
     metrics: list[str] = Field(
         default_factory=lambda: [
             "peak_error_percentage",
-            "max_error_percentage",
+            "chebyshev_error_peak_normalized_percentage",
         ]
     )
     model_config = ConfigDict(extra="allow")

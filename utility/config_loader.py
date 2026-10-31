@@ -328,7 +328,13 @@ def _inject_evaluation_settings(
         metrics_rep.setdefault("normalized_by_target_max", norm_by_max)
         mse_metric = "MSE_normalized_by_target" if norm_by_max else "MSE"
         existing_metrics = list(
-            metrics_rep.get("metrics", ["peak_error_percentage", "max_error_percentage"])
+            metrics_rep.get(
+                "metrics",
+                [
+                    "peak_error_percentage",
+                    "chebyshev_error_peak_normalized_percentage",
+                ],
+            )
         )
         if mse_metric not in existing_metrics and "MSE" not in existing_metrics:
             existing_metrics = [mse_metric, *existing_metrics]
