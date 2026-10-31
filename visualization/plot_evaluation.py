@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from utility.evaluation import match_prediction_source_target_indices
 from visualization.common import (
     _finalize_plot,
     _finish_fig,
@@ -145,33 +146,36 @@ def plot_prediction_comparison(
         )
         ax_res = None
     tgt_m = str(src_rows.iloc[0].get("target_measurement_id", ""))
-    t_sub = meta_orig[
-        (meta_orig["measurement_id"] == tgt_m) & (meta_orig["die"] == die)
-    ]
-    p_sub = meta_pred[
+    pred_subset = meta_pred[
         (meta_pred["source_measurement_id"] == meas_id)
         & (meta_pred["die"] == die)
     ]
+    matched_by_region = match_prediction_source_target_indices(
+        meta_orig,
+        pred_subset,
+        regions_filter=regions,
+        die_filter=[die],
+    )
+    orig_by_idx = {int(r.spectrum_index): r for r in meta_orig.itertuples()}
     plotted = 0
     for idx, reg in enumerate(regions):
         ax = axes_to_use[idx]
-        reg_src = src_rows[src_rows["region"] == reg].iloc[0]
-        tgt_m_df = t_sub[t_sub["region"] == reg]
-        pred_m_df = p_sub[p_sub["region"] == reg]
-        if tgt_m_df.empty or pred_m_df.empty:
+        triplets = matched_by_region.get(reg, [])
+        if not triplets:
             if is_single:
                 raise ValueError(
                     f"Target or predicted spectrum for {reg} not found."
                 )
             ax.set_visible(False)
             continue
-        tgt_r = tgt_m_df.iloc[0]
-        pred_r = pred_m_df.iloc[0]
-        i_s = int(reg_src["spectrum_index"])
-        i_t = int(tgt_r["spectrum_index"])
-        i_p = int(pred_r["spectrum_index"])
-        src_t = str(reg_src.get("tool", "Tool"))
-        tgt_t = str(reg_src.get("target_tool", "TargetTool"))
+        i_s, i_t, i_p = triplets[0]
+        reg_src = orig_by_idx.get(i_s)
+        src_t = str(getattr(reg_src, "tool", "Tool")) if reg_src else "Tool"
+        tgt_t = (
+            str(getattr(reg_src, "target_tool", "TargetTool"))
+            if reg_src
+            else "TargetTool"
+        )
         for e, i, lbl, c, ls, lw in [
             (
                 ary_e_orig[i_s],
@@ -320,51 +324,12 @@ def plot_regional_spectrum_distribution(
             + "."
         )
 
-    orig_by_key: dict[tuple[str, int, str], int] = {
-        (str(r.measurement_id), int(r.die), str(r.region)): int(
-            r.spectrum_index
-        )
-        for r in meta_orig.itertuples()
-    }
-    src_target_map: dict[int, str] = {
-        int(r.spectrum_index): str(r.target_measurement_id)
-        for r in meta_orig.itertuples()
-        if hasattr(r, "target_measurement_id")
-        and pd.notna(r.target_measurement_id)
-    }
-    src_by_meas_die_reg: dict[tuple[str, int, str], str] = {
-        (str(r.measurement_id), int(r.die), str(r.region)): str(
-            r.target_measurement_id
-        )
-        for r in meta_orig.itertuples()
-        if hasattr(r, "target_measurement_id")
-        and pd.notna(r.target_measurement_id)
-    }
-
-    matched_by_region: dict[str, list[tuple[int, int, int]]] = {}
-    for p_row in p_df.itertuples():
-        reg = str(p_row.region)
-        die_val = int(p_row.die)
-        pred_idx = int(p_row.spectrum_index)
-
-        src_idx: int | None = None
-        tgt_meas: str | None = None
-        if hasattr(p_row, "source_spectrum_index") and pd.notna(
-            p_row.source_spectrum_index
-        ):
-            src_idx = int(p_row.source_spectrum_index)
-            tgt_meas = src_target_map.get(src_idx)
-        if src_idx is None or tgt_meas is None:
-            s_meas = str(getattr(p_row, "source_measurement_id", ""))
-            src_idx = orig_by_key.get((s_meas, die_val, reg))
-            tgt_meas = src_by_meas_die_reg.get((s_meas, die_val, reg))
-
-        if src_idx is not None and tgt_meas is not None:
-            tgt_idx = orig_by_key.get((tgt_meas, die_val, reg))
-            if tgt_idx is not None:
-                matched_by_region.setdefault(reg, []).append(
-                    (src_idx, tgt_idx, pred_idx)
-                )
+    matched_by_region = match_prediction_source_target_indices(
+        meta_orig,
+        p_df,
+        regions_filter=cfg.get("regions"),
+        die_filter=[int(die_filter)] if die_filter is not None else None,
+    )
 
     specified_regions = cfg.get("regions")
     if specified_regions is not None:

@@ -9,6 +9,7 @@ import pandas as pd
 from utility.evaluation import (
     calculate_prediction_metrics,
     format_side_by_side_metrics,
+    match_prediction_source_target_indices,
 )
 
 
@@ -260,6 +261,127 @@ class TestEvaluationMetrics(unittest.TestCase):
             "max_error_percentage_test",
         ]
         self.assertEqual(list(df_res.columns), expected_cols)
+
+
+class TestMatchPredictionSourceTargetIndices(unittest.TestCase):
+    """Test suite for match_prediction_source_target_indices helper."""
+
+    def setUp(self) -> None:
+        self.df_orig = pd.DataFrame([
+            {
+                "spectrum_index": 0,
+                "measurement_id": "SRC_1",
+                "tool": "J4",
+                "region": "Al2p",
+                "die": 0,
+                "target_measurement_id": "TGT_1",
+                "target_spectrum_index": 2,
+            },
+            {
+                "spectrum_index": 1,
+                "measurement_id": "SRC_1",
+                "tool": "J4",
+                "region": "O1s",
+                "die": 0,
+                "target_measurement_id": "TGT_1",
+                "target_spectrum_index": 3,
+            },
+            {
+                "spectrum_index": 2,
+                "measurement_id": "TGT_1",
+                "tool": "H1",
+                "region": "Al2p",
+                "die": 0,
+                "target_measurement_id": np.nan,
+                "target_spectrum_index": np.nan,
+            },
+            {
+                "spectrum_index": 3,
+                "measurement_id": "TGT_1",
+                "tool": "H1",
+                "region": "O1s",
+                "die": 0,
+                "target_measurement_id": np.nan,
+                "target_spectrum_index": np.nan,
+            },
+            {
+                "spectrum_index": 4,
+                "measurement_id": "SRC_2",
+                "tool": "J4",
+                "region": "Al2p",
+                "die": 1,
+                "target_measurement_id": "TGT_2",
+                "target_spectrum_index": 5,
+            },
+            {
+                "spectrum_index": 5,
+                "measurement_id": "TGT_2",
+                "tool": "H1",
+                "region": "Al2p",
+                "die": 1,
+                "target_measurement_id": np.nan,
+                "target_spectrum_index": np.nan,
+            },
+        ])
+        self.df_pred = pd.DataFrame([
+            {
+                "spectrum_index": 10,
+                "region": "Al2p",
+                "die": 0,
+                "source_measurement_id": "SRC_1",
+                "source_spectrum_index": 0,
+            },
+            {
+                "spectrum_index": 11,
+                "region": "O1s",
+                "die": 0,
+                "source_measurement_id": "SRC_1",
+                "source_spectrum_index": 1,
+            },
+            {
+                "spectrum_index": 12,
+                "region": "Al2p",
+                "die": 1,
+                "source_measurement_id": "SRC_2",
+                "source_spectrum_index": 4,
+            },
+        ])
+
+    def test_match_all(self) -> None:
+        """Verify matching all regions and dies."""
+        res = match_prediction_source_target_indices(self.df_orig, self.df_pred)
+        self.assertEqual(set(res.keys()), {"Al2p", "O1s"})
+        self.assertEqual(res["Al2p"], [(0, 2, 10), (4, 5, 12)])
+        self.assertEqual(res["O1s"], [(1, 3, 11)])
+
+    def test_filter_region(self) -> None:
+        """Verify region filter."""
+        res = match_prediction_source_target_indices(
+            self.df_orig, self.df_pred, regions_filter=["Al2p"]
+        )
+        self.assertEqual(list(res.keys()), ["Al2p"])
+        self.assertEqual(len(res["Al2p"]), 2)
+
+    def test_filter_die(self) -> None:
+        """Verify die filter with int and string values."""
+        res_int = match_prediction_source_target_indices(
+            self.df_orig, self.df_pred, die_filter=[0]
+        )
+        self.assertEqual(res_int["Al2p"], [(0, 2, 10)])
+
+        res_str = match_prediction_source_target_indices(
+            self.df_orig, self.df_pred, die_filter=["1"]
+        )
+        self.assertEqual(res_str["Al2p"], [(4, 5, 12)])
+        self.assertNotIn("O1s", res_str)
+
+    def test_fallback_target_measurement_lookup(self) -> None:
+        """Verify resolution when target_spectrum_index is missing from source."""
+        df_orig_no_tgt_idx = self.df_orig.copy()
+        df_orig_no_tgt_idx["target_spectrum_index"] = np.nan
+        res = match_prediction_source_target_indices(df_orig_no_tgt_idx, self.df_pred)
+        self.assertEqual(res["Al2p"], [(0, 2, 10), (4, 5, 12)])
+        self.assertEqual(res["O1s"], [(1, 3, 11)])
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from utility.config_schema import PipelineConfig
 from utility.evaluation import (
     calculate_prediction_metrics,
     format_side_by_side_metrics,
+    match_prediction_source_target_indices,
 )
 from utility.flux_and_intensity import (
     calculate_flux_and_intensity,
@@ -94,4 +95,5 @@ __all__ = [
     # Metrics
     "calculate_prediction_metrics",
     "format_side_by_side_metrics",
+    "match_prediction_source_target_indices",
 ]

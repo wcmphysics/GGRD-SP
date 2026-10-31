@@ -16,6 +16,120 @@ import pandas as pd
 from utility.reporting import format_split_comparison_table
 
 
+def match_prediction_source_target_indices(
+    df_meta_orig: pd.DataFrame,
+    df_meta_pred: pd.DataFrame,
+    regions_filter: list[str] | None = None,
+    die_filter: list[str] | None = None,
+) -> dict[str, list[tuple[int, int, int]]]:
+    """Match source, target, and prediction spectrum indices grouped by region.
+
+    Matches triplets of (source_spectrum_index, target_spectrum_index,
+    pred_spectrum_index) across df_meta_orig and df_meta_pred.
+
+    Parameters
+    ----------
+    df_meta_orig : pd.DataFrame
+        Original metadata containing source and target spectrum records.
+    df_meta_pred : pd.DataFrame
+        Predicted metadata containing prediction records and source links.
+    regions_filter : list[str] | None, optional
+        List of spectral region names to filter by.
+    die_filter : list[str] | None, optional
+        List of die identifiers or integers to filter by.
+
+    Returns
+    -------
+    dict[str, list[tuple[int, int, int]]]
+        Dictionary mapping each region to a list of index triplets
+        (source_spectrum_index, target_spectrum_index, pred_spectrum_index).
+    """
+    regions_set = set(regions_filter) if regions_filter is not None else None
+    dies_set: set[str] | None = None
+    if die_filter is not None:
+        dies_set = (
+            {str(die_filter)}
+            if isinstance(die_filter, (str, int))
+            else {str(d) for d in die_filter}
+        )
+
+    # Index original metadata for fast O(1) coordinate and target lookup
+    meas_die_reg_to_spec: dict[tuple[str, int, str], int] = {}
+    src_idx_to_tgt: dict[int, tuple[str | None, int | None]] = {}
+    meas_die_reg_to_tgt: dict[
+        tuple[str, int, str], tuple[str | None, int | None]
+    ] = {}
+
+    for row in df_meta_orig.itertuples():
+        m_id = str(row.measurement_id)
+        die_val = int(row.die)
+        reg = str(row.region)
+        s_idx = int(row.spectrum_index)
+        key = (m_id, die_val, reg)
+        meas_die_reg_to_spec[key] = s_idx
+
+        tgt_m = getattr(row, "target_measurement_id", None)
+        tgt_s = getattr(row, "target_spectrum_index", None)
+        tgt_m_str = str(tgt_m) if pd.notna(tgt_m) else None
+        tgt_s_int = int(tgt_s) if pd.notna(tgt_s) else None
+        if tgt_m_str is not None or tgt_s_int is not None:
+            src_idx_to_tgt[s_idx] = (tgt_m_str, tgt_s_int)
+            meas_die_reg_to_tgt[key] = (tgt_m_str, tgt_s_int)
+
+    # Match each predicted spectrum to its corresponding source and target
+    matched: dict[str, list[tuple[int, int, int]]] = {}
+    for pred_row in df_meta_pred.itertuples():
+        reg = str(pred_row.region)
+        if regions_set is not None and reg not in regions_set:
+            continue
+        die_val = int(pred_row.die)
+        if dies_set is not None and str(die_val) not in dies_set:
+            continue
+
+        pred_idx = int(pred_row.spectrum_index)
+        src_idx: int | None = None
+        if hasattr(pred_row, "source_spectrum_index") and pd.notna(
+            pred_row.source_spectrum_index
+        ):
+            src_idx = int(pred_row.source_spectrum_index)
+        else:
+            s_meas = str(
+                getattr(
+                    pred_row,
+                    "source_measurement_id",
+                    getattr(pred_row, "measurement_id", ""),
+                )
+            )
+            src_idx = meas_die_reg_to_spec.get((s_meas, die_val, reg))
+
+        if src_idx is None:
+            continue
+
+        tgt_m_str, tgt_s_int = src_idx_to_tgt.get(src_idx, (None, None))
+        if tgt_m_str is None and tgt_s_int is None:
+            s_meas = str(
+                getattr(
+                    pred_row,
+                    "source_measurement_id",
+                    getattr(pred_row, "measurement_id", ""),
+                )
+            )
+            tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
+                (s_meas, die_val, reg), (None, None)
+            )
+
+        tgt_idx = tgt_s_int
+        if tgt_idx is None and tgt_m_str is not None:
+            tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_val, reg))
+
+        if tgt_idx is None:
+            continue
+
+        matched.setdefault(reg, []).append((src_idx, tgt_idx, pred_idx))
+
+    return matched
+
+
 def calculate_prediction_metrics(
     data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
@@ -51,75 +165,60 @@ def calculate_prediction_metrics(
     norm_by_tgt_max = bool(cfg.get("normalized_by_target_max", True))
     mse_col = "MSE_normalized_by_target" if norm_by_tgt_max else "MSE"
 
+    matched_by_region = match_prediction_source_target_indices(
+        df_meta_orig, df_meta_pred, regions_filter=regions_filter
+    )
+    pred_lookup = {
+        int(r.spectrum_index): r for r in df_meta_pred.itertuples()
+    }
+    orig_lookup = {
+        int(r.spectrum_index): r for r in df_meta_orig.itertuples()
+    }
+
     records: list[dict[str, Any]] = []
+    for region, triplets in matched_by_region.items():
+        for src_idx, tgt_idx, pred_idx in triplets:
+            pred_row = pred_lookup[pred_idx]
+            src_row = orig_lookup.get(src_idx)
+            tgt_row = orig_lookup.get(tgt_idx)
 
-    # Build fast O(1) lookup map from df_meta_orig:
-    # Key: (measurement_id, region, die) -> (target_id, target_idx, spec_idx)
-    meas_reg_die_to_spec_idx: dict[tuple[str, str, int], int] = {}
-    src_to_tgt_info: dict[tuple[str, str, int], tuple[str | None, int | None]] = {}
+            src_meas_id = str(
+                getattr(
+                    pred_row,
+                    "source_measurement_id",
+                    src_row.measurement_id if src_row else "",
+                )
+            )
+            tgt_meas_id = str(tgt_row.measurement_id) if tgt_row else ""
+            die = int(pred_row.die)
 
-    for row in df_meta_orig.itertuples():
-        m_id = str(row.measurement_id)
-        reg = str(row.region)
-        die_val = int(row.die)
-        key = (m_id, reg, die_val)
-        meas_reg_die_to_spec_idx[key] = int(row.spectrum_index)
+            y_true = ary_intensity_orig[tgt_idx]
+            y_pred = ary_intensity_pred[pred_idx]
+            diff = y_pred - y_true
 
-        tgt_m = getattr(row, "target_measurement_id", None)
-        tgt_s = getattr(row, "target_spectrum_index", None)
-        tgt_m_str = str(tgt_m) if pd.notna(tgt_m) else None
-        tgt_s_int = int(tgt_s) if pd.notna(tgt_s) else None
-        src_to_tgt_info[key] = (tgt_m_str, tgt_s_int)
+            max_true = max(float(np.max(np.abs(y_true))), eps)
+            max_pred = float(np.max(np.abs(y_pred)))
 
-    # Iterate over predicted spectra records using fast itertuples
-    for pred_row in df_meta_pred.itertuples():
-        region = str(pred_row.region)
-        if regions_filter is not None and region not in regions_filter:
-            continue
+            mse_val = float(
+                np.mean((diff / max_true) ** 2)
+                if norm_by_tgt_max
+                else np.mean(diff**2)
+            )
+            raw_rmse = float(np.sqrt(np.mean(diff**2)))
+            peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
+            max_err_pct = float(np.max(np.abs(diff)) / max_true * 100.0)
 
-        src_meas_id = str(pred_row.source_measurement_id)
-        die = int(pred_row.die)
-        pred_idx = int(pred_row.spectrum_index)
-
-        lookup_key = (src_meas_id, region, die)
-        if lookup_key not in src_to_tgt_info:
-            continue
-
-        tgt_meas_id, tgt_idx = src_to_tgt_info[lookup_key]
-        if tgt_meas_id is None:
-            continue
-
-        if tgt_idx is None:
-            tgt_key = (tgt_meas_id, region, die)
-            if tgt_key not in meas_reg_die_to_spec_idx:
-                continue
-            tgt_idx = meas_reg_die_to_spec_idx[tgt_key]
-
-        y_true = ary_intensity_orig[tgt_idx]
-        y_pred = ary_intensity_pred[pred_idx]
-        diff = y_pred - y_true
-
-        max_true = max(float(np.max(np.abs(y_true))), eps)
-        max_pred = float(np.max(np.abs(y_pred)))
-
-        mse_val = float(
-            np.mean((diff / max_true) ** 2) if norm_by_tgt_max else np.mean(diff**2)
-        )
-        raw_rmse = float(np.sqrt(np.mean(diff**2)))
-        peak_err_pct = float(abs(max_pred - max_true) / max_true * 100.0)
-        max_err_pct = float(np.max(np.abs(diff)) / max_true * 100.0)
-
-        records.append({
-            "source_measurement_id": src_meas_id,
-            "target_measurement_id": tgt_meas_id,
-            "region": region,
-            "die": die,
-            "split": str(getattr(pred_row, "split", "all")),
-            mse_col: mse_val,
-            "rmse": raw_rmse,
-            "peak_error_percentage": peak_err_pct,
-            "max_error_percentage": max_err_pct,
-        })
+            records.append({
+                "source_measurement_id": src_meas_id,
+                "target_measurement_id": tgt_meas_id,
+                "region": region,
+                "die": die,
+                "split": str(getattr(pred_row, "split", "all")),
+                mse_col: mse_val,
+                "rmse": raw_rmse,
+                "peak_error_percentage": peak_err_pct,
+                "max_error_percentage": max_err_pct,
+            })
 
     df_per_sample = pd.DataFrame(records)
     if df_per_sample.empty:
