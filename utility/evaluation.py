@@ -16,6 +16,26 @@ import pandas as pd
 from utility.reporting import format_split_comparison_table
 
 
+def _normalize_die_str(die_val: Any) -> str:
+    """Normalize die identifier into a consistent lookup string."""
+    if isinstance(die_val, (int, np.integer)):
+        return str(int(die_val))
+    if isinstance(die_val, (float, np.floating)):
+        if np.isnan(die_val):
+            return "nan"
+        if die_val.is_integer():
+            return str(int(die_val))
+        return str(die_val)
+    s = str(die_val).strip()
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except (ValueError, TypeError):
+        pass
+    return s
+
+
 def match_prediction_source_target_indices(
     df_meta_orig: pd.DataFrame,
     df_meta_pred: pd.DataFrame,
@@ -48,24 +68,26 @@ def match_prediction_source_target_indices(
     dies_set: set[str] | None = None
     if die_filter is not None:
         dies_set = (
-            {str(die_filter)}
-            if isinstance(die_filter, (str, int))
-            else {str(d) for d in die_filter}
+            {_normalize_die_str(die_filter)}
+            if isinstance(die_filter, (str, int, float))
+            else {_normalize_die_str(d) for d in die_filter}
         )
 
     # Index original metadata for fast O(1) coordinate and target lookup
-    meas_die_reg_to_spec: dict[tuple[str, int, str], int] = {}
+    meas_die_reg_to_spec: dict[tuple[str, str, str], int] = {}
+    valid_orig_indices: set[int] = set()
     src_idx_to_tgt: dict[int, tuple[str | None, int | None]] = {}
     meas_die_reg_to_tgt: dict[
-        tuple[str, int, str], tuple[str | None, int | None]
+        tuple[str, str, str], tuple[str | None, int | None]
     ] = {}
 
     for row in df_meta_orig.itertuples():
         m_id = str(row.measurement_id)
-        die_val = int(row.die)
+        die_key = _normalize_die_str(row.die)
         reg = str(row.region)
         s_idx = int(row.spectrum_index)
-        key = (m_id, die_val, reg)
+        valid_orig_indices.add(s_idx)
+        key = (m_id, die_key, reg)
         meas_die_reg_to_spec[key] = s_idx
 
         tgt_m = getattr(row, "target_measurement_id", None)
@@ -82,8 +104,8 @@ def match_prediction_source_target_indices(
         reg = str(pred_row.region)
         if regions_set is not None and reg not in regions_set:
             continue
-        die_val = int(pred_row.die)
-        if dies_set is not None and str(die_val) not in dies_set:
+        die_key = _normalize_die_str(pred_row.die)
+        if dies_set is not None and die_key not in dies_set:
             continue
 
         pred_idx = int(pred_row.spectrum_index)
@@ -91,8 +113,10 @@ def match_prediction_source_target_indices(
         if hasattr(pred_row, "source_spectrum_index") and pd.notna(
             pred_row.source_spectrum_index
         ):
-            src_idx = int(pred_row.source_spectrum_index)
-        else:
+            cand_src = int(pred_row.source_spectrum_index)
+            if cand_src in valid_orig_indices:
+                src_idx = cand_src
+        if src_idx is None:
             s_meas = str(
                 getattr(
                     pred_row,
@@ -100,7 +124,7 @@ def match_prediction_source_target_indices(
                     getattr(pred_row, "measurement_id", ""),
                 )
             )
-            src_idx = meas_die_reg_to_spec.get((s_meas, die_val, reg))
+            src_idx = meas_die_reg_to_spec.get((s_meas, die_key, reg))
 
         if src_idx is None:
             continue
@@ -115,14 +139,16 @@ def match_prediction_source_target_indices(
                 )
             )
             tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
-                (s_meas, die_val, reg), (None, None)
+                (s_meas, die_key, reg), (None, None)
             )
 
-        tgt_idx = tgt_s_int
-        if tgt_idx is None and tgt_m_str is not None:
-            tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_val, reg))
+        tgt_idx: int | None = None
+        if tgt_s_int is not None and tgt_s_int in valid_orig_indices:
+            tgt_idx = tgt_s_int
+        elif tgt_m_str is not None:
+            tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_key, reg))
 
-        if tgt_idx is None:
+        if tgt_idx is None or tgt_idx not in valid_orig_indices:
             continue
 
         matched.setdefault(reg, []).append((src_idx, tgt_idx, pred_idx))
@@ -190,7 +216,11 @@ def calculate_prediction_metrics(
                 )
             )
             tgt_meas_id = str(tgt_row.measurement_id) if tgt_row else ""
-            die = int(pred_row.die)
+            die_raw = pred_row.die
+            try:
+                die: int | str = int(die_raw)
+            except (ValueError, TypeError):
+                die = str(die_raw)
 
             y_true = ary_intensity_orig[tgt_idx]
             y_pred = ary_intensity_pred[pred_idx]

@@ -147,14 +147,14 @@ def plot_prediction_comparison(
         ax_res = None
     tgt_m = str(src_rows.iloc[0].get("target_measurement_id", ""))
     pred_subset = meta_pred[
-        (meta_pred["source_measurement_id"] == meas_id)
-        & (meta_pred["die"] == die)
+        (meta_pred["source_measurement_id"].astype(str) == str(meas_id))
+        & (meta_pred["die"].astype(str) == str(die))
     ]
     matched_by_region = match_prediction_source_target_indices(
         meta_orig,
         pred_subset,
         regions_filter=regions,
-        die_filter=[die],
+        die_filter=[str(die)],
     )
     orig_by_idx = {int(r.spectrum_index): r for r in meta_orig.itertuples()}
     plotted = 0
@@ -316,7 +316,7 @@ def plot_regional_spectrum_distribution(
             p_df["split"].astype(str).str.lower() == str(split).lower()
         ]
     if die_filter is not None:
-        p_df = p_df[p_df["die"] == int(die_filter)]
+        p_df = p_df[p_df["die"].astype(str) == str(die_filter)]
     if p_df.empty:
         raise ValueError(
             f"No predicted spectra found for split='{split}'"
@@ -328,7 +328,7 @@ def plot_regional_spectrum_distribution(
         meta_orig,
         p_df,
         regions_filter=cfg.get("regions"),
-        die_filter=[int(die_filter)] if die_filter is not None else None,
+        die_filter=[str(die_filter)] if die_filter is not None else None,
     )
 
     specified_regions = cfg.get("regions")
