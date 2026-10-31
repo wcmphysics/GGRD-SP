@@ -184,23 +184,29 @@ class TestFluxAndStandardization(unittest.TestCase):
     def test_per_tool_standardization_isolation(self) -> None:
         """Verify standardization statistics are fitted per tool without leakage."""
         meta = pd.DataFrame({
-            "measurement_id": ["m1", "m2", "m3", "m4"],
-            "tool": ["J4", "J4", "J5", "J5"],
-            "split": ["train", "test", "train", "test"],
-            "die": [0, 0, 0, 0],
-            "spectrum_index": [0, 1, 2, 3],
-            "region": ["Al2p", "Al2p", "Al2p", "Al2p"],
+            "measurement_id": ["m1", "m2", "m3", "m4", "m5", "m6"],
+            "tool": ["J4", "J4", "J4", "J5", "J5", "J5"],
+            "split": ["train", "train", "test", "train", "train", "test"],
+            "die": [0, 0, 0, 0, 0, 0],
+            "spectrum_index": [0, 1, 2, 3, 4, 5],
+            "region": ["Al2p"] * 6,
             "time": [
                 "2026-01-01 00:00:00",
+                "2026-01-01 02:00:00",
+                "2026-01-01 03:00:00",
+                "2026-01-01 00:00:00",
                 "2026-01-01 04:00:00",
-                "2026-01-01 10:00:00",
-                "2026-01-01 20:00:00",
+                "2026-01-01 06:00:00",
             ],
-            "total_flux_single_die": [100.0, 200.0, 1000.0, 2000.0],
+            "total_flux_single_die": [100.0, 200.0, 250.0, 1000.0, 3000.0, 4000.0],
         })
         res = standardize_metadata_features(meta)
         self.assertIn("time_standardized", res.columns)
         self.assertIn("total_flux_single_die_standardized", res.columns)
+        # Verify J4 test row (m3) uses J4 train stats: (250 - 150) / 50 = 2.0
+        self.assertAlmostEqual(res["total_flux_single_die_standardized"].iloc[2], 2.0, places=4)
+        # Verify J5 test row (m6) uses J5 train stats: (4000 - 2000) / 1000 = 2.0
+        self.assertAlmostEqual(res["total_flux_single_die_standardized"].iloc[5], 2.0, places=4)
 
 
 if __name__ == "__main__":

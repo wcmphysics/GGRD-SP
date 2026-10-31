@@ -388,9 +388,10 @@ def calculate_standardized_time(
             )
             df_res.loc[tool_mask, "time_standardized"] = np.float32(0.0)
         else:
-            df_res.loc[tool_mask, "time_standardized"] = (
-                all_diff_sec / std_sec
-            ).astype(np.float32)
+            df_res.loc[tool_mask, "time_standardized"] = pd.Series(
+                (all_diff_sec / std_sec).astype(np.float32),
+                index=sub_df.index,
+            )
 
     return df_res
 
