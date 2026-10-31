@@ -105,6 +105,31 @@ class TestFiLMModulation(unittest.TestCase):
                 self.sample_meta, config={"encode_elements": True}
             )
 
+        # Missing or invalid die value
+        with self.assertRaises(ValueError):
+            prepare_film_condition_tensor(
+                [{"die": None, "source_tool_index": 0, "target_tool_index": 1,
+                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
+            )
+        with self.assertRaises(ValueError):
+            prepare_film_condition_tensor(
+                [{"die": 12, "source_tool_index": 0, "target_tool_index": 1,
+                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
+            )
+        with self.assertRaises(ValueError):
+            prepare_film_condition_tensor(
+                [{"die": "invalid", "source_tool_index": 0, "target_tool_index": 1,
+                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
+            )
+
+        # Missing energy bounds when encode_energy is True
+        with self.assertRaises(ValueError):
+            prepare_film_condition_tensor(
+                self.sample_meta,
+                energy_bounds=None,
+                config={"encode_energy": True, "num_samples": 2},
+            )
+
     def test_film_generator_identity_initialization(self) -> None:
         """Verify FiLMGenerator outputs gamma=1.0 and beta=0.0 initially."""
         film_gen = FiLMGenerator(channels_list=[16, 32])

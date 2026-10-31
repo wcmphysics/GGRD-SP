@@ -18,22 +18,29 @@ import torch.nn as nn
 
 
 def _parse_die(value: Any) -> int:
-    """Extract die index bounded within [0, 8]."""
+    """Extract and validate integer die index bounded within [0, 8].
+
+    Raises
+    ------
+    ValueError
+        If die value is missing, null, non-integer, or outside [0, 8].
+    """
     if value is None or pd.isna(value):
-        return 0
+        raise ValueError(
+            "Metadata field 'die' is missing or null. Expected an integer in [0, 8]."
+        )
     try:
         raw_val = value.item() if hasattr(value, "item") else value
         die_idx = int(raw_val)
-        if not (0 <= die_idx <= 8):
-            warnings.warn(
-                f"Die index {die_idx} outside expected [0, 8] range; clamping to [0, 8]."
-            )
-        return min(max(die_idx, 0), 8)
     except (ValueError, TypeError) as exc:
-        warnings.warn(
-            f"Invalid die value '{value}': {exc}. Defaulting die index to 0."
+        raise ValueError(
+            f"Invalid die value '{value}': must be an integer index in [0, 8]."
+        ) from exc
+    if not (0 <= die_idx <= 8):
+        raise ValueError(
+            f"Die index {die_idx} is outside expected [0, 8] range."
         )
-        return 0
+    return die_idx
 
 
 def _parse_region_index(
@@ -321,11 +328,10 @@ def _extract_energy_bounds_tensor(
         scaled_we = we_2d / max(energy_scale_ev, 1e-6)
         return scaled_we.to(device) if device is not None else scaled_we
     elif encode_energy:
-        warnings.warn(
+        raise ValueError(
             "encode_energy=True but no energy bounds were provided to "
-            "prepare_film_condition_tensor; defaulting to zeros."
+            "prepare_film_condition_tensor."
         )
-        return torch.zeros((n, 2), dtype=torch.float32, device=device)
     return None
 
 
