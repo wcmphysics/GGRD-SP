@@ -29,18 +29,6 @@ from models.layers import (
     validate_positive_int,
 )
 
-_DISALLOWED_DEEPLAB_KEYS = (
-    "deeplabv3_backbone_channels",
-    "deeplabv3_aspp_channels",
-    "backbone_channels",
-    "aspp_channels",
-    "backbone_channel",
-    "aspp_channel",
-    "kernel_sizes",
-    "batch_sizes",
-    "window_size_choices",
-)
-
 
 def _conv_block(
     in_channels: int,
@@ -239,17 +227,7 @@ class DeepLabV3(nn.Module):
         super().__init__()
         cfg = config or {}
         self.n_points = int(n_points)
-        max_allowed_k = validate_common_model_config(
-            cfg,
-            self.n_points,
-            _DISALLOWED_DEEPLAB_KEYS,
-            (
-                "DeepLabV3",
-                "use singular 'deeplabv3_backbone_channel', "
-                "'deeplabv3_aspp_channel', and 'kernel_size' outside "
-                "Bayesian optimization.",
-            ),
-        )
+        max_allowed_k = validate_common_model_config(cfg, self.n_points)
 
 
         backbone_channels = validate_positive_int(

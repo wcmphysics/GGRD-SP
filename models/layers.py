@@ -86,21 +86,14 @@ def validate_odd_kernel_size(
 def validate_common_model_config(
     cfg: dict[str, Any],
     n_points: int,
-    disallowed_keys: Iterable[str],
-    model_spec: tuple[str, str],
+    disallowed_keys: Iterable[str] | None = None,
+    model_spec: tuple[str, str] | None = None,
 ) -> int:
-    """Validate disallowed plural/alias keys and return kernel size bound.
+    """Return maximum allowed kernel size bounded by n_points and window size.
 
     Returns the maximum allowed kernel size bounded by n_points and any
     explicit window_size override.
     """
-    model_name, canonical_hint = model_spec
-    for invalid_key in disallowed_keys:
-        if invalid_key in cfg:
-            raise KeyError(
-                f"Invalid key '{invalid_key}' in {model_name} config; {canonical_hint}"
-            )
-
     explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
     return min(n_points, explicit_ws) if explicit_ws is not None else n_points
 

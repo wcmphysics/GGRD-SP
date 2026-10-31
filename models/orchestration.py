@@ -7,10 +7,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from models.bayesian_opt import (
-    _DISALLOWED_BO_KEYS,
-    optimize_model_hyperparameters,
-)
+from models.bayesian_opt import optimize_model_hyperparameters
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
 from models.trainer import instantiate_model, train_model_region
 
@@ -375,11 +372,7 @@ def perform_model_training_and_bayesian_optimization(
         region_train_config.setdefault("stride", stride_points)
 
         if region_use_bayesian_opt:
-            train_fixed_cfg = {
-                k: v
-                for k, v in region_train_config.items()
-                if k not in _DISALLOWED_BO_KEYS
-            }
+            train_fixed_cfg = dict(region_train_config)
             bo_run_cfg = {
                 **train_fixed_cfg,
                 **film_cfg,

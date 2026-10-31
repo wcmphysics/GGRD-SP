@@ -112,14 +112,12 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         invalid_train_cfgs = [
             {"batch_size": [16]},                          # list instead of int
             {"window_size": [15]},                         # list instead of int
-            {"window_size_choice": "15"},                  # invalid BO key
+            {"window_size_choice": "15"},                  # invalid type
             {"window_size": 5, "kernel_size": 7},          # kernel > window
-            {"window_size_choices": [15]},                 # BO key in training
         ]
         for cfg in invalid_train_cfgs:
             with self.subTest(train_cfg=cfg):
-                expected_err = KeyError if "window_size_choices" in cfg else ValueError
-                with self.assertRaises(expected_err):
+                with self.assertRaises(ValueError):
                     train_model_region(
                         self.train_ds,
                         self.val_ds,
@@ -134,11 +132,10 @@ class TestSlidingWindowPipeline(unittest.TestCase):
             {"window_size_choices": 15},                   # scalar instead of list
             {"window_size_choices": None},                 # None choices
             {"window_size_choices": [5], "kernel_sizes": [7]}, # kernel > window
-            {"window_size": 15},                           # singular key in BO
         ]
         for cfg in invalid_bo_cfgs:
             with self.subTest(bo_cfg=cfg):
-                expected_err = KeyError if "window_size" in cfg else (
+                expected_err = (
                     TypeError if cfg.get("window_size_choices") == 15 else ValueError
                 )
                 with self.assertRaises(expected_err):

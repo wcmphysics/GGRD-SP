@@ -21,17 +21,6 @@ from models.layers import (
     validate_positive_int,
 )
 
-_DISALLOWED_UNET_KEYS = (
-    "residual_unet_channels",
-    "unet_channels",
-    "base_channels",
-    "base_channel",
-    "depths",
-    "kernel_sizes",
-    "batch_sizes",
-    "window_size_choices",
-)
-
 
 class UNetConvBlock1D(nn.Module):
     """Double 1D convolutional block with normalization and activations."""
@@ -115,16 +104,7 @@ class UNet1D(nn.Module):
         super().__init__()
         cfg = config or {}
         self.n_points = int(n_points)
-        max_allowed_k = validate_common_model_config(
-            cfg,
-            self.n_points,
-            _DISALLOWED_UNET_KEYS,
-            (
-                "UNet1D",
-                "use singular 'residual_unet_channel'/'unet_channel', 'depth', "
-                "and 'kernel_size' outside Bayesian optimization.",
-            ),
-        )
+        max_allowed_k = validate_common_model_config(cfg, self.n_points)
 
 
         self.residual = bool(cfg.get("residual", True))

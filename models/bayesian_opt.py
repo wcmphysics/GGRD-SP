@@ -35,28 +35,6 @@ _BO_ONLY_KEYS = {
     "use_bayesian_opt",
 }
 
-_DISALLOWED_BO_KEYS = {
-    "batch_size": "batch_sizes",
-    "window_size": "window_size_choices",
-    "window_size_choice": "window_size_choices",
-    "kernel_size": "kernel_sizes",
-    "depth": "depths",
-    "resnet_channel": "resnet_channels",
-    "residual_unet_channel": "residual_unet_channels",
-    "unet_channel": "unet_channels",
-    "deeplabv3_backbone_channel": "deeplabv3_backbone_channels",
-    "deeplabv3_aspp_channel": "deeplabv3_aspp_channels",
-    "hidden_channels": "resnet_channels",
-    "hidden_channel": "resnet_channels",
-    "base_channels": "residual_unet_channels / unet_channels",
-    "base_channel": "residual_unet_channels / unet_channels",
-    "backbone_channels": "deeplabv3_backbone_channels",
-    "backbone_channel": "deeplabv3_backbone_channels",
-    "aspp_channels": "deeplabv3_aspp_channels",
-    "aspp_channel": "deeplabv3_aspp_channels",
-    "lr_bounds": "learning_rate_bounds",
-}
-
 _CHANNEL_SEARCH_KEYS = (
     "resnet_channels",
     "residual_unet_channels",
@@ -325,12 +303,6 @@ def optimize_model_hyperparameters(
     from models.trainer import train_model_region
 
     cfg = dict(config or {})
-    for invalid_key, canonical_key in _DISALLOWED_BO_KEYS.items():
-        if invalid_key in cfg:
-            raise KeyError(
-                f"Invalid key '{invalid_key}' in Bayesian optimization config; "
-                f"use plural key '{canonical_key}'."
-            )
 
     for search_key in _SEARCH_SPACE_KEYS:
         if search_key in cfg and cfg[search_key] is None:

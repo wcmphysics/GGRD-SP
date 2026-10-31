@@ -28,41 +28,6 @@ from models.layers import validate_odd_kernel_size, validate_positive_int
 
 _MODEL_CLASS_MAP = MODEL_CLASS_MAP
 
-_DISALLOWED_TRAINER_ALIASES: dict[str, str] = {
-    "lr": "learning_rate",
-    "batch": "batch_size",
-    "batch_sizes": "batch_size",
-    "window_size_choices": "window_size",
-    "kernel_sizes": "kernel_size",
-    "depths": "depth",
-    "resnet_channels": "resnet_channel",
-    "residual_unet_channels": "residual_unet_channel",
-    "unet_channels": "unet_channel",
-    "deeplabv3_backbone_channels": "deeplabv3_backbone_channel",
-    "deeplabv3_aspp_channels": "deeplabv3_aspp_channel",
-    "hidden_channels": "resnet_channel",
-    "hidden_channel": "resnet_channel",
-    "base_channels": "residual_unet_channel / unet_channel",
-    "base_channel": "residual_unet_channel / unet_channel",
-    "backbone_channels": "deeplabv3_backbone_channel",
-    "backbone_channel": "deeplabv3_backbone_channel",
-    "aspp_channels": "deeplabv3_aspp_channel",
-    "aspp_channel": "deeplabv3_aspp_channel",
-    "epoch": "epochs",
-    "num_epochs": "epochs",
-    "l2": "l2_weight",
-    "use_sw": "use_sliding_window",
-    "use_lr_scheduler": "use_learning_rate_scheduler",
-    "lr_scheduler": "use_learning_rate_scheduler",
-    "lr_reduce_factor": "learning_rate_reduce_factor",
-    "lr_factor": "learning_rate_reduce_factor",
-    "lr_scheduler_patience": "learning_rate_scheduler_patience",
-    "lr_patience": "learning_rate_scheduler_patience",
-    "min_lr": "min_learning_rate",
-    "lr_min": "min_learning_rate",
-    "patience": "early_stopping_patience",
-}
-
 _POSITIVE_INT_CONFIG_KEYS = (
     "window_size_choice",
     "window_size",
@@ -306,12 +271,6 @@ def train_model_region(
     has_val = val_dataset is not None and len(val_dataset) > 0
 
     cfg = dict(config or {})
-    for alias, canonical in _DISALLOWED_TRAINER_ALIASES.items():
-        if alias in cfg:
-            raise KeyError(
-                f"Missing required canonical key '{canonical}'. "
-                f"Found deprecated or plural alias '{alias}'."
-            )
 
     model_type = str(cfg.get("model_type", "resnet")).lower()
     use_sw = bool(cfg.get("use_sliding_window", False))

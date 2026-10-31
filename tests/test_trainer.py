@@ -123,28 +123,6 @@ class TestReduceLROnPlateau(unittest.TestCase):
         for lr_val in res_disabled["history"]["learning_rate"]:
             self.assertEqual(lr_val, init_lr)
 
-    def test_legacy_aliases_rejected(self) -> None:
-        """Verify passing deprecated or legacy aliases raises KeyError."""
-        model = DummyConstantModel(n_points=self.n_points)
-        disallowed_aliases = [
-            "lr",
-            "lr_scheduler",
-            "lr_factor",
-            "lr_patience",
-            "lr_min",
-            "use_lr_scheduler",
-            "lr_reduce_factor",
-            "lr_scheduler_patience",
-            "min_lr",
-        ]
-        base_cfg = {"model": model, "epochs": 2, "learning_rate": 1e-3}
-        for alias in disallowed_aliases:
-            with self.subTest(alias=alias):
-                with self.assertRaises(KeyError):
-                    train_model_region(
-                        self.train_ds, self.val_ds, config={**base_cfg, alias: True}
-                    )
-
     def test_invalid_scheduler_parameters_and_warnings(self) -> None:
         """Verify invalid scheduler parameter bounds and patience warning."""
         model = DummyConstantModel(n_points=self.n_points)
