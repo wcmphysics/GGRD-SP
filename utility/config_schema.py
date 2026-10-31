@@ -101,7 +101,7 @@ class SplittingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_ratios_sum_to_one(self) -> SplittingConfig:
-        """Verify partition proportions sum to 1.0 for random splitting."""
+        """Verify partition proportions sum to 1.0 or direct assignment is set."""
         if self.method == "random":
             total = self.train_ratio + self.val_ratio + self.test_ratio
             if abs(total - 1.0) > 1e-4:
@@ -109,6 +109,10 @@ class SplittingConfig(BaseModel):
                     f"Partition ratios must sum to 1.0, got {total:.4f} "
                     f"(train={self.train_ratio}, val={self.val_ratio}, test={self.test_ratio})."
                 )
+        elif self.method == "direct" and not self.direct_assignment:
+            raise ValueError(
+                "method='direct' requires 'direct_assignment' mapping."
+            )
         return self
 
 

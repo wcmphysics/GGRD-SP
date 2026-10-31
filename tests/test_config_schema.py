@@ -101,6 +101,23 @@ class TestConfigSchema(unittest.TestCase):
             SplittingConfig(train_ratio=0.6, val_ratio=0.3, test_ratio=0.3)
         self.assertIn("must sum to 1.0", str(ctx.exception))
 
+    def test_direct_assignment_validation(self) -> None:
+        """Verify SplittingConfig validates direct_assignment for direct splitting."""
+        sc = SplittingConfig(
+            method="direct",
+            direct_assignment={
+                "train": ["S1"],
+                "val": ["S2"],
+                "test": ["S3"],
+            },
+        )
+        self.assertEqual(sc.method, "direct")
+        self.assertIsNotNone(sc.direct_assignment)
+
+        with self.assertRaises(ValidationError) as ctx:
+            SplittingConfig(method="direct")
+        self.assertIn("requires 'direct_assignment' mapping", str(ctx.exception))
+
     def test_normalization_mode_enum_validation(self) -> None:
         """Verify normalization rejects unknown normalization modes."""
         valid_modes = [
