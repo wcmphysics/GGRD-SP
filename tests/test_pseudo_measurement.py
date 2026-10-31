@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import unittest
 import numpy as np
 import pandas as pd
 
 from utility.pseudo_measurement import (
+    DEFAULT_REGION_PROFILES,
     generate_pseudo_measurements,
     pseudo_voigt,
 )
@@ -71,6 +73,7 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
             "measurements_per_t7_code": 10,
             "die_variation_std": 0.0,
             "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": False},
             "seed": 42,
         }
         ary_i, _, meta_df = generate_pseudo_measurements(cfg)
@@ -85,6 +88,111 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
         j4_t7 = meta_df[meta_df["tool"] == "J4"].drop_duplicates(subset=["measurement_id"])["t7_code"].tolist()
         self.assertEqual(j4_t7, ["T7_001"] * 10 + ["T7_002"] * 10)
 
+    def test_shirley_background_elevates_high_be_baseline(self) -> None:
+        """Verify Shirley background elevates high-BE baseline relative to low-BE."""
+        step_ratio = 0.15
+        cfg = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Ti2p"],
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": step_ratio},
+            "seed": 42,
+        }
+        ary_i, _, _ = generate_pseudo_measurements(cfg)
+        spectrum = ary_i[0]
+        # At index 0 (lowest BE), cum_area is 0, so Shirley step is 0.
+        # At index -1 (highest BE), cum_area reaches total_area, giving full step.
+        low_be_intensity = spectrum[0]
+        high_be_intensity = spectrum[-1]
+        self.assertGreater(high_be_intensity, low_be_intensity)
+        self.assertGreater(high_be_intensity - low_be_intensity, 0.0)
+
+    def test_shirley_background_monotonic_step(self) -> None:
+        """Verify the isolated Shirley background step is monotonically non-decreasing."""
+        cfg_enabled = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Ti2p"],
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": 0.10},
+            "seed": 42,
+        }
+        cfg_disabled = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Ti2p"],
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": False},
+            "seed": 42,
+        }
+        ary_enabled, _, _ = generate_pseudo_measurements(cfg_enabled)
+        ary_disabled, _, _ = generate_pseudo_measurements(cfg_disabled)
+
+        # Difference isolates the cumulative Shirley step
+        shirley_step = ary_enabled[0] - ary_disabled[0]
+        step_diffs = np.diff(shirley_step)
+        self.assertTrue(np.all(step_diffs >= -1e-12))
+        self.assertGreater(shirley_step[-1] - shirley_step[0], 0.0)
+
+    def test_shirley_background_disabled_and_zero_ratio(self) -> None:
+        """Verify enabled: false and step_ratio: 0.0 produce identical spectra."""
+        cfg_false = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": False, "step_ratio": 0.10},
+            "seed": 42,
+        }
+        cfg_zero = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": 0.0},
+            "seed": 42,
+        }
+        ary_false, _, _ = generate_pseudo_measurements(cfg_false)
+        ary_zero, _, _ = generate_pseudo_measurements(cfg_zero)
+        np.testing.assert_allclose(ary_false, ary_zero, atol=1e-12)
+
+    def test_per_region_shirley_step_ratio_override(self) -> None:
+        """Verify per-region shirley_step_ratio overrides the global setting."""
+        custom_profiles = copy.deepcopy(DEFAULT_REGION_PROFILES)
+        custom_profiles["Ti2p"]["shirley_step_ratio"] = 0.0
+        custom_profiles["Al2p"]["shirley_step_ratio"] = 0.25
+
+        cfg = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Al2p", "Ti2p", "Cl2p"],
+            "region_profiles": custom_profiles,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": True, "step_ratio": 0.10},
+            "seed": 42,
+        }
+        ary_i, _, meta_df = generate_pseudo_measurements(cfg)
+
+        cfg_dis = {
+            "measurements_per_tool": {"J4": 1},
+            "n_die": 1,
+            "regions": ["Al2p", "Ti2p", "Cl2p"],
+            "region_profiles": custom_profiles,
+            "noise_relative_std": 0.0,
+            "shirley_background": {"enabled": False},
+            "seed": 42,
+        }
+        ary_dis, _, _ = generate_pseudo_measurements(cfg_dis)
+
+        for i, row in meta_df.iterrows():
+            region = row["region"]
+            step = ary_i[i] - ary_dis[i]
+            if region == "Ti2p":
+                np.testing.assert_allclose(step, 0.0, atol=1e-12)
+            elif region == "Al2p":
+                self.assertGreater(step[-1] - step[0], 0.0)
+            elif region == "Cl2p":
+                self.assertGreater(step[-1] - step[0], 0.0)
+
     def test_defensive_error_handling(self) -> None:
         """Table-driven test for invalid generator configuration parameters."""
         error_configs = [
@@ -94,6 +202,14 @@ class TestPseudoMeasurementGeneration(unittest.TestCase):
             ("non-positive t7 per code", {"measurements_per_t7_code": 0}),
             ("missing relative strengths", {"region_relative_strengths": None}),
             ("negative relative strength", {"region_relative_strengths": {"Ti2p": -1.0}}),
+            ("negative shirley step ratio", {"shirley_background": {"step_ratio": -0.1}}),
+            ("excessive shirley step ratio", {"shirley_background": {"step_ratio": 1.5}}),
+            ("invalid shirley enabled type", {"shirley_background": {"enabled": "yes"}}),
+            ("invalid shirley type", {"shirley_background": 123}),
+            (
+                "negative regional shirley step",
+                {"region_profiles": {"Ti2p": {"shirley_step_ratio": -0.05}}},
+            ),
         ]
         for name, cfg in error_configs:
             with self.subTest(case=name):
