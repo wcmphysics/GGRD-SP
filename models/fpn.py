@@ -32,7 +32,7 @@ class FPNConvBlock1D(nn.Module):
         config: dict[str, Any],
     ) -> None:
         super().__init__()
-        self.kernel_size = int(config.get("kernel_size", 3))
+        self.kernel_size = validate_odd_kernel_size(config.get("kernel_size", 3))
         self.use_batch_norm = bool(config.get("use_batch_norm", True))
         self.dropout = float(config.get("dropout", 0.0))
         act_name = str(config.get("activation", "relu")).lower()
@@ -137,7 +137,12 @@ class FPN1D(nn.Module):
             "activation": act_name,
         }
 
-        # Build bottom-up hierarchical encoder stages and poolings.
+        # Build pyramid pathways and multi-scale fusion head.
+        self._build_pyramid_pathways(block_cfg)
+        self._build_fusion_head(cfg, act_name)
+
+    def _build_pyramid_pathways(self, block_cfg: dict[str, Any]) -> None:
+        """Construct bottom-up encoders, lateral 1x1 convs, and smooth convs."""
         self.encoders = nn.ModuleList()
         self.pools = nn.ModuleList()
         self.laterals = nn.ModuleList()
@@ -154,7 +159,6 @@ class FPN1D(nn.Module):
             )
             current_in = out_ch
 
-        # Build top-down smoothing convolutions.
         self.smooth_convs = nn.ModuleList()
         for _ in range(self.depth - 1):
             self.smooth_convs.append(
@@ -164,7 +168,10 @@ class FPN1D(nn.Module):
                 )
             )
 
-        # Multi-scale fusion head concatenating all upsampled pyramid levels.
+    def _build_fusion_head(
+        self, cfg: dict[str, Any], act_name: str
+    ) -> None:
+        """Construct multi-scale fusion head, FiLM generator, and output conv."""
         fused_in_channels = self.depth * self.fpn_pyramid_channel
         self.fuse_conv = build_conv1d_layer(
             (fused_in_channels, self.fpn_pyramid_channel),
@@ -183,7 +190,6 @@ class FPN1D(nn.Module):
         self.fuse_drop: nn.Module | None = (
             nn.Dropout(self.dropout) if self.dropout > 0.0 else None
         )
-
         self.film_gen = (
             FiLMGenerator(channels_list=[self.fpn_pyramid_channel], config=cfg)
             if self.use_film

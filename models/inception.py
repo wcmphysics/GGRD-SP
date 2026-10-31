@@ -37,9 +37,12 @@ class InceptionModule1D(nn.Module):
         self.bottleneck_channels = validate_positive_int(
             config.get("bottleneck_channels", 16), "bottleneck_channels"
         )
-        self.kernel_sizes: list[int] = list(
-            config.get("kernel_sizes", [3, 7, 15, 31])
-        )
+        raw_kernel_sizes = config.get("kernel_sizes", [3, 7, 15, 31])
+        self.kernel_sizes: list[int] = [
+            validate_odd_kernel_size(k) for k in raw_kernel_sizes
+        ]
+        if not self.kernel_sizes:
+            raise ValueError("kernel_sizes must not be empty.")
         self.use_bottleneck = bool(config.get("use_bottleneck", True))
         self.padding_mode = str(config.get("padding_mode", "reflect"))
         self.use_batch_norm = bool(config.get("use_batch_norm", True))
@@ -190,6 +193,8 @@ class InceptionTime1D(nn.Module):
             validate_odd_kernel_size(k, max_allowed=max_allowed_k)
             for k in raw_kernel_sizes
         ]
+        if not self.kernel_sizes:
+            raise ValueError("kernel_sizes must not be empty.")
         self.num_blocks = validate_positive_int(
             cfg.get("num_blocks", 3), "num_blocks"
         )
