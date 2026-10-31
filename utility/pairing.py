@@ -222,103 +222,42 @@ def _match_sessions_greedy(
     return pairs
 
 
-def pair_source_target_spectra(
-    df_meta: pd.DataFrame,
-    config: dict[str, Any] | None = None,
-) -> pd.DataFrame:
-    """Pair source tool spectra to target tool spectra with 1-to-1 matching.
-
-    Fulfills Stage 2 of AGENTS.md:
-    - Performs session-level 1-to-1 matching between source and target tools.
-    - Pairs within each specimen material separately.
-    - If t7_code is present, enforces identical t7_code for paired sessions.
-    - Adheres to a configurable time threshold (default 12 hours).
-    - Appends target pairing information to the metadata DataFrame:
-      'target_tool', 'target_measurement_id', 'target_spectrum_index',
-      'target_time', 'time_diff_hours', and 'target_t7_code' (if present).
-    - For source tool rows, 'target_tool' is always populated with the target
-      tool name, even if no matching target session was found.
+def _find_all_session_pairs(
+    result_df: pd.DataFrame,
+    source_tool: str,
+    target_tool: str,
+    threshold_hours: float,
+    matcher: Any,
+    materials: list[str | None],
+    has_t7: bool,
+) -> dict[str, tuple[str, float]]:
+    """Find 1-to-1 session pairs across materials and t7 code partitions.
 
     Parameters
     ----------
-    df_meta : pd.DataFrame
-        Metadata DataFrame containing: 'tool', 'measurement_id', 'time',
-        'die', 'region', and 'spectrum_index'.
-    config : dict[str, Any]
-        Configuration dictionary. Must contain required key 'material'
-        ('all' to pair each material separately, or a specific material string).
+    result_df : pd.DataFrame
+        Metadata DataFrame containing session information.
+    source_tool : str
+        Source tool identifier.
+    target_tool : str
+        Target tool identifier.
+    threshold_hours : float
+        Maximum allowable absolute time difference between paired sessions.
+    matcher : Any
+        Callable matching function (_match_sessions_optimal or greedy).
+    materials : list[str | None]
+        List of materials to process sequentially.
+    has_t7 : bool
+        Whether to enforce identical t7_code for paired sessions.
 
     Returns
     -------
-    pd.DataFrame
-        A new DataFrame with pairing columns appended, retaining original index.
-
-    Raises
-    ------
-    KeyError
-        If required columns are missing from df_meta.
-    ValueError
-        If configuration parameters are invalid.
+    dict[str, tuple[str, float]]
+        Mapping of source_measurement_id -> (target_measurement_id, diff_hours).
     """
-    if config is None or "material" not in config:
-        raise KeyError(
-            "Missing required configuration key 'material' in pairing config."
-        )
-    if config["material"] is None:
-        raise ValueError(
-            "'material' in pairing config cannot be None. "
-            "Set 'material': 'all' to pair within each material separately, "
-            "or specify a specific material string."
-        )
-
-    merged_config = get_default_pairing_config()
-    merged_config.update(config)
-
-    _validate_pairing_config(merged_config)
-
-    source_tool: str = merged_config["source_tool"]
-    target_tool: str = merged_config["target_tool"]
-    threshold_hours = float(merged_config["time_threshold_hours"])
-    method: str = merged_config["method"]
-    material_filter: str = str(merged_config["material"]).strip()
-    match_t7_code = bool(merged_config.get("match_t7_code", True))
-
-    required_cols = {
-        "tool",
-        "measurement_id",
-        "time",
-        "die",
-        "region",
-        "spectrum_index",
-    }
-    missing_cols = required_cols - set(df_meta.columns)
-    if missing_cols:
-        raise KeyError(
-            f"df_meta is missing required columns: {sorted(missing_cols)}"
-        )
-
-    result_df = df_meta.copy()
-    result_df["time"] = _safe_to_datetime(result_df["time"])
-    has_t7 = "t7_code" in result_df.columns and match_t7_code
-    matcher = (
-        _match_sessions_optimal if method == "optimal" else _match_sessions_greedy
-    )
-
-    # Determine materials to pair over
-    if material_filter.lower() == "all":
-        if "material" in result_df.columns:
-            materials_to_process: list[str | None] = list(
-                result_df["material"].dropna().unique()
-            )
-        else:
-            materials_to_process = [None]
-    else:
-        materials_to_process = [material_filter]
-
-    # session_pairs: mapping of (src_meas_id) -> (tgt_meas_id, diff_hours)
     all_session_pairs: dict[str, tuple[str, float]] = {}
 
-    for mat in materials_to_process:
+    for mat in materials:
         df_mat = (
             result_df[result_df["material"] == mat]
             if mat is not None
@@ -353,6 +292,39 @@ def pair_source_target_spectra(
                 matcher(src_ids, tgt_ids, cost_matrix, threshold_hours)
             )
 
+    return all_session_pairs
+
+
+def _assemble_paired_columns(
+    result_df: pd.DataFrame,
+    all_session_pairs: dict[str, tuple[str, float]],
+    source_tool: str,
+    target_tool: str,
+    threshold_hours: float,
+    has_t7: bool,
+) -> pd.DataFrame:
+    """Populate and append paired target columns to the result DataFrame.
+
+    Parameters
+    ----------
+    result_df : pd.DataFrame
+        Copied metadata DataFrame.
+    all_session_pairs : dict[str, tuple[str, float]]
+        Mapping of source session ID to (target session ID, diff_hours).
+    source_tool : str
+        Source tool identifier.
+    target_tool : str
+        Target tool identifier.
+    threshold_hours : float
+        Pairing threshold for warning message formatting.
+    has_t7 : bool
+        Whether t7_code is present in metadata and used for pairing.
+
+    Returns
+    -------
+    pd.DataFrame
+        Updated DataFrame with target columns populated.
+    """
     # Build target lookup: (measurement_id, die, region) -> (spec_idx, time)
     tgt_spectra = result_df[result_df["tool"] == target_tool]
     tgt_lookup: dict[tuple[str, int, str], tuple[int, pd.Timestamp]] = {
@@ -368,7 +340,6 @@ def pair_source_target_spectra(
         else {}
     )
 
-    # Prepare target columns aligning with result_df
     n_rows = len(result_df)
     col_tool = [
         target_tool if t == source_tool else None for t in result_df["tool"]
@@ -423,3 +394,125 @@ def pair_source_target_spectra(
         )
 
     return result_df
+
+
+def _prepare_pairing_setup(
+    df_meta: pd.DataFrame,
+    config: dict[str, Any] | None,
+) -> tuple[pd.DataFrame, dict[str, Any], list[str | None], bool, Any]:
+    """Validate inputs, resolve config, and prepare materials list."""
+    if config is None or "material" not in config:
+        raise KeyError(
+            "Missing required configuration key 'material' in pairing config."
+        )
+    if config["material"] is None:
+        raise ValueError(
+            "'material' in pairing config cannot be None. "
+            "Set 'material': 'all' to pair within each material separately, "
+            "or specify a specific material string."
+        )
+
+    merged_config = get_default_pairing_config()
+    merged_config.update(config)
+    _validate_pairing_config(merged_config)
+
+    required_cols = {
+        "tool",
+        "measurement_id",
+        "time",
+        "die",
+        "region",
+        "spectrum_index",
+    }
+    missing_cols = required_cols - set(df_meta.columns)
+    if missing_cols:
+        raise KeyError(
+            f"df_meta is missing required columns: {sorted(missing_cols)}"
+        )
+
+    result_df = df_meta.copy()
+    result_df["time"] = _safe_to_datetime(result_df["time"])
+    has_t7 = "t7_code" in result_df.columns and bool(
+        merged_config.get("match_t7_code", True)
+    )
+    matcher = (
+        _match_sessions_optimal
+        if merged_config["method"] == "optimal"
+        else _match_sessions_greedy
+    )
+
+    material_filter = str(merged_config["material"]).strip()
+    if material_filter.lower() == "all":
+        materials: list[str | None] = (
+            list(result_df["material"].dropna().unique())
+            if "material" in result_df.columns
+            else [None]
+        )
+    else:
+        materials = [material_filter]
+
+    return result_df, merged_config, materials, has_t7, matcher
+
+
+def pair_source_target_spectra(
+    df_meta: pd.DataFrame,
+    config: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Pair source tool spectra to target tool spectra with 1-to-1 matching.
+
+    Fulfills Stage 2 of AGENTS.md:
+    - Performs session-level 1-to-1 matching between source and target tools.
+    - Pairs within each specimen material separately.
+    - If t7_code is present, enforces identical t7_code for paired sessions.
+    - Adheres to a configurable time threshold (default 12 hours).
+    - Appends target pairing information to the metadata DataFrame:
+      'target_tool', 'target_measurement_id', 'target_spectrum_index',
+      'target_time', 'time_diff_hours', and 'target_t7_code' (if present).
+    - For source tool rows, 'target_tool' is always populated with the target
+      tool name, even if no matching target session was found.
+
+    Parameters
+    ----------
+    df_meta : pd.DataFrame
+        Metadata DataFrame containing: 'tool', 'measurement_id', 'time',
+        'die', 'region', and 'spectrum_index'.
+    config : dict[str, Any]
+        Configuration dictionary. Must contain required key 'material'
+        ('all' to pair each material separately, or a specific material string).
+
+    Returns
+    -------
+    pd.DataFrame
+        A new DataFrame with pairing columns appended, retaining original index.
+
+    Raises
+    ------
+    KeyError
+        If required columns are missing from df_meta.
+    ValueError
+        If configuration parameters are invalid.
+    """
+    result_df, cfg, materials, has_t7, matcher = _prepare_pairing_setup(
+        df_meta, config
+    )
+    source_tool = cfg["source_tool"]
+    target_tool = cfg["target_tool"]
+    threshold_hours = float(cfg["time_threshold_hours"])
+
+    all_session_pairs = _find_all_session_pairs(
+        result_df,
+        source_tool,
+        target_tool,
+        threshold_hours,
+        matcher,
+        materials,
+        has_t7,
+    )
+    return _assemble_paired_columns(
+        result_df,
+        all_session_pairs,
+        source_tool,
+        target_tool,
+        threshold_hours,
+        has_t7,
+    )

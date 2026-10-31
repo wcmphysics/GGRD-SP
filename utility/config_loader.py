@@ -176,6 +176,212 @@ def _set_if_none(d: dict[str, Any], key: str, value: Any) -> None:
         d[key] = value
 
 
+def _inject_spatial_temporal_settings(
+    resolved: dict[str, Any],
+    global_cfg: dict[str, Any],
+    source_tool: str,
+    target_tool: str,
+    material: str,
+) -> None:
+    """Inject global pairing and splitting configuration defaults."""
+    pairing = resolved.setdefault("pairing", {})
+    if isinstance(pairing, dict):
+        _set_if_none(pairing, "source_tool", source_tool)
+        _set_if_none(pairing, "target_tool", target_tool)
+        _set_if_none(pairing, "material", material)
+
+    splitting = resolved.setdefault("splitting", {})
+    if isinstance(splitting, dict):
+        _set_if_none(splitting, "source_tool", source_tool)
+        _set_if_none(splitting, "target_tool", target_tool)
+
+
+def _inject_preprocessing_and_denoise_settings(
+    resolved: dict[str, Any],
+    global_cfg: dict[str, Any],
+    example_region: str,
+    sample_meas_id: str,
+) -> None:
+    """Inject noise analysis, denoise, and noise plotting defaults."""
+    source_tool = str(global_cfg.get("source_tool", "J4"))
+    target_tool = str(global_cfg.get("target_tool", "J5"))
+    apply_denoise = bool(global_cfg.get("apply_denoise", False))
+    data_gen = resolved.get("data_generation", {})
+    material = str(
+        global_cfg.get("material", data_gen.get("material", "NMG"))
+        if isinstance(data_gen, dict)
+        else global_cfg.get("material", "NMG")
+    )
+
+    noise_analysis = resolved.setdefault("noise_analysis", {})
+    if isinstance(noise_analysis, dict):
+        _set_if_none(noise_analysis, "regions", [example_region])
+
+    denoise_cfg = resolved.setdefault("denoise", {})
+    if isinstance(denoise_cfg, dict):
+        _set_if_none(denoise_cfg, "apply_denoise", apply_denoise)
+        _set_if_none(denoise_cfg, "source_tool", source_tool)
+        _set_if_none(denoise_cfg, "target_tool", target_tool)
+        _set_if_none(denoise_cfg, "material", material)
+        _set_if_none(denoise_cfg, "regions", ["Cl2p", "Ti2p"])
+
+    noise_plot = resolved.setdefault("noise_plot", {})
+    if isinstance(noise_plot, dict):
+        noise_plot.setdefault(
+            "example",
+            {
+                "measurement_id": sample_meas_id,
+                "region": example_region,
+            },
+        )
+
+
+def _inject_model_and_training_settings(
+    resolved: dict[str, Any],
+    global_cfg: dict[str, Any],
+    model_type: str,
+    unified_model: bool,
+    regions: list[str],
+) -> None:
+    """Inject dataset, FiLM, Bayesian optimization, and training defaults."""
+    source_tool = str(global_cfg.get("source_tool", "J4"))
+    target_tool = str(global_cfg.get("target_tool", "J5"))
+    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
+    use_film = bool(global_cfg.get("use_film", False))
+
+    dataset = resolved.setdefault("dataset", {})
+    if isinstance(dataset, dict):
+        _set_if_none(dataset, "source_tool", source_tool)
+        _set_if_none(dataset, "target_tool", target_tool)
+        _set_if_none(dataset, "use_sliding_window", use_sliding_window)
+        _set_if_none(dataset, "regions", regions)
+
+    film = resolved.setdefault("film", {})
+    if isinstance(film, dict):
+        film.setdefault("use_film", use_film)
+        film.setdefault("num_regions", len(regions))
+
+    bo = resolved.setdefault("bayesian_opt", {})
+    if isinstance(bo, dict):
+        lr_b = bo.get("learning_rate_bounds")
+        if isinstance(lr_b, (list, tuple)):
+            bo["learning_rate_bounds"] = tuple(lr_b)
+        l2_b = bo.get("l2_bounds")
+        if isinstance(l2_b, (list, tuple)):
+            bo["l2_bounds"] = tuple(l2_b)
+
+    cost = resolved.get("cost", {})
+    training = resolved.setdefault("training", {})
+    if isinstance(training, dict):
+        training.setdefault("model_type", model_type)
+        training.setdefault("unified_model", unified_model)
+        training.setdefault("use_film", film.get("use_film", use_film))
+        training.setdefault("film_config", film)
+        if isinstance(cost, dict) and "l2_weight" in cost:
+            train_cfg = training.setdefault("train_config", {})
+            if isinstance(train_cfg, dict):
+                train_cfg.setdefault("l2_weight", cost["l2_weight"])
+
+    prediction = resolved.setdefault("prediction", {})
+    if isinstance(prediction, dict):
+        prediction.setdefault("source_tool", source_tool)
+        prediction.setdefault("target_tool", target_tool)
+        prediction.setdefault("film_config", film)
+
+
+def _inject_evaluation_settings(
+    resolved: dict[str, Any],
+    global_cfg: dict[str, Any],
+) -> None:
+    """Inject metrics, quantification, and visualization configuration
+    defaults.
+    """
+    source_tool = str(global_cfg.get("source_tool", "J4"))
+    target_tool = str(global_cfg.get("target_tool", "J5"))
+    example_region = str(global_cfg.get("example_region", "Ti2p"))
+    sample_meas_id = str(
+        global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
+    )
+    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
+    data_gen = resolved.get("data_generation", {})
+    material = str(
+        global_cfg.get("material", data_gen.get("material", "NMG"))
+        if isinstance(data_gen, dict)
+        else global_cfg.get("material", "NMG")
+    )
+
+    cost = resolved.get("cost", {})
+    norm_by_max = (
+        cost.get("normalized_by_target_max", True)
+        if isinstance(cost, dict)
+        else True
+    )
+    metrics_rep = resolved.setdefault("metrics_report", {})
+    if isinstance(metrics_rep, dict):
+        metrics_rep.setdefault("normalized_by_target_max", norm_by_max)
+        mse_metric = "MSE_normalized_by_target" if norm_by_max else "MSE"
+        existing_metrics = list(
+            metrics_rep.get("metrics", ["peak_error_percentage", "max_error_percentage"])
+        )
+        if mse_metric not in existing_metrics and "MSE" not in existing_metrics:
+            existing_metrics = [mse_metric, *existing_metrics]
+        metrics_rep["metrics"] = existing_metrics
+
+    noise_plot = resolved.setdefault("noise_plot", {})
+    vis = resolved.setdefault("visualization", {})
+    if isinstance(vis, dict):
+        vis.setdefault("source_tool", source_tool)
+        vis.setdefault("target_tool", target_tool)
+        vis.setdefault("example_region", example_region)
+        vis.setdefault("sample_measurement_id", sample_meas_id)
+        vis.setdefault("use_sliding_window", use_sliding_window)
+        vis.setdefault("noise_plot_config", noise_plot)
+
+    quant = resolved.setdefault("quantification", {})
+    denoise_cfg = resolved.get("denoise", {})
+    if isinstance(quant, dict):
+        quant.setdefault("material", material)
+        rsf_tbl = quant.get("rsf_table")
+        if rsf_tbl and isinstance(denoise_cfg, dict):
+            denoise_cfg.setdefault("rsf_table", rsf_tbl)
+        if rsf_tbl and isinstance(metrics_rep, dict):
+            metrics_quant = metrics_rep.setdefault("quantification_config", {})
+            if isinstance(metrics_quant, dict):
+                metrics_quant.setdefault("rsf_table", rsf_tbl)
+
+
+def _resolve_materials_and_vocab(resolved: dict[str, Any]) -> None:
+    """Populate material elements and vocabulary in film config if present."""
+    if "materials" in resolved and isinstance(resolved["materials"], dict):
+        materials = load_material_elements(resolved)
+        film_sec = resolved.setdefault("film", {})
+        if isinstance(film_sec, dict):
+            film_sec.setdefault("material_elements", materials)
+            film_sec.setdefault(
+                "element_vocab", extract_element_vocabulary(materials)
+            )
+
+
+def _resolve_material_and_regions(
+    resolved: dict[str, Any], global_cfg: dict[str, Any]
+) -> tuple[str, list[str]]:
+    """Determine global material and regions list for the pipeline."""
+    data_gen = resolved.setdefault("data_generation", {})
+    material = str(
+        global_cfg.get("material", data_gen.get("material", "NMG"))
+        if isinstance(data_gen, dict)
+        else global_cfg.get("material", "NMG")
+    )
+    if isinstance(data_gen, dict):
+        data_gen.setdefault("material", material)
+        regions = data_gen.get(
+            "regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
+        )
+    else:
+        regions = ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
+    return material, regions
+
+
 def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     """Resolve and inject cross-section configuration defaults.
 
@@ -194,161 +400,30 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         Resolved configuration dictionary with fully populated stage configs.
     """
     resolved = dict(config)
+    _resolve_materials_and_vocab(resolved)
 
-    # 1. Resolve material elements and element vocabulary
-    if "materials" in resolved and isinstance(resolved["materials"], dict):
-        materials = load_material_elements(resolved)
-        element_vocab = extract_element_vocabulary(materials)
-        film_sec = resolved.setdefault("film", {})
-        if isinstance(film_sec, dict):
-            film_sec.setdefault("material_elements", materials)
-            film_sec.setdefault("element_vocab", element_vocab)
-
-    # 2. Extract global settings
     global_cfg = resolved.get("global", {})
     source_tool = str(global_cfg.get("source_tool", "J4"))
     target_tool = str(global_cfg.get("target_tool", "J5"))
-    model_type = str(global_cfg.get("model_type", "resnet"))
-    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
-    use_film = bool(global_cfg.get("use_film", False))
-    apply_denoise = bool(global_cfg.get("apply_denoise", False))
-    unified_model = bool(global_cfg.get("unified_model", True))
-    example_region = str(global_cfg.get("example_region", "Ti2p"))
-    sample_measurement_id = str(
-        global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
+    material, regions = _resolve_material_and_regions(resolved, global_cfg)
+
+    _inject_spatial_temporal_settings(
+        resolved, global_cfg, source_tool, target_tool, material
     )
-
-    # 3. Extract regions and propagate global material into data_generation
-    data_gen = resolved.setdefault("data_generation", {})
-    material = str(
-        global_cfg.get("material", data_gen.get("material", "NMG"))
-        if isinstance(data_gen, dict)
-        else global_cfg.get("material", "NMG")
+    _inject_preprocessing_and_denoise_settings(
+        resolved,
+        global_cfg,
+        str(global_cfg.get("example_region", "Ti2p")),
+        str(global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")),
     )
-    if isinstance(data_gen, dict):
-        data_gen.setdefault("material", material)
-        regions = data_gen.get("regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"])
-    else:
-        regions = ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
-
-    # 4. Inject into pairing
-    pairing = resolved.setdefault("pairing", {})
-    if isinstance(pairing, dict):
-        _set_if_none(pairing, "source_tool", source_tool)
-        _set_if_none(pairing, "target_tool", target_tool)
-        _set_if_none(pairing, "material", material)
-
-    # 5. Inject into splitting
-    splitting = resolved.setdefault("splitting", {})
-    if isinstance(splitting, dict):
-        _set_if_none(splitting, "source_tool", source_tool)
-        _set_if_none(splitting, "target_tool", target_tool)
-
-    # 6. Inject into dataset
-    dataset = resolved.setdefault("dataset", {})
-    if isinstance(dataset, dict):
-        _set_if_none(dataset, "source_tool", source_tool)
-        _set_if_none(dataset, "target_tool", target_tool)
-        _set_if_none(dataset, "use_sliding_window", use_sliding_window)
-        _set_if_none(dataset, "regions", regions)
-
-    # 7. Inject into noise_analysis, denoise, and noise_plot
-    noise_analysis = resolved.setdefault("noise_analysis", {})
-    if isinstance(noise_analysis, dict):
-        _set_if_none(noise_analysis, "regions", [example_region])
-
-    denoise_cfg = resolved.setdefault("denoise", {})
-    if isinstance(denoise_cfg, dict):
-        _set_if_none(denoise_cfg, "apply_denoise", apply_denoise)
-        _set_if_none(denoise_cfg, "source_tool", source_tool)
-        _set_if_none(denoise_cfg, "target_tool", target_tool)
-        _set_if_none(denoise_cfg, "material", material)
-        _set_if_none(denoise_cfg, "regions", ["Cl2p", "Ti2p"])
-
-    noise_plot = resolved.setdefault("noise_plot", {})
-    if isinstance(noise_plot, dict):
-        noise_plot.setdefault(
-            "example",
-            {
-                "measurement_id": sample_measurement_id,
-                "region": example_region,
-            },
-        )
-
-    # 8. Inject into film
-    film = resolved.setdefault("film", {})
-    if isinstance(film, dict):
-        film.setdefault("use_film", use_film)
-        film.setdefault("num_regions", len(regions))
-
-    # 9. Format bayesian_opt bounds
-    bo = resolved.setdefault("bayesian_opt", {})
-    if isinstance(bo, dict):
-        lr_b = bo.get("learning_rate_bounds")
-        if isinstance(lr_b, (list, tuple)):
-            bo["learning_rate_bounds"] = tuple(lr_b)
-        l2_b = bo.get("l2_bounds")
-        if isinstance(l2_b, (list, tuple)):
-            bo["l2_bounds"] = tuple(l2_b)
-
-    # 10. Inject into training
-    cost = resolved.get("cost", {})
-    training = resolved.setdefault("training", {})
-    if isinstance(training, dict):
-        training.setdefault("model_type", model_type)
-        training.setdefault("unified_model", unified_model)
-        training.setdefault("use_film", film.get("use_film", use_film))
-        training.setdefault("film_config", film)
-        if isinstance(cost, dict) and "l2_weight" in cost:
-            train_cfg = training.setdefault("train_config", {})
-            if isinstance(train_cfg, dict):
-                train_cfg.setdefault("l2_weight", cost["l2_weight"])
-
-    # 11. Inject into prediction
-    prediction = resolved.setdefault("prediction", {})
-    if isinstance(prediction, dict):
-        prediction.setdefault("source_tool", source_tool)
-        prediction.setdefault("target_tool", target_tool)
-        prediction.setdefault("film_config", film)
-
-    # 12. Inject into metrics_report
-    norm_by_max = (
-        cost.get("normalized_by_target_max", True)
-        if isinstance(cost, dict)
-        else True
+    _inject_model_and_training_settings(
+        resolved,
+        global_cfg,
+        str(global_cfg.get("model_type", "resnet")),
+        bool(global_cfg.get("unified_model", True)),
+        regions,
     )
-    metrics_rep = resolved.setdefault("metrics_report", {})
-    if isinstance(metrics_rep, dict):
-        metrics_rep.setdefault("normalized_by_target_max", norm_by_max)
-        mse_metric = "MSE_normalized_by_target" if norm_by_max else "MSE"
-        existing_metrics = list(
-            metrics_rep.get("metrics", ["peak_error_percentage", "max_error_percentage"])
-        )
-        if mse_metric not in existing_metrics and "MSE" not in existing_metrics:
-            existing_metrics = [mse_metric, *existing_metrics]
-        metrics_rep["metrics"] = existing_metrics
-
-    # 13. Inject into visualization
-    vis = resolved.setdefault("visualization", {})
-    if isinstance(vis, dict):
-        vis.setdefault("source_tool", source_tool)
-        vis.setdefault("target_tool", target_tool)
-        vis.setdefault("example_region", example_region)
-        vis.setdefault("sample_measurement_id", sample_measurement_id)
-        vis.setdefault("use_sliding_window", use_sliding_window)
-        vis.setdefault("noise_plot_config", noise_plot)
-
-    # 14. Inject into quantification, denoise, and metrics_report
-    quant = resolved.setdefault("quantification", {})
-    if isinstance(quant, dict):
-        quant.setdefault("material", material)
-        rsf_tbl = quant.get("rsf_table")
-        if rsf_tbl and isinstance(denoise_cfg, dict):
-            denoise_cfg.setdefault("rsf_table", rsf_tbl)
-        if rsf_tbl and isinstance(metrics_rep, dict):
-            metrics_quant = metrics_rep.setdefault("quantification_config", {})
-            if isinstance(metrics_quant, dict):
-                metrics_quant.setdefault("rsf_table", rsf_tbl)
+    _inject_evaluation_settings(resolved, global_cfg)
 
     return resolved
 
