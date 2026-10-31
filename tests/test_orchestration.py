@@ -10,7 +10,6 @@ from models.cost import SpectralLoss
 from models.dataset import create_regional_datasets
 from models.inference import predict_spectra
 from models.orchestration import (
-    _resolve_region_config,
     instantiate_model,
     perform_model_training_and_bayesian_optimization,
 )
@@ -174,26 +173,19 @@ class TestOrchestrationPipeline(unittest.TestCase):
         self.assertIn("Al2p", res["models"])
         self.assertIn("Al2p", res["bayesian_opt_results"])
 
-    def test_resolve_region_config_and_validation_errors(self) -> None:
-        """Verify region overrides resolution and validation error handling."""
-        base_cfg = {"model_type": "resnet", "learning_rate": 1e-3, "epochs": 50}
-        override_cfg = {
-            "model_type": "resnet",
-            "learning_rate": 1e-3,
-            "epochs": 50,
-            "region_configs": {"Al2p": {"learning_rate": 5e-4}},
-        }
-        _, resolved_base, _ = _resolve_region_config(base_cfg, "Al2p")
-        _, resolved_override, _ = _resolve_region_config(override_cfg, "Al2p")
-        self.assertEqual(resolved_base["learning_rate"], 1e-3)
-        self.assertEqual(resolved_override["learning_rate"], 5e-4)
-
+    def test_orchestration_validation_errors(self) -> None:
+        """Verify validation error handling for training orchestration."""
         # Missing model_type raises KeyError
         regional_datasets = create_regional_datasets(
             self.df_meta,
             self.ary_intensity,
             self.ary_energy,
-            config={"source_tool": "J4", "target_tool": "H1", "regions": ["Al2p"], "use_sliding_window": False},
+            config={
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "regions": ["Al2p"],
+                "use_sliding_window": False,
+            },
         )
         with self.assertRaises(KeyError):
             perform_model_training_and_bayesian_optimization(

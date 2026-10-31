@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 
 from models.dataset import (
+    SpectrumPairDataset,
+    SpectrumPatchDataset,
     create_regional_datasets,
     create_unified_dataset,
 )
@@ -126,6 +128,48 @@ class TestDatasetOrchestration(unittest.TestCase):
         self.assertIn("dataset_test", bundle)
         self.assertEqual(bundle["full_spectrum_length"], self.n_points)
         self.assertEqual(len(bundle["regions"]), 2)
+
+
+class TestPatchConcatenate(unittest.TestCase):
+    """Test suite for SpectrumPatchDataset.concatenate operations."""
+
+    def _patches(self, window: int, stride: int) -> SpectrumPatchDataset:
+        data = np.arange(60, dtype=np.float32).reshape(2, 30)
+        return SpectrumPatchDataset(
+            SpectrumPairDataset(data, data), window_size=window, stride=stride
+        )
+
+    def test_empty_list_raises(self) -> None:
+        """Concatenating empty list of datasets must raise ValueError."""
+        with self.assertRaisesRegex(ValueError, "empty list"):
+            SpectrumPatchDataset.concatenate([])
+
+    def test_geometry_mismatch_raises(self) -> None:
+        """Datasets with different windows must not be merged."""
+        with self.assertRaisesRegex(ValueError, "must share"):
+            SpectrumPatchDataset.concatenate(
+                [self._patches(5, 2), self._patches(7, 2)]
+            )
+
+    def test_lengths_add_up(self) -> None:
+        """The merged length is the sum of component dataset lengths."""
+        first, second = self._patches(5, 2), self._patches(5, 2)
+        merged = SpectrumPatchDataset.concatenate([first, second])
+        self.assertEqual(len(merged), len(first) + len(second))
+        self.assertEqual(merged[len(first)]["x"].shape[-1], 5)
+
+    def test_metadata_presence_mismatch_raises(self) -> None:
+        """Concatenating with mismatched metadata presence must raise."""
+        ds_no_meta = self._patches(5, 2)
+        data = np.arange(60, dtype=np.float32).reshape(2, 30)
+        pair_with_meta = SpectrumPairDataset(
+            data, data, metadata=[{"region": "Al2p"}, {"region": "Ti2p"}]
+        )
+        ds_with_meta = SpectrumPatchDataset(
+            pair_with_meta, window_size=5, stride=2
+        )
+        with self.assertRaisesRegex(ValueError, "per-patch metadata"):
+            SpectrumPatchDataset.concatenate([ds_no_meta, ds_with_meta])
 
 
 if __name__ == "__main__":

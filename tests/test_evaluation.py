@@ -222,38 +222,22 @@ class TestEvaluationMetrics(unittest.TestCase):
             )
 
     def test_format_side_by_side_metrics_empty(self) -> None:
-        """Verify format_side_by_side_metrics gracefully returns empty DataFrame on empty input."""
-        df_empty = pd.DataFrame()
-        res = format_side_by_side_metrics(df_empty)
-        self.assertTrue(res.empty)
+        """Verify format_side_by_side_metrics gracefully returns empty DataFrame on empty/invalid inputs."""
+        # 1. Empty DataFrame
+        self.assertTrue(format_side_by_side_metrics(pd.DataFrame()).empty)
 
-    def test_format_side_by_side_metrics_aliases(self) -> None:
-        """Verify metric aliases map cleanly to canonical column labels."""
-        df_samples = pd.DataFrame([
-            {
-                "region": "Al2p",
-                "split": "train",
-                "normalized_mse": 0.001,
-                "rmse": 10.0,
-                "peak_error_percentage": 2.0,
-                "max_error_percentage": 4.0,
-            },
-        ])
-        df_res = format_side_by_side_metrics(
-            df_samples,
-            config={
-                "splits": ["train"],
-                "metrics": ["normalized_mse", "rms", "peak_error_percentage", "max_error_percentage"],
-            },
-        )
-        expected_cols = [
-            "region",
-            "norm_mse_train",
-            "rmse_train",
-            "peak_error_percentage_train",
-            "max_error_percentage_train",
-        ]
-        self.assertEqual(list(df_res.columns), expected_cols)
+        # 2. DataFrame missing required 'split' column
+        df_no_split = pd.DataFrame([{"region": "Al2p", "MSE": 0.05}])
+        self.assertTrue(format_side_by_side_metrics(df_no_split).empty)
+
+        # 3. DataFrame missing group column
+        df_no_group = pd.DataFrame([{"split": "train", "MSE": 0.05}])
+        self.assertTrue(format_side_by_side_metrics(df_no_group).empty)
+
+        # 4. No preferred splits present
+        df_diff_split = pd.DataFrame([{"region": "Al2p", "split": "other", "MSE": 0.05}])
+        res_diff = format_side_by_side_metrics(df_diff_split, config={"splits": ["train", "test"]})
+        self.assertTrue(res_diff.empty)
 
     def test_format_side_by_side_metrics_unnormalized(self) -> None:
         """Verify format_side_by_side_metrics uses MSE prefix

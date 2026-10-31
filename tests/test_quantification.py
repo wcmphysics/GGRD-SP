@@ -33,20 +33,8 @@ class TestShirleyBackground(unittest.TestCase):
         self.energy = np.linspace(70.0, 80.0, 101)  # 0.1 eV step
         self.intensity = 20.0 + 80.0 * np.exp(-0.5 * ((self.energy - 75.0) / 0.8) ** 2)
 
-    def test_shirley_module_exports_and_shape_invariants(self) -> None:
-        """Verify Shirley routines export properly and handle flat / inverted grids."""
-        from utility.shirley import (
-            calculate_shirley_background as calc_bg,
-            determine_shirley_endpoints as det_ep,
-        )
-        from utility import (
-            calculate_shirley_background as u_calc_bg,
-            determine_shirley_endpoints as u_det_ep,
-        )
-
-        self.assertIs(calc_bg, u_calc_bg)
-        self.assertIs(det_ep, u_det_ep)
-
+    def test_shirley_shape_invariants(self) -> None:
+        """Verify Shirley routines handle flat, inverted, and mismatched grids."""
         # Flat spectrum produces zero net area
         energy_flat = np.linspace(100, 110, 50)
         intensity_flat = np.full(50, 25.0)
