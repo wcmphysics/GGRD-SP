@@ -20,9 +20,16 @@ from models.dataset import (
 from models.deeplabv3 import DeepLabV3
 from models.factory import (
     MODEL_CLASS_MAP,
+    NO_SLIDING_WINDOW_MODEL_TYPES,
     instantiate_model,
 )
 from models.film import FiLMGenerator, prepare_film_condition_tensor
+from models.fpn import FPN1D, FPNConvBlock1D
+from models.inception import (
+    InceptionModule1D,
+    InceptionResidualBlock1D,
+    InceptionTime1D,
+)
 from models.layers import SafeBatchNorm1d, SafeReflectionPad1d
 from models.gp_flux import (
     DieFluxExactGPModel,
@@ -47,6 +54,7 @@ from models.orchestration import (
     perform_model_training_and_bayesian_optimization,
 )
 from models.resnet import ResNet1D, ResNetScaledShort1D
+from models.tcn import TCN1D, TCNResidualBlock1D
 from models.trainer import (
     evaluate,
     evaluate_sliding_window,
@@ -67,10 +75,18 @@ __all__ = [
     "ResidualUNet1D",
     "ConventionalUNet1D",
     "DeepLabV3",
+    "InceptionTime1D",
+    "InceptionModule1D",
+    "InceptionResidualBlock1D",
+    "TCN1D",
+    "TCNResidualBlock1D",
+    "FPN1D",
+    "FPNConvBlock1D",
     "SafeReflectionPad1d",
     "SafeBatchNorm1d",
     "FiLMGenerator",
     "instantiate_model",
+    "NO_SLIDING_WINDOW_MODEL_TYPES",
     # Cost
     "SpectralLoss",
     "format_loss_log10",
