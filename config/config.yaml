@@ -238,5 +238,5 @@ visualization:
     atomic_percentage_distributions: false
     atomic_percentage_mae: true
     sliding_window_slices: true
-    denoise_spectrum_comparison: true
-    denoise_atomic_percentage_mae: true
+    denoise_spectrum_comparison: false
+    denoise_atomic_percentage_mae: false
