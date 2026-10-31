@@ -168,23 +168,31 @@ def _match_sessions_optimal(
     cost_matrix: np.ndarray,
     threshold: float,
 ) -> dict[str, tuple[str, float]]:
-    """Perform globally optimal 1-to-1 matching via the Hungarian algorithm."""
+    """Perform globally optimal 1-to-1 matching via Hungarian algorithm.
+
+    Raises
+    ------
+    RuntimeError
+        If linear_sum_assignment is unavailable or Hungarian matching fails.
+    """
     if cost_matrix.size == 0:
         return {}
 
     if linear_sum_assignment is None:
-        warnings.warn(
-            "scipy.optimize.linear_sum_assignment is unavailable; falling back "
-            "to greedy pairing algorithm.",
-            RuntimeWarning,
-            stacklevel=2,
+        raise RuntimeError(
+            "scipy.optimize.linear_sum_assignment is unavailable; "
+            "cannot perform optimal Hungarian pairing."
         )
-        return _match_sessions_greedy(src_ids, tgt_ids, cost_matrix, threshold)
 
     # Assign prohibitive penalty cost to pairs exceeding threshold
     penalty = 1e9
     masked_cost = np.where(cost_matrix <= threshold, cost_matrix, penalty)
-    row_ind, col_ind = linear_sum_assignment(masked_cost)
+    try:
+        row_ind, col_ind = linear_sum_assignment(masked_cost)
+    except Exception as err:
+        raise RuntimeError(
+            f"Hungarian optimal matching (linear_sum_assignment) failed: {err}"
+        ) from err
 
     return {
         src_ids[r]: (tgt_ids[c], float(cost_matrix[r, c]))
@@ -331,11 +339,11 @@ def _assemble_paired_columns(
     # Build target lookup: (measurement_id, die, region) -> (spec_idx, time)
     tgt_spectra = result_df[result_df["tool"] == target_tool]
     tgt_lookup: dict[tuple[str, int, str], tuple[int, pd.Timestamp]] = {
-        (str(r["measurement_id"]), int(r["die"]), str(r["region"])): (
-            int(r["spectrum_index"]),
-            pd.Timestamp(r["time"]),
+        (str(r.measurement_id), int(r.die), str(r.region)): (
+            int(r.spectrum_index),
+            pd.Timestamp(r.time),
         )
-        for _, r in tgt_spectra.iterrows()
+        for r in tgt_spectra.itertuples()
     }
     tgt_t7_lookup: dict[str, Any] = (
         dict(zip(tgt_spectra["measurement_id"].astype(str), tgt_spectra["t7_code"]))
@@ -364,14 +372,14 @@ def _assemble_paired_columns(
         )
 
     # Populate paired target session values for each source tool row.
-    for row_idx, (_, row) in enumerate(result_df.iterrows()):
-        if row["tool"] != source_tool:
+    for row_idx, row in enumerate(result_df.itertuples()):
+        if row.tool != source_tool:
             continue
-        src_meas = str(row["measurement_id"])
+        src_meas = str(row.measurement_id)
         if src_meas not in all_session_pairs:
             continue
         tgt_meas, diff_h = all_session_pairs[src_meas]
-        key = (tgt_meas, int(row["die"]), str(row["region"]))
+        key = (tgt_meas, int(row.die), str(row.region))
         if key not in tgt_lookup:
             continue
 
