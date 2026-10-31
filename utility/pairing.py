@@ -78,6 +78,7 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
         If source/target tools are invalid, threshold is non-positive,
         or an unsupported method is specified.
     """
+    # Validate source and target tool identifiers.
     source_tool = config.get("source_tool")
     target_tool = config.get("target_tool")
     if not source_tool or not target_tool:
@@ -87,6 +88,7 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
             f"source_tool and target_tool cannot be identical ('{source_tool}')."
         )
 
+    # Validate pairing time threshold and matching algorithm.
     threshold = config.get("time_threshold_hours", 12.0)
     if threshold is None or threshold <= 0:
         raise ValueError(
@@ -99,6 +101,7 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
             f"method must be either 'optimal' or 'greedy', got '{method}'"
         )
 
+    # Validate material filtering configuration key.
     if "material" not in config:
         raise KeyError(
             "Missing required configuration key 'material' in pairing config."
@@ -340,6 +343,7 @@ def _assemble_paired_columns(
         else {}
     )
 
+    # Initialize target column arrays.
     n_rows = len(result_df)
     col_tool = [
         target_tool if t == source_tool else None for t in result_df["tool"]
@@ -359,6 +363,7 @@ def _assemble_paired_columns(
             "columns will remain null."
         )
 
+    # Populate paired target session values for each source tool row.
     for row_idx, (_, row) in enumerate(result_df.iterrows()):
         if row["tool"] != source_tool:
             continue
@@ -376,6 +381,7 @@ def _assemble_paired_columns(
         if "t7_code" in result_df.columns:
             col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
 
+    # Assign populated series back to dataframe columns.
     idx = result_df.index
     result_df["target_tool"] = pd.Series(col_tool, index=idx, dtype="object")
     result_df["target_measurement_id"] = pd.Series(
@@ -401,6 +407,7 @@ def _prepare_pairing_setup(
     config: dict[str, Any] | None,
 ) -> tuple[pd.DataFrame, dict[str, Any], list[str | None], bool, Any]:
     """Validate inputs, resolve config, and prepare materials list."""
+    # Validate required material configuration key and load defaults.
     if config is None or "material" not in config:
         raise KeyError(
             "Missing required configuration key 'material' in pairing config."
@@ -416,6 +423,7 @@ def _prepare_pairing_setup(
     merged_config.update(config)
     _validate_pairing_config(merged_config)
 
+    # Validate metadata DataFrame required columns and normalize measurement time.
     required_cols = {
         "tool",
         "measurement_id",
@@ -441,6 +449,7 @@ def _prepare_pairing_setup(
         else _match_sessions_greedy
     )
 
+    # Determine unique target materials for per-material pairing execution.
     material_filter = str(merged_config["material"]).strip()
     if material_filter.lower() == "all":
         materials: list[str | None] = (

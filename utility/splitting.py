@@ -77,17 +77,20 @@ def _execute_random_split(
     tuple[set[str], set[str], set[str]]
         Sets of train, val, and test session IDs.
     """
+    # Validate non-negative split ratios and normalize to sum to 1.0.
     if any(r < 0.0 for r in ratios):
         raise ValueError(f"Split ratios must be non-negative: {ratios}")
     total_ratio = sum(ratios)
     if total_ratio <= 0.0:
         raise ValueError("Sum of train_ratio, val_ratio, and test_ratio must be positive.")
 
+    # Permute session IDs randomly according to supplied random seed.
     n_sessions = len(source_sessions)
     train_ratio, val_ratio, test_ratio = [r / total_ratio for r in ratios]
     rng = np.random.default_rng(seed)
     shuffled = [str(s) for s in rng.permutation(source_sessions)]
 
+    # Partition shuffled sessions into train, validation, and test subsets.
     if test_ratio > 0.0 and val_ratio > 0.0:
         if n_sessions < 3:
             raise ValueError(

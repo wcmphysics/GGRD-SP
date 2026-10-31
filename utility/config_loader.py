@@ -213,10 +213,12 @@ def _inject_preprocessing_and_denoise_settings(
         else global_cfg.get("material", "NMG")
     )
 
+    # Propagate noise analysis and regional defaults.
     noise_analysis = resolved.setdefault("noise_analysis", {})
     if isinstance(noise_analysis, dict):
         _set_if_none(noise_analysis, "regions", [example_region])
 
+    # Inject default tools and targeted elements into denoise stage.
     denoise_cfg = resolved.setdefault("denoise", {})
     if isinstance(denoise_cfg, dict):
         _set_if_none(denoise_cfg, "apply_denoise", apply_denoise)
@@ -225,6 +227,7 @@ def _inject_preprocessing_and_denoise_settings(
         _set_if_none(denoise_cfg, "material", material)
         _set_if_none(denoise_cfg, "regions", ["Cl2p", "Ti2p"])
 
+    # Configure noise plot sample measurement and region references.
     noise_plot = resolved.setdefault("noise_plot", {})
     if isinstance(noise_plot, dict):
         noise_plot.setdefault(
@@ -249,6 +252,7 @@ def _inject_model_and_training_settings(
     use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
     use_film = bool(global_cfg.get("use_film", False))
 
+    # Propagate dataset tools, sliding window, and regions settings.
     dataset = resolved.setdefault("dataset", {})
     if isinstance(dataset, dict):
         _set_if_none(dataset, "source_tool", source_tool)
@@ -256,11 +260,13 @@ def _inject_model_and_training_settings(
         _set_if_none(dataset, "use_sliding_window", use_sliding_window)
         _set_if_none(dataset, "regions", regions)
 
+    # Inject FiLM generator defaults and region counts.
     film = resolved.setdefault("film", {})
     if isinstance(film, dict):
         film.setdefault("use_film", use_film)
         film.setdefault("num_regions", len(regions))
 
+    # Convert Bayesian optimization hyperparameter bounds to tuples.
     bo = resolved.setdefault("bayesian_opt", {})
     if isinstance(bo, dict):
         lr_b = bo.get("learning_rate_bounds")
@@ -310,6 +316,7 @@ def _inject_evaluation_settings(
         else global_cfg.get("material", "NMG")
     )
 
+    # Configure metrics report and target normalization flags.
     cost = resolved.get("cost", {})
     norm_by_max = (
         cost.get("normalized_by_target_max", True)
@@ -327,6 +334,7 @@ def _inject_evaluation_settings(
             existing_metrics = [mse_metric, *existing_metrics]
         metrics_rep["metrics"] = existing_metrics
 
+    # Propagate visualization stage global tools, sample IDs, and sliding window.
     noise_plot = resolved.setdefault("noise_plot", {})
     vis = resolved.setdefault("visualization", {})
     if isinstance(vis, dict):
@@ -337,6 +345,7 @@ def _inject_evaluation_settings(
         vis.setdefault("use_sliding_window", use_sliding_window)
         vis.setdefault("noise_plot_config", noise_plot)
 
+    # Propagate material RSF tables into quantification and downstream stages.
     quant = resolved.setdefault("quantification", {})
     denoise_cfg = resolved.get("denoise", {})
     if isinstance(quant, dict):
