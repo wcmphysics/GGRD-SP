@@ -137,6 +137,50 @@ def _should_append_overall(cfg: dict[str, Any], has_rows: bool) -> bool:
     return bool(cfg.get("overall_metrics"))
 
 
+def _resolve_present_splits(
+    df_data: pd.DataFrame, cfg: dict[str, Any]
+) -> list[str]:
+    """Identify configured splits that are present in the dataset."""
+    preferred = list(cfg.get("splits", ["train", "test"]))
+    return [s for s in preferred if s in df_data["split"].unique()]
+
+
+def _build_comparison_rows(
+    df_data: pd.DataFrame,
+    group_col: str,
+    metric_specs: list[dict[str, Any]],
+    present_splits: list[str],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build formatted rows for each group and append overall summary."""
+    format_str = bool(cfg.get("format_str", True))
+    unique_groups = sorted(df_data[group_col].dropna().unique())
+    rows = [
+        _format_group_row(
+            df_data[df_data[group_col] == g],
+            group_col,
+            g,
+            present_splits,
+            metric_specs,
+            format_str,
+        )
+        for g in unique_groups
+    ]
+    if _should_append_overall(cfg, bool(rows)):
+        rows.append(
+            _calculate_overall_summary_row(
+                df_data,
+                group_col,
+                str(cfg.get("overall_label", "Overall (MAE)")),
+                present_splits,
+                metric_specs,
+                list(cfg.get("overall_metrics", [])),
+                format_str,
+            )
+        )
+    return rows
+
+
 def format_split_comparison_table(
     df_data: pd.DataFrame,
     group_col: str,
@@ -181,38 +225,11 @@ def format_split_comparison_table(
         return pd.DataFrame()
 
     cfg = config or {}
-    preferred_splits = list(cfg.get("splits", ["train", "test"]))
-    present_splits = [
-        s for s in preferred_splits if s in df_data["split"].unique()
-    ]
+    present_splits = _resolve_present_splits(df_data, cfg)
     if not present_splits:
         return pd.DataFrame()
 
-    format_str = bool(cfg.get("format_str", True))
-    unique_groups = sorted(df_data[group_col].dropna().unique())
-    rows = [
-        _format_group_row(
-            df_data[df_data[group_col] == g],
-            group_col,
-            g,
-            present_splits,
-            metric_specs,
-            format_str,
-        )
-        for g in unique_groups
-    ]
-
-    if _should_append_overall(cfg, bool(rows)):
-        rows.append(
-            _calculate_overall_summary_row(
-                df_data,
-                group_col,
-                str(cfg.get("overall_label", "Overall (MAE)")),
-                present_splits,
-                metric_specs,
-                list(cfg.get("overall_metrics", [])),
-                format_str,
-            )
-        )
-
+    rows = _build_comparison_rows(
+        df_data, group_col, metric_specs, present_splits, cfg
+    )
     return pd.DataFrame(rows)

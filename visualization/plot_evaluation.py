@@ -84,6 +84,98 @@ def _setup_comparison_canvas(
     return fig, axes, axes_to_use, None
 
 
+def _render_comparison_curves(
+    ax: plt.Axes,
+    reg: str,
+    triplet: tuple[int, int, int],
+    data_orig: tuple[np.ndarray, np.ndarray],
+    data_pred: tuple[np.ndarray, np.ndarray],
+    tools: tuple[str, str],
+    info: dict[str, Any],
+    has_res: bool,
+    conf: dict[str, Any],
+) -> None:
+    """Plot source, target, and transformed spectral curves on the main axes."""
+    i_s, i_t, i_p = triplet
+    ary_i_orig, ary_e_orig = data_orig
+    ary_i_pred, ary_e_pred = data_pred
+    src_t, tgt_t = tools
+    is_single = bool(info.get("is_single", False))
+
+    # Build spectral curves with distinct styles for source, target, and prediction
+    src_label = (
+        f"Source Measured ({src_t})" if is_single else f"Source ({src_t})"
+    )
+    tgt_label = (
+        f"True Target ({tgt_t})" if is_single else f"Target ({tgt_t})"
+    )
+    curves = [
+        (ary_e_orig[i_s], ary_i_orig[i_s], src_label, "black", "-", 1.5),
+        (ary_e_orig[i_t], ary_i_orig[i_t], tgt_label, "red", "-", 1.8),
+        (
+            ary_e_pred[i_p],
+            ary_i_pred[i_p],
+            f"Transformed ({src_t}->{tgt_t})",
+            "blue",
+            ":",
+            2.0,
+        ),
+    ]
+    for e, i, lbl, c, ls, lw in curves:
+        ax.plot(e, i, label=lbl, color=c, ls=ls, lw=lw)
+
+    # Format panel legend, descriptive title, and axis labels
+    ax.legend(loc="best", fontsize="small" if is_single else "x-small")
+    meas_id = str(info.get("meas_id", ""))
+    die = int(info.get("die", 0))
+    tgt_m = str(info.get("tgt_m", ""))
+    title_str = (
+        f"Spectral Transfer Comparison | Region: {reg} | Die {die}\n"
+        f"Source: {meas_id} ({src_t}) -> Target: {tgt_m} ({tgt_t})"
+        if is_single
+        else f"Region: {reg}"
+    )
+    _finalize_plot(
+        ax,
+        title=title_str,
+        xlabel="Binding Energy (eV)"
+        if (not is_single or not has_res)
+        else None,
+        ylabel="Intensity (counts)",
+        invert_x=conf.get("invert_x", True),
+        grid_alpha=0.5,
+    )
+
+
+def _render_comparison_residual(
+    ax_res: plt.Axes,
+    triplet: tuple[int, int, int],
+    data_orig: tuple[np.ndarray, np.ndarray],
+    data_pred: tuple[np.ndarray, np.ndarray],
+    conf: dict[str, Any],
+) -> None:
+    """Plot difference residual curve between target and predicted spectrum."""
+    _, i_t, i_p = triplet
+    ary_i_orig, ary_e_orig = data_orig
+    ary_i_pred, _ = data_pred
+    ax_res.plot(
+        ary_e_orig[i_t],
+        ary_i_orig[i_t] - ary_i_pred[i_p],
+        color="purple",
+        lw=1.4,
+        label="Target - Transformed",
+    )
+    ax_res.axhline(0, color="black", ls=":", lw=1.0, alpha=0.7)
+    ax_res.legend(loc="best", fontsize="x-small")
+    _finalize_plot(
+        ax_res,
+        xlabel="Binding Energy (eV)",
+        ylabel="Residual",
+        invert_x=conf.get("invert_x", True),
+        grid_alpha=0.6,
+    )
+
+
 def _render_prediction_comparison_panel(
     ax: plt.Axes,
     reg: str,
@@ -97,6 +189,8 @@ def _render_prediction_comparison_panel(
 ) -> bool:
     """Render a single spectral region panel and optional residual."""
     is_single = bool(info.get("is_single", False))
+
+    # Verify presence of matched spectrum triplets for this region
     if not triplets:
         if is_single:
             raise ValueError(
@@ -105,9 +199,8 @@ def _render_prediction_comparison_panel(
         ax.set_visible(False)
         return False
 
-    i_s, i_t, i_p = triplets[0]
-    ary_i_orig, ary_e_orig = data_orig
-    ary_i_pred, ary_e_pred = data_pred
+    # Extract tool labels and render spectral curves and residual
+    i_s = triplets[0][0]
     reg_src = orig_by_idx.get(i_s)
     src_t = str(getattr(reg_src, "tool", "Tool")) if reg_src else "Tool"
     tgt_t = (
@@ -116,76 +209,22 @@ def _render_prediction_comparison_panel(
         else "TargetTool"
     )
 
-    curves = [
-        (
-            ary_e_orig[i_s],
-            ary_i_orig[i_s],
-            f"Source ({src_t})"
-            if not is_single
-            else f"Source Measured ({src_t})",
-            "black",
-            "-",
-            1.5,
-        ),
-        (
-            ary_e_orig[i_t],
-            ary_i_orig[i_t],
-            f"Target ({tgt_t})"
-            if not is_single
-            else f"True Target ({tgt_t})",
-            "red",
-            "-",
-            1.8,
-        ),
-        (
-            ary_e_pred[i_p],
-            ary_i_pred[i_p],
-            f"Transformed ({src_t}->{tgt_t})",
-            "blue",
-            ":",
-            2.0,
-        ),
-    ]
-    for e, i, lbl, c, ls, lw in curves:
-        ax.plot(e, i, label=lbl, color=c, ls=ls, lw=lw)
-
-    ax.legend(loc="best", fontsize="small" if is_single else "x-small")
-    meas_id = str(info.get("meas_id", ""))
-    die = int(info.get("die", 0))
-    tgt_m = str(info.get("tgt_m", ""))
-    title_str = (
-        f"Spectral Transfer Comparison | Region: {reg} | Die {die}\n"
-        f"Source: {meas_id} ({src_t}) -> Target: {tgt_m} ({tgt_t})"
-        if is_single
-        else f"Region: {reg}"
-    )
     conf = cfg or {}
-    _finalize_plot(
+    has_res = is_single and ax_res is not None
+    _render_comparison_curves(
         ax,
-        title=title_str,
-        xlabel="Binding Energy (eV)"
-        if (not is_single or ax_res is None)
-        else None,
-        ylabel="Intensity (counts)",
-        invert_x=conf.get("invert_x", True),
-        grid_alpha=0.5,
+        reg,
+        triplets[0],
+        data_orig,
+        data_pred,
+        (src_t, tgt_t),
+        info,
+        has_res,
+        conf,
     )
-    if is_single and ax_res is not None:
-        ax_res.plot(
-            ary_e_orig[i_t],
-            ary_i_orig[i_t] - ary_i_pred[i_p],
-            color="purple",
-            lw=1.4,
-            label="Target - Transformed",
-        )
-        ax_res.axhline(0, color="black", ls=":", lw=1.0, alpha=0.7)
-        ax_res.legend(loc="best", fontsize="x-small")
-        _finalize_plot(
-            ax_res,
-            xlabel="Binding Energy (eV)",
-            ylabel="Residual",
-            invert_x=conf.get("invert_x", True),
-            grid_alpha=0.6,
+    if has_res:
+        _render_comparison_residual(
+            ax_res, triplets[0], data_orig, data_pred, conf
         )
     return True
 
@@ -208,6 +247,100 @@ def _resolve_comparison_regions(
             f"No regions found for source measurement '{meas_id}', die={die}."
         )
     return regions, False
+
+
+def _resolve_comparison_session_data(
+    meta_orig: pd.DataFrame,
+    meta_pred: pd.DataFrame,
+    cfg: dict[str, Any],
+) -> tuple[str, int, pd.DataFrame, str]:
+    """Resolve session ID, die index, source rows, and target session ID."""
+    die = int(cfg.get("die", 0))
+    meas_id = _resolve_target_session_id(
+        meta_orig,
+        meta_pred,
+        cfg.get("session_splits"),
+        cfg.get("measurement_id"),
+    )
+    src_rows = meta_orig[
+        (meta_orig["measurement_id"] == meas_id) & (meta_orig["die"] == die)
+    ]
+    if src_rows.empty:
+        raise ValueError(
+            f"No source spectrum matching meas_id='{meas_id}', die={die}."
+        )
+    tgt_m = str(src_rows.iloc[0].get("target_measurement_id", ""))
+    return meas_id, die, src_rows, tgt_m
+
+
+def _render_all_comparison_panels(
+    axes_to_use: list[plt.Axes],
+    regions: list[str],
+    matched: dict[str, list[tuple[int, int, int]]],
+    data_orig: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    data_pred: tuple[np.ndarray, np.ndarray, pd.DataFrame],
+    info: dict[str, Any],
+    ax_res: plt.Axes | None,
+    cfg: dict[str, Any],
+) -> None:
+    """Render all regional panels and assert at least one spectrum matched."""
+    ary_i_orig, ary_e_orig, meta_orig = data_orig
+    ary_i_pred, ary_e_pred, _ = data_pred
+    orig_by_idx = {int(r.spectrum_index): r for r in meta_orig.itertuples()}
+    plotted = sum(
+        1
+        for idx, reg in enumerate(regions)
+        if _render_prediction_comparison_panel(
+            axes_to_use[idx],
+            reg,
+            matched.get(reg, []),
+            (ary_i_orig, ary_e_orig),
+            (ary_i_pred, ary_e_pred),
+            orig_by_idx,
+            info,
+            ax_res,
+            cfg,
+        )
+    )
+    if plotted == 0:
+        meas_id, die = info["meas_id"], info["die"]
+        raise ValueError(
+            f"No matching target or predicted spectra for source session "
+            f"'{meas_id}', die={die}."
+        )
+
+
+def _match_comparison_indices(
+    meta_orig: pd.DataFrame,
+    meta_pred: pd.DataFrame,
+    meas_id: str,
+    die: int,
+    regions: list[str],
+) -> dict[str, list[tuple[int, int, int]]]:
+    """Find matching source, target, and prediction spectrum triplets."""
+    pred_subset = meta_pred[
+        (meta_pred["source_measurement_id"].astype(str) == str(meas_id))
+        & (meta_pred["die"].astype(str) == str(die))
+    ]
+    return match_prediction_source_target_indices(
+        meta_orig, pred_subset, regions_filter=regions, die_filter=[str(die)]
+    )
+
+
+def _finish_comparison_figure(
+    fig: plt.Figure,
+    is_single: bool,
+    info: dict[str, Any],
+    cfg: dict[str, Any],
+) -> None:
+    """Apply supertitle and finish figure configuration."""
+    if not is_single:
+        meas_id, die = info["meas_id"], info["die"]
+        default_title = (
+            f"Spectral Transfer Comparison | Session: {meas_id} (Die {die})"
+        )
+        fig.suptitle(cfg.get("title", default_title), fontsize=13)
+    _finish_fig(fig, cfg)
 
 
 def plot_prediction_comparison(
@@ -255,77 +388,28 @@ def plot_prediction_comparison(
     ValueError
         If no paired sessions exist, die/region not found, or spectra missing.
     """
-    (ary_i_orig, ary_e_orig, meta_orig), (
-        ary_i_pred,
-        ary_e_pred,
-        meta_pred,
-    ) = (data_original, data_predicted)
     cfg = config or {}
-    die = int(cfg.get("die", 0))
-    meas_id = _resolve_target_session_id(
-        meta_orig,
-        meta_pred,
-        cfg.get("session_splits"),
-        cfg.get("measurement_id"),
+    meta_orig, meta_pred = data_original[2], data_predicted[2]
+    meas_id, die, src_rows, tgt_m = _resolve_comparison_session_data(
+        meta_orig, meta_pred, cfg
     )
-    src_rows = meta_orig[
-        (meta_orig["measurement_id"] == meas_id) & (meta_orig["die"] == die)
-    ]
-    if src_rows.empty:
-        raise ValueError(
-            f"No source spectrum matching meas_id='{meas_id}', die={die}."
-        )
-
     regions, is_single = _resolve_comparison_regions(
         src_rows, cfg.get("region"), meas_id, die
     )
     fig, axes, axes_to_use, ax_res = _setup_comparison_canvas(
         cfg, regions, is_single
     )
-    tgt_m = str(src_rows.iloc[0].get("target_measurement_id", ""))
-    pred_subset = meta_pred[
-        (meta_pred["source_measurement_id"].astype(str) == str(meas_id))
-        & (meta_pred["die"].astype(str) == str(die))
-    ]
-    matched = match_prediction_source_target_indices(
-        meta_orig, pred_subset, regions_filter=regions, die_filter=[str(die)]
-    )
-    orig_by_idx = {int(r.spectrum_index): r for r in meta_orig.itertuples()}
-    info = {
-        "meas_id": meas_id,
-        "die": die,
-        "tgt_m": tgt_m,
-        "is_single": is_single,
-    }
 
-    plotted = sum(
-        1
-        for idx, reg in enumerate(regions)
-        if _render_prediction_comparison_panel(
-            axes_to_use[idx],
-            reg,
-            matched.get(reg, []),
-            (ary_i_orig, ary_e_orig),
-            (ary_i_pred, ary_e_pred),
-            orig_by_idx,
-            info,
-            ax_res,
-            cfg,
-        )
+    matched = _match_comparison_indices(
+        meta_orig, meta_pred, meas_id, die, regions
     )
-    if plotted == 0:
-        raise ValueError(
-            f"No matching target or predicted spectra for source session '{meas_id}', die={die}."
-        )
-    if not is_single:
-        fig.suptitle(
-            cfg.get(
-                "title",
-                f"Spectral Transfer Comparison | Session: {meas_id} (Die {die})",
-            ),
-            fontsize=13,
-        )
-    _finish_fig(fig, cfg)
+    info = {
+        "meas_id": meas_id, "die": die, "tgt_m": tgt_m, "is_single": is_single
+    }
+    _render_all_comparison_panels(
+        axes_to_use, regions, matched, data_original, data_predicted, info, ax_res, cfg
+    )
+    _finish_comparison_figure(fig, is_single, info, cfg)
     return fig, axes
 
 
@@ -494,6 +578,7 @@ def _finish_distribution_figure(
     cfg: dict[str, Any],
 ) -> None:
     """Configure legend, super title, and subplot spacing for distribution plot."""
+    # Build common legend handles for all panels
     legend_handles = [
         plt.Line2D(
             [], [], color="black", ls="-", lw=1.6, label="Source (Mean ± 1σ)"
@@ -519,6 +604,7 @@ def _finish_distribution_figure(
         ),
     ]
 
+    # Position super title and figure legend above subplots
     fig_h = float(fig.get_size_inches()[1])
     title_in, legend_in, gap_in = 0.30, 0.38, 0.25
     header_in = title_in + legend_in + gap_in
@@ -541,6 +627,8 @@ def _finish_distribution_figure(
         fig.suptitle(
             fig_title, fontsize=10, fontweight="bold", y=1.0 - 0.05 / fig_h
         )
+
+    # Adjust subplot grid geometry and save or display figure
     fig_w = float(fig.get_size_inches()[0])
     bottom_in, side_in, row_gap_in = 0.55, 0.85, 0.80
     top_frac = 1.0 - header_in / fig_h
@@ -556,10 +644,29 @@ def _finish_distribution_figure(
         hspace=row_gap_in / max(axes_h_in, 1e-6),
     )
     dpi = int(cfg.get("dpi", 300))
+    if dpi <= 0:
+        raise ValueError(f"dpi must be a positive integer, got {dpi}")
     if cfg.get("save_path"):
         fig.savefig(str(cfg["save_path"]), dpi=dpi)
     if cfg.get("show"):
         plt.show()
+
+
+def _create_distribution_canvas(
+    regions: list[str], cfg: dict[str, Any]
+) -> tuple[plt.Figure, np.ndarray, int]:
+    """Create figure canvas and axes array for distribution rows."""
+    n_rows = len(regions)
+    figsize = cfg.get(
+        "figsize", (10.0, 1.5 + 2.4 * n_rows + 0.8 * (n_rows - 1))
+    )
+    dpi = int(cfg.get("dpi", 300))
+    if dpi <= 0:
+        raise ValueError(f"dpi must be a positive integer, got {dpi}")
+    fig, axes = plt.subplots(
+        n_rows, 1, figsize=figsize, dpi=dpi, squeeze=False
+    )
+    return fig, axes[:, 0], n_rows
 
 
 def plot_regional_spectrum_distribution(
@@ -624,16 +731,7 @@ def plot_regional_spectrum_distribution(
     regions = _resolve_distribution_regions(
         matched_by_region, cfg.get("regions"), split, die_filter
     )
-
-    n_rows = len(regions)
-    figsize = cfg.get(
-        "figsize", (10.0, 1.5 + 2.4 * n_rows + 0.8 * (n_rows - 1))
-    )
-    dpi = int(cfg.get("dpi", 300))
-    fig, axes = plt.subplots(
-        n_rows, 1, figsize=figsize, dpi=dpi, squeeze=False
-    )
-    axes_col = axes[:, 0]
+    fig, axes_col, n_rows = _create_distribution_canvas(regions, cfg)
     err_col = str(cfg.get("error_color", "#EFC934"))
     inv_x = bool(cfg.get("invert_x", True))
 

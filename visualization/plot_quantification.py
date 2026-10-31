@@ -338,6 +338,8 @@ def _render_strip_category_split(
     m_v = float(np.mean(vals))
     s_v = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
     top_pt = max(float(np.max(vals)), m_v + s_v)
+
+    # Plot sample scatter points with horizontal jitter
     ax.scatter(
         x_c + rng.uniform(-0.06, 0.06, len(vals)),
         vals,
@@ -346,6 +348,8 @@ def _render_strip_category_split(
         s=24,
         zorder=3,
     )
+
+    # Plot mean bar and uncertainty error bar
     ax.errorbar(
         x_c,
         m_v,
@@ -357,6 +361,8 @@ def _render_strip_category_split(
         zorder=4,
     )
     ax.plot([x_c - bar_w, x_c + bar_w], [m_v, m_v], color=col, lw=3.2, zorder=5)
+
+    # Annotate numeric mean and std value on top of category
     if sh_val:
         lbl = (
             f"{m_v:.2f}%\n±{s_v:.2f}%"
@@ -520,6 +526,52 @@ def _render_atomic_percentage_ecdf_panel(
     )
 
 
+def _prepare_atomic_diff_dataframe(
+    df_at_data: pd.DataFrame, cfg: dict[str, Any]
+) -> pd.DataFrame:
+    """Validate metadata and prepare absolute atomic percentage difference."""
+    _check_meta(df_at_data, {"split", "element"}, "df_at_data")
+    df = df_at_data.copy()
+    if "abs_diff_atomic_percentage" not in df.columns:
+        if "diff_atomic_percentage" not in df.columns:
+            raise KeyError(
+                "df_at_data must contain sample-level "
+                "'abs_diff_atomic_percentage' (or 'diff_atomic_percentage') column."
+            )
+        df["abs_diff_atomic_percentage"] = df["diff_atomic_percentage"].abs()
+    return _filter_atomic_df(df, cfg, "df_at_data")
+
+
+def _resolve_atomic_splits(
+    df: pd.DataFrame, cfg: dict[str, Any]
+) -> list[str]:
+    """Identify present splits ordered by configuration preference."""
+    if cfg.get("splits"):
+        return [
+            s
+            for s in cfg["splits"]
+            if s.lower() in df["split"].str.lower().unique()
+        ]
+    return list(df["split"].unique())
+
+
+def _resolve_atomic_palettes(
+    cfg: dict[str, Any], elements: list[str]
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Resolve split and element color palettes for atomic percentage plots."""
+    default_splits = {"train": "#1f77b4", "test": "#2ca02c", "val": "#ff7f0e"}
+    custom_splits = {
+        str(k).lower(): v for k, v in (cfg.get("palette") or {}).items()
+    }
+    split_pal = {**default_splits, **custom_splits}
+    elem_overrides = cfg.get("element_palette") or {}
+    elem_pal = {
+        e: elem_overrides.get(e, plt.cm.tab10(i % 10))
+        for i, e in enumerate(elements)
+    }
+    return split_pal, elem_pal
+
+
 def plot_atomic_percentage_mae(
     df_at_data: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
@@ -561,46 +613,15 @@ def plot_atomic_percentage_mae(
     KeyError
         If required columns are missing.
     """
-    _check_meta(df_at_data, {"split", "element"}, "df_at_data")
-    df = df_at_data.copy()
-    if "abs_diff_atomic_percentage" not in df.columns:
-        if "diff_atomic_percentage" not in df.columns:
-            raise KeyError(
-                "df_at_data must contain sample-level "
-                "'abs_diff_atomic_percentage' (or 'diff_atomic_percentage') column."
-            )
-        df["abs_diff_atomic_percentage"] = df["diff_atomic_percentage"].abs()
     cfg = plot_config or {}
-    df = _filter_atomic_df(df, cfg, "df_at_data")
+    df = _prepare_atomic_diff_dataframe(df_at_data, cfg)
     fig, (ax_strip, ax_ecdf) = _prepare_canvas(
         cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2
     )
 
-    present_splits = (
-        [
-            s
-            for s in cfg.get("splits", [])
-            if s.lower() in df["split"].str.lower().unique()
-        ]
-        if cfg.get("splits")
-        else list(df["split"].unique())
-    )
+    present_splits = _resolve_atomic_splits(df, cfg)
     elements_list = sorted(df["element"].unique())
-    split_pal = {
-        "train": "#1f77b4",
-        "test": "#2ca02c",
-        "val": "#ff7f0e",
-        **{
-            str(k).lower(): v
-            for k, v in (cfg.get("palette") or {}).items()
-        },
-    }
-    elem_pal = {
-        e: (cfg.get("element_palette") or {}).get(
-            e, plt.cm.tab10(i % 10)
-        )
-        for i, e in enumerate(elements_list)
-    }
+    split_pal, elem_pal = _resolve_atomic_palettes(cfg, elements_list)
 
     _render_atomic_percentage_strip_panel(
         ax_strip, df, elements_list, present_splits, split_pal, cfg
