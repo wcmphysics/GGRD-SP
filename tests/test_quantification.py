@@ -206,7 +206,7 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
                 config={"rsf_table": {"Al2p": 0.537}, "measurement_id": "NMG_M_J4_00000"}
             )
 
-        # Normalization mode warning
+        # Normalization mode warning via config
         with self.assertWarns(UserWarning):
             calculate_atomic_percentages(
                 self.ary_ene, self.ary_int, self.meta_df,
@@ -214,13 +214,29 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
                         "normalization_mode": "by_regional_max_intensity_of_source"}
             )
 
-        # load_rsf_table checks
+        # Normalization mode warning via df_meta.attrs
+        meta_with_attrs = self.meta_df.copy()
+        meta_with_attrs.attrs["normalization_mode"] = "by_regional_max_intensity"
+        with self.assertWarns(UserWarning):
+            calculate_atomic_percentages(
+                self.ary_ene, self.ary_int, meta_with_attrs,
+                config={"measurement_id": "NMG_M_J4_00000"}
+            )
+
+        # load_rsf_table and _LazyScofieldRSF checks
         rsf_table = load_rsf_table()
         self.assertIn("Ti2p", rsf_table)
         loaded = load_rsf_table({"quantification": {"rsf_table": {"C1s": 1.23}}})
         self.assertEqual(loaded["C1s"], 1.23)
         with self.assertRaises(FileNotFoundError):
             load_rsf_table("nonexistent_path_123.yaml")
+
+        # Lazy RSF dunder checks
+        from utility.quantification import DEFAULT_SCOFIELD_RSF
+        self.assertTrue(bool(DEFAULT_SCOFIELD_RSF))
+        self.assertIn("Al2p", repr(DEFAULT_SCOFIELD_RSF))
+        self.assertIn("Al2p", str(DEFAULT_SCOFIELD_RSF))
+        self.assertEqual(DEFAULT_SCOFIELD_RSF, load_rsf_table())
 
     def test_split_statistics_and_side_by_side_reporting(self) -> None:
         """Verify split-level statistical aggregation and side-by-side formatting."""

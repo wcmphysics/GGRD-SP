@@ -142,6 +142,22 @@ class _LazyScofieldRSF(dict):
         self._ensure_loaded()
         return super().copy()
 
+    def __repr__(self) -> str:
+        self._ensure_loaded()
+        return super().__repr__()
+
+    def __str__(self) -> str:
+        self._ensure_loaded()
+        return super().__str__()
+
+    def __bool__(self) -> bool:
+        self._ensure_loaded()
+        return len(self) > 0
+
+    def __eq__(self, other: Any) -> bool:
+        self._ensure_loaded()
+        return super().__eq__(other)
+
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation (lazily loaded)
 DEFAULT_SCOFIELD_RSF: dict[str, float] = _LazyScofieldRSF()
@@ -263,6 +279,8 @@ def calculate_atomic_percentages(
         )
 
     norm_mode = cfg.get("normalization_mode")
+    if norm_mode is None:
+        norm_mode = df_meta.attrs.get("normalization_mode")
     if norm_mode is None and "normalization_mode" in df_meta.columns:
         norm_series = df_meta["normalization_mode"].dropna()
         if not norm_series.empty:
@@ -436,6 +454,8 @@ def calculate_atomic_percentage_split_statistics(
         return pd.DataFrame(), pd.DataFrame()
 
     norm_mode = cfg.get("normalization_mode")
+    if norm_mode is None:
+        norm_mode = df_meta_orig.attrs.get("normalization_mode")
     if norm_mode is None and "normalization_mode" in df_meta_orig.columns:
         norm_series = df_meta_orig["normalization_mode"].dropna()
         if not norm_series.empty:
