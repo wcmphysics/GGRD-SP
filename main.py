@@ -156,11 +156,6 @@ def main() -> None:
     print("\nDie Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
 
-    if show_plots and config["visualization"].get("plots", {}).get(
-        "gp_die_flux_timeline", True
-    ):
-        visualization.plot_gp_die_flux_timeline(gp_bundle, config["gp_flux"])
-
     # =========================================================================
     # STAGE 7: DATASET AND DATALOADER DEFINITION (With Augmentation)
     # =========================================================================
@@ -255,6 +250,9 @@ def main() -> None:
             "data_predicted": data_predicted,
             "training_results": training_results,
             "df_atomic_percentage_samples": df_atomic_percentage_samples,
+            "gp_bundle": gp_bundle,
+            "gp_die_flux_bundle": gp_bundle,
+            "gp_flux_config": config.get("gp_flux"),
             "noise_analysis": (
                 ary_spec_analysis_signal,
                 ary_spec_analysis_noise,
@@ -269,10 +267,7 @@ def main() -> None:
             **config["visualization"],
             "show_plots": show_plots,
             "session_splits": session_splits,
-            "plots": {
-                **config["visualization"].get("plots", {}),
-                "gp_die_flux_timeline": False,  # Already plotted in Stage 6
-            },
+            "gp_flux_config": config.get("gp_flux"),
         }
         visualization.dispatch_visualizations(
             pipeline_plot_data, config=dispatch_cfg

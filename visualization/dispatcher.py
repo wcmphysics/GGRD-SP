@@ -122,9 +122,14 @@ def dispatch_visualizations(
 
     # 1. GP Die Flux Timeline
     if plot_toggles.get("gp_die_flux_timeline"):
-        gp_bundle = pipeline_data.get("gp_bundle")
-        gp_cfg = pipeline_data.get("gp_flux_config") or cfg.get(
-            "gp_flux_config"
+        gp_bundle = pipeline_data.get("gp_bundle") or pipeline_data.get(
+            "gp_die_flux_bundle"
+        )
+        gp_cfg = (
+            pipeline_data.get("gp_flux_config")
+            or pipeline_data.get("gp_flux")
+            or cfg.get("gp_flux_config")
+            or cfg.get("gp_flux")
         )
         if gp_bundle is not None and gp_cfg is not None:
             plot_gp_die_flux_timeline(gp_bundle, gp_cfg)
