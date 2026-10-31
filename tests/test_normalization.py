@@ -125,8 +125,11 @@ class TestNormalization(unittest.TestCase):
         )
         self.assertEqual(norm_i.shape, self.ary_intensity.shape)
         np.testing.assert_array_equal(norm_i, self.ary_intensity)
-        np.testing.assert_array_equal(norm_e, self.ary_energy)
-        pd.testing.assert_frame_equal(meta, self.df_meta)
+        self.assertIn("normalization_scale", meta.columns)
+        np.testing.assert_array_equal(meta["normalization_scale"].to_numpy(), 1.0)
+        pd.testing.assert_frame_equal(
+            meta.drop(columns=["normalization_scale"]), self.df_meta
+        )
 
     def test_normalize_by_regional_max_intensity_of_source(self) -> None:
         """Verify by_regional_max_intensity_of_source divides paired source and target
@@ -215,6 +218,22 @@ class TestNormalization(unittest.TestCase):
                 config={"normalization_mode": "invalid_mode"},
             )
         self.assertIn("invalid_mode", str(ctx.exception))
+
+    def test_normalization_scale_attached(self) -> None:
+        """Verify normalization_scale column is attached to df_meta across modes."""
+        _, _, meta_flux = normalize_spectral_data(
+            self.ary_intensity, self.ary_energy, self.df_meta,
+            config={"normalization_mode": "by_total_flux_single_die"},
+        )
+        self.assertIn("normalization_scale", meta_flux.columns)
+        self.assertAlmostEqual(meta_flux["normalization_scale"].iloc[0], 3000.0)
+
+        _, _, meta_mean = normalize_spectral_data(
+            self.ary_intensity, self.ary_energy, self.df_meta,
+            config={"normalization_mode": "by_mean_intensity_single_die"},
+        )
+        self.assertIn("normalization_scale", meta_mean.columns)
+        self.assertAlmostEqual(meta_mean["normalization_scale"].iloc[0], 150.0)
 
 
 if __name__ == "__main__":

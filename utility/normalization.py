@@ -84,15 +84,21 @@ def normalize_spectral_data(
             f"Supported options are {list(_VALID_NORMALIZATION_MODES)}."
         )
 
+    df_meta = df_meta.copy()
     ary_norm = ary_intensity.astype(np.float32, copy=True)
     if norm_mode == "no_normalization":
+        df_meta["normalization_scale"] = 1.0
+        df_meta.attrs["normalization_mode"] = norm_mode
         return ary_norm, ary_energy, df_meta
 
     n_total = len(ary_norm)
+    scales_record = np.ones(n_total, dtype=np.float64)
     valid_df = df_meta[
         (df_meta["spectrum_index"] >= 0) & (df_meta["spectrum_index"] < n_total)
     ]
     if valid_df.empty:
+        df_meta["normalization_scale"] = 1.0
+        df_meta.attrs["normalization_mode"] = norm_mode
         return ary_norm, ary_energy, df_meta
     idx = valid_df["spectrum_index"].to_numpy(dtype=int)
 
@@ -105,7 +111,9 @@ def normalize_spectral_data(
             ],
             dtype=np.float64,
         )
-        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
+        scales = _clamp_scales(raw_scales, eps, norm_mode)
+        ary_norm[idx] /= scales
+        scales_record[idx] = scales.ravel()
 
     elif norm_mode == "by_mean_intensity_single_die":
         if "mean_intensity_single_die" not in df_meta.columns:
@@ -117,11 +125,15 @@ def normalize_spectral_data(
         raw_scales = valid_df["mean_intensity_single_die"].to_numpy(
             dtype=np.float64
         )
-        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
+        scales = _clamp_scales(raw_scales, eps, norm_mode)
+        ary_norm[idx] /= scales
+        scales_record[idx] = scales.ravel()
 
     elif norm_mode == "by_regional_max_intensity":
         raw_scales = np.max(np.abs(ary_intensity[idx]), axis=1)
-        ary_norm[idx] /= _clamp_scales(raw_scales, eps, norm_mode)
+        scales = _clamp_scales(raw_scales, eps, norm_mode)
+        ary_norm[idx] /= scales
+        scales_record[idx] = scales.ravel()
 
     elif norm_mode == "by_regional_max_intensity_of_source":
         if "target_spectrum_index" not in df_meta.columns:
@@ -142,5 +154,12 @@ def normalize_spectral_data(
             scales = _clamp_scales(raw_scales, eps, norm_mode)
             ary_norm[src_idx] /= scales
             ary_norm[tgt_idx] /= scales
+            scales_record[src_idx] = scales.ravel()
+            scales_record[tgt_idx] = scales.ravel()
+
+    df_meta["normalization_scale"] = df_meta["spectrum_index"].map(
+        lambda si: scales_record[int(si)] if 0 <= int(si) < n_total else 1.0
+    ).astype(np.float64)
+    df_meta.attrs["normalization_mode"] = norm_mode
 
     return ary_norm, ary_energy, df_meta
