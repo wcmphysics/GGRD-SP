@@ -4,7 +4,11 @@ and guards.
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
+import yaml
+from pydantic import ValidationError
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -33,7 +37,11 @@ from utility.config_loader import (
     merge_dedicated_model_config,
     resolve_pipeline_config,
 )
-from utility.config_schema import PipelineConfig
+from utility.config_schema import (
+    BayesianOptConfig,
+    PipelineConfig,
+    TrainConfig,
+)
 
 
 class TestInceptionTime1D(unittest.TestCase):
@@ -326,6 +334,46 @@ class TestDedicatedModelConfigFiles(unittest.TestCase):
         self.assertEqual(raw["training"]["train_config"]["epochs"], 123)
         self.assertEqual(raw["training"]["train_config"]["learning_rate"], 0.05)
         self.assertEqual(raw["training"]["train_config"]["tcn_channel"], 32)
+
+    def test_config_yaml_loading_with_dedicated_models(self) -> None:
+        """Verify config.yaml loading populates dedicated model defaults."""
+        for model_name in ("inception_time", "tcn", "fpn"):
+            raw = load_yaml("config/config.yaml")
+            raw["global"]["model_type"] = model_name
+            with tempfile.NamedTemporaryFile(
+                "w", dir="config", suffix=".yaml", delete=False, encoding="utf-8"
+            ) as tmp:
+                yaml.dump(raw, tmp)
+                tmp_path = tmp.name
+            try:
+                cfg = load_config(tmp_path, validate=True)
+                tc = cfg["training"]["train_config"]
+                self.assertEqual(tc["epochs"], 50)
+                self.assertEqual(tc["learning_rate"], 0.001)
+                self.assertEqual(tc["early_stopping_patience"], 20)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+    def test_train_config_even_kernel_sizes_rejected(self) -> None:
+        """Verify TrainConfig rejects even integers in kernel_sizes."""
+        with self.assertRaises(ValidationError):
+            TrainConfig(kernel_sizes=[3, 4, 15])
+        with self.assertRaises(ValidationError):
+            TrainConfig(kernel_sizes=[])
+
+    def test_bayesian_opt_config_even_kernel_sizes_rejected(self) -> None:
+        """Verify BayesianOptConfig rejects even candidate kernel sizes."""
+        with self.assertRaises(ValidationError):
+            BayesianOptConfig(kernel_sizes=[3, 4, 7])
+
+    def test_block_constructors_even_kernel_sizes_rejected(self) -> None:
+        """Verify block-level constructors reject even kernel sizes."""
+        with self.assertRaises(ValueError):
+            InceptionModule1D(1, {"kernel_sizes": [3, 4, 15]})
+        with self.assertRaises(ValueError):
+            TCNResidualBlock1D(1, 16, kernel_size=4, dilation=1, config={})
+        with self.assertRaises(ValueError):
+            FPNConvBlock1D(1, 16, config={"kernel_size": 4})
 
 
 class TestSlidingWindowProhibitionMultiLayer(unittest.TestCase):
