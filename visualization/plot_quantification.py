@@ -323,6 +323,203 @@ def plot_atomic_percentage_distributions(
     return fig, (ax_abs, ax_diff)
 
 
+def _render_strip_category_split(
+    ax: plt.Axes,
+    vals: np.ndarray,
+    x_c: float,
+    col: str,
+    bar_w: float,
+    sh_val: bool,
+    multiline: bool,
+    font_size: int,
+    rng: np.random.Generator,
+) -> float:
+    """Plot scatter points, error bar, and MAE bar for a category-split group."""
+    m_v = float(np.mean(vals))
+    s_v = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+    top_pt = max(float(np.max(vals)), m_v + s_v)
+    ax.scatter(
+        x_c + rng.uniform(-0.06, 0.06, len(vals)),
+        vals,
+        color=col,
+        alpha=0.55,
+        s=24,
+        zorder=3,
+    )
+    ax.errorbar(
+        x_c,
+        m_v,
+        yerr=[[min(m_v, s_v)], [s_v]],
+        fmt="none",
+        ecolor="black",
+        elinewidth=1.6,
+        capsize=4.0,
+        zorder=4,
+    )
+    ax.plot([x_c - bar_w, x_c + bar_w], [m_v, m_v], color=col, lw=3.2, zorder=5)
+    if sh_val:
+        lbl = (
+            f"{m_v:.2f}%\n±{s_v:.2f}%"
+            if multiline
+            else f"{m_v:.2f}% ± {s_v:.2f}%"
+        )
+        ax.text(
+            x_c,
+            top_pt + 0.06,
+            lbl,
+            ha="center",
+            va="bottom",
+            fontsize=font_size,
+            fontweight="bold",
+            zorder=6,
+        )
+    return top_pt
+
+
+def _render_atomic_percentage_strip_panel(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    elements_list: list[str],
+    present_splits: list[str],
+    split_pal: dict[str, str],
+    cfg: dict[str, Any],
+) -> None:
+    """Render strip plot of sample errors and MAE summary bars on ax."""
+    inc_ovr = bool(cfg.get("include_overall", True))
+    sh_val = bool(cfg.get("show_values", True))
+    bar_w = float(cfg.get("bar_half_width", 0.09))
+    font_size = int(cfg.get("value_fontsize", 8))
+    categories = list(elements_list) + (["Overall"] if inc_ovr else [])
+    n_splits = len(present_splits)
+    dodge = 0.32 if len(present_splits) > 1 else 0.0
+    rng = np.random.default_rng(42)
+    max_y = 0.0
+    multiline = (
+        (len(present_splits) > 1)
+        if cfg.get("multiline_labels") is None
+        else bool(cfg.get("multiline_labels"))
+    )
+
+    # Plot sample points and summary bars across categories and splits
+    for i, cat in enumerate(categories):
+        c_df = df if cat == "Overall" else df[df["element"] == cat]
+        for j, split in enumerate(present_splits):
+            vals = c_df[
+                c_df["split"].str.lower() == str(split).lower()
+            ]["abs_diff_atomic_percentage"].values
+            if len(vals) == 0:
+                continue
+            x_c = i + (j - (n_splits - 1) / 2.0) * dodge
+            col = split_pal.get(str(split).lower(), "#7f7f7f")
+            top_pt = _render_strip_category_split(
+                ax, vals, x_c, col, bar_w, sh_val, multiline, font_size, rng
+            )
+            max_y = max(max_y, top_pt)
+
+    # Add visual separation and formatting for Overall category
+    if inc_ovr and len(categories) > 1:
+        ax.axvline(
+            len(elements_list) - 0.5,
+            color="gray",
+            ls="--",
+            alpha=0.6,
+            lw=1.2,
+        )
+    ax.set_xticks(range(len(categories)), labels=categories, fontweight="bold")
+    ax.set_ylim(0.0, max_y * 1.25 + 0.20)
+    sh_h = [
+        plt.Line2D(
+            [0],
+            [0],
+            color=split_pal.get(str(s).lower(), "#7f7f7f"),
+            lw=3.0,
+            label=f"{str(s).capitalize()} (Mean ± Std)",
+        )
+        for s in present_splits
+    ]
+    ax.legend(handles=sh_h, title="Split", fontsize=8.5, loc="upper right")
+    _finalize_plot(
+        ax,
+        title="Sample Absolute Errors & Mean (MAE)",
+        xlabel="Element",
+        ylabel="Absolute Error |Pred - Target| (at. %)",
+        invert_x=False,
+        grid_alpha=0.5,
+    )
+
+
+def _render_atomic_percentage_ecdf_panel(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    elements_list: list[str],
+    elem_pal: dict[str, Any],
+    cfg: dict[str, Any],
+) -> None:
+    """Render empirical cumulative distribution (ECDF) panel on ax."""
+    # Determine active splits for ECDF curves
+    splits_lower = [str(s).lower() for s in df["split"].unique()]
+    if cfg.get("ecdf_splits") is not None:
+        active_ecdf = [
+            str(s).lower()
+            for s in cfg["ecdf_splits"]
+            if str(s).lower() in splits_lower
+        ]
+        if not active_ecdf:
+            raise ValueError(
+                f"None of the requested ecdf_splits {cfg['ecdf_splits']} were found in the data."
+            )
+    else:
+        active_ecdf = [
+            s for s in ["train", "test"] if s in splits_lower
+        ] or list(dict.fromkeys(splits_lower))
+
+    # Plot step functions for each element and split
+    split_ls = {"train": "-", "test": "--", "val": ":"}
+    max_x = 0.0
+    for elem in elements_list:
+        for split in active_ecdf:
+            sub = df[
+                (df["element"] == elem)
+                & (df["split"].str.lower() == split)
+            ]
+            vals = np.sort(sub["abs_diff_atomic_percentage"].values)
+            if vals.size > 0:
+                max_x = max(max_x, float(vals[-1]))
+                ax.step(
+                    np.r_[0.0, vals],
+                    np.arange(len(vals) + 1) / len(vals) * 100.0,
+                    where="post",
+                    color=elem_pal[elem],
+                    ls=split_ls.get(split, "-"),
+                    lw=1.7,
+                    alpha=0.9,
+                    label=f"{elem} ({split.capitalize()})",
+                )
+
+    # Add reference coverage threshold and finalize panel
+    ref_pct = float(cfg.get("reference_percentile", 90.0))
+    ax.axhline(ref_pct, color="black", linestyle=":", lw=1.3, alpha=0.75)
+    ax.text(
+        0.02 * max(max_x, 1.0),
+        ref_pct + 1.2,
+        f"{int(ref_pct)}% Coverage Reference",
+        color="black",
+        fontsize=8,
+        alpha=0.85,
+        fontweight="bold",
+    )
+    ax.set(ylim=(0, 103), xlim=(0.0, max_x * 1.05 + 0.05))
+    ax.legend(fontsize=8, loc="lower right", ncol=max(1, len(active_ecdf)))
+    _finalize_plot(
+        ax,
+        title="Empirical Cumulative Error (ECDF)",
+        xlabel="Absolute Error |Pred - Target| (at. %)",
+        ylabel="Cumulative Percentage of Samples (%)",
+        invert_x=False,
+        grid_alpha=0.5,
+    )
+
+
 def plot_atomic_percentage_mae(
     df_at_data: pd.DataFrame,
     plot_config: dict[str, Any] | None = None,
@@ -375,14 +572,10 @@ def plot_atomic_percentage_mae(
         df["abs_diff_atomic_percentage"] = df["diff_atomic_percentage"].abs()
     cfg = plot_config or {}
     df = _filter_atomic_df(df, cfg, "df_at_data")
-
-    inc_ovr = bool(cfg.get("include_overall", True))
-    sh_val = bool(cfg.get("show_values", True))
-    bar_w = float(cfg.get("bar_half_width", 0.09))
-    ref_pct = float(cfg.get("reference_percentile", 90.0))
     fig, (ax_strip, ax_ecdf) = _prepare_canvas(
         cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2
     )
+
     present_splits = (
         [
             s
@@ -402,168 +595,19 @@ def plot_atomic_percentage_mae(
             for k, v in (cfg.get("palette") or {}).items()
         },
     }
-    categories = list(elements_list) + (["Overall"] if inc_ovr else [])
     elem_pal = {
         e: (cfg.get("element_palette") or {}).get(
             e, plt.cm.tab10(i % 10)
         )
         for i, e in enumerate(elements_list)
     }
-    n_splits = len(present_splits)
-    dodge = 0.32 if len(present_splits) > 1 else 0.0
-    rng = np.random.default_rng(42)
-    max_y = 0.0
-    multiline = (
-        (len(present_splits) > 1)
-        if cfg.get("multiline_labels") is None
-        else bool(cfg.get("multiline_labels"))
+
+    _render_atomic_percentage_strip_panel(
+        ax_strip, df, elements_list, present_splits, split_pal, cfg
     )
-    for i, cat in enumerate(categories):
-        c_df = df if cat == "Overall" else df[df["element"] == cat]
-        for j, split in enumerate(present_splits):
-            vals = c_df[
-                c_df["split"].str.lower() == str(split).lower()
-            ]["abs_diff_atomic_percentage"].values
-            if len(vals) == 0:
-                continue
-            x_c = i + (j - (n_splits - 1) / 2.0) * dodge
-            col = split_pal.get(str(split).lower(), "#7f7f7f")
-            m_v = float(np.mean(vals))
-            s_v = (
-                (float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0)
-                or 0.0
-            )
-            top_pt = max(float(np.max(vals)), m_v + s_v)
-            max_y = max(max_y, top_pt)
-            ax_strip.scatter(
-                x_c + rng.uniform(-0.06, 0.06, len(vals)),
-                vals,
-                color=col,
-                alpha=0.55,
-                s=24,
-                zorder=3,
-            )
-            ax_strip.errorbar(
-                x_c,
-                m_v,
-                yerr=[[min(m_v, s_v)], [s_v]],
-                fmt="none",
-                ecolor="black",
-                elinewidth=1.6,
-                capsize=4.0,
-                zorder=4,
-            )
-            ax_strip.plot(
-                [x_c - bar_w, x_c + bar_w],
-                [m_v, m_v],
-                color=col,
-                lw=3.2,
-                zorder=5,
-            )
-            if sh_val:
-                lbl = (
-                    f"{m_v:.2f}%\n±{s_v:.2f}%"
-                    if multiline
-                    else f"{m_v:.2f}% ± {s_v:.2f}%"
-                )
-                ax_strip.text(
-                    x_c,
-                    top_pt + 0.06,
-                    lbl,
-                    ha="center",
-                    va="bottom",
-                    fontsize=int(cfg.get("value_fontsize", 8)),
-                    fontweight="bold",
-                    zorder=6,
-                )
-    if inc_ovr and len(categories) > 1:
-        ax_strip.axvline(
-            len(elements_list) - 0.5,
-            color="gray",
-            ls="--",
-            alpha=0.6,
-            lw=1.2,
-        )
-    ax_strip.set_xticks(
-        range(len(categories)), labels=categories, fontweight="bold"
+    _render_atomic_percentage_ecdf_panel(
+        ax_ecdf, df, elements_list, elem_pal, cfg
     )
-    ax_strip.set_ylim(0.0, max_y * 1.25 + 0.20)
-    sh_h = [
-        plt.Line2D(
-            [0],
-            [0],
-            color=split_pal.get(str(s).lower(), "#7f7f7f"),
-            lw=3.0,
-            label=f"{str(s).capitalize()} (Mean ± Std)",
-        )
-        for s in present_splits
-    ]
-    ax_strip.legend(
-        handles=sh_h, title="Split", fontsize=8.5, loc="upper right"
-    )
-    _finalize_plot(
-        ax_strip,
-        title="Sample Absolute Errors & Mean (MAE)",
-        xlabel="Element",
-        ylabel="Absolute Error |Pred - Target| (at. %)",
-        invert_x=False,
-        grid_alpha=0.5,
-    )
-    splits_lower = [str(s).lower() for s in df["split"].unique()]
-    if cfg.get("ecdf_splits") is not None:
-        active_ecdf = [
-            str(s).lower()
-            for s in cfg["ecdf_splits"]
-            if str(s).lower() in splits_lower
-        ]
-        if not active_ecdf:
-            raise ValueError(
-                f"None of the requested ecdf_splits {cfg['ecdf_splits']} were found in the data."
-            )
-    else:
-        active_ecdf = [
-            s for s in ["train", "test"] if s in splits_lower
-        ] or list(dict.fromkeys(splits_lower))
-    split_ls = {"train": "-", "test": "--", "val": ":"}
-    max_x = 0.0
-    for elem in elements_list:
-        for split in active_ecdf:
-            sub = df[
-                (df["element"] == elem)
-                & (df["split"].str.lower() == split)
-            ]
-            vals = np.sort(sub["abs_diff_atomic_percentage"].values)
-            if vals.size > 0:
-                max_x = max(max_x, float(vals[-1]))
-                ax_ecdf.step(
-                    np.r_[0.0, vals],
-                    np.arange(len(vals) + 1) / len(vals) * 100.0,
-                    where="post",
-                    color=elem_pal[elem],
-                    ls=split_ls.get(split, "-"),
-                    lw=1.7,
-                    alpha=0.9,
-                    label=f"{elem} ({split.capitalize()})",
-                )
-    ax_ecdf.axhline(ref_pct, color="black", linestyle=":", lw=1.3, alpha=0.75)
-    ax_ecdf.text(
-        0.02 * max(max_x, 1.0),
-        ref_pct + 1.2,
-        f"{int(ref_pct)}% Coverage Reference",
-        color="black",
-        fontsize=8,
-        alpha=0.85,
-        fontweight="bold",
-    )
-    ax_ecdf.set(ylim=(0, 103), xlim=(0.0, max_x * 1.05 + 0.05))
-    ax_ecdf.legend(fontsize=8, loc="lower right", ncol=max(1, len(active_ecdf)))
-    _finalize_plot(
-        ax_ecdf,
-        title="Empirical Cumulative Error (ECDF)",
-        xlabel="Absolute Error |Pred - Target| (at. %)",
-        ylabel="Cumulative Percentage of Samples (%)",
-        invert_x=False,
-        grid_alpha=0.5,
-    )
+
     _finish_fig(fig, cfg)
     return fig, (ax_strip, ax_ecdf)
