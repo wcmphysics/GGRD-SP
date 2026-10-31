@@ -101,26 +101,22 @@ def dispatch_visualizations(
     if not show_plots:
         return []
 
-    plot_toggles = {**DEFAULT_PLOT_TOGGLES, **(cfg.get("plots") or {})}
-    rendered: list[str] = []
-
+def _dispatch_timeline_plots(
+    plot_toggles: dict[str, bool],
+    pipeline_data: dict[str, Any],
+    cfg: dict[str, Any],
+    rendered: list[str],
+) -> None:
+    """Render GP flux, pairing, and intensity timeline diagnostic plots."""
     source_tool = str(cfg.get("source_tool", "J4"))
     target_tool = str(cfg.get("target_tool", "J5"))
     example_region = str(cfg.get("example_region", "Al2p"))
-    sample_measurement_id = cfg.get("sample_measurement_id")
     die = int(cfg.get("die", 0))
-    session_splits = cfg.get("session_splits")
-    use_sw = bool(cfg.get("use_sliding_window", False))
 
     df_meta = pipeline_data.get("df_meta")
     ary_intensity = pipeline_data.get("ary_intensity")
     ary_energy = pipeline_data.get("ary_energy")
-    data_orig = pipeline_data.get("data_original")
-    data_pred = pipeline_data.get("data_predicted")
-    training_results = pipeline_data.get("training_results") or {}
-    df_atomic = pipeline_data.get("df_atomic_percentage_samples")
 
-    # 1. GP Die Flux Timeline
     if plot_toggles.get("gp_die_flux_timeline"):
         gp_bundle = pipeline_data.get("gp_bundle") or pipeline_data.get(
             "gp_die_flux_bundle"
@@ -135,7 +131,6 @@ def dispatch_visualizations(
             plot_gp_die_flux_timeline(gp_bundle, gp_cfg)
             rendered.append("gp_die_flux_timeline")
 
-    # 2. Pairing Timeline
     if plot_toggles.get("pairing_timeline") and df_meta is not None:
         plot_pairing_timeline(
             df_meta,
@@ -146,7 +141,6 @@ def dispatch_visualizations(
         )
         rendered.append("pairing_timeline")
 
-    # 3. Flux and Averaged Intensity vs Time
     if (
         plot_toggles.get("flux_and_averaged_intensity")
         and ary_intensity is not None
@@ -164,7 +158,6 @@ def dispatch_visualizations(
         )
         rendered.append("flux_and_averaged_intensity")
 
-    # 4. Max Intensity vs Time
     if (
         plot_toggles.get("max_intensity")
         and ary_intensity is not None
@@ -181,7 +174,6 @@ def dispatch_visualizations(
         )
         rendered.append("max_intensity")
 
-    # 5. Normalized Max Intensity vs Time
     if (
         plot_toggles.get("normalized_max_intensity")
         and ary_intensity is not None
@@ -200,7 +192,26 @@ def dispatch_visualizations(
         )
         rendered.append("normalized_max_intensity")
 
-    # 6. Tool Comparison
+
+def _dispatch_noise_and_spectral_plots(
+    plot_toggles: dict[str, bool],
+    pipeline_data: dict[str, Any],
+    cfg: dict[str, Any],
+    rendered: list[str],
+) -> None:
+    """Render spectral noise analysis, background, and de-noising plots."""
+    source_tool = str(cfg.get("source_tool", "J4"))
+    target_tool = str(cfg.get("target_tool", "J5"))
+    example_region = str(cfg.get("example_region", "Al2p"))
+    sample_measurement_id = cfg.get("sample_measurement_id")
+    die = int(cfg.get("die", 0))
+    use_sw = bool(cfg.get("use_sliding_window", False))
+
+    df_meta = pipeline_data.get("df_meta")
+    ary_intensity = pipeline_data.get("ary_intensity")
+    ary_energy = pipeline_data.get("ary_energy")
+    data_orig = pipeline_data.get("data_original")
+
     if (
         plot_toggles.get("tool_comparison")
         and ary_intensity is not None
@@ -219,7 +230,6 @@ def dispatch_visualizations(
         )
         rendered.append("tool_comparison")
 
-    # 7. Shirley Background
     if (
         plot_toggles.get("shirley_background")
         and ary_intensity is not None
@@ -238,7 +248,6 @@ def dispatch_visualizations(
         )
         rendered.append("shirley_background")
 
-    # 8. Spectral Noise Analysis
     if plot_toggles.get("spectral_noise_analysis"):
         noise_tuple = pipeline_data.get("noise_analysis")
         if (
@@ -255,7 +264,6 @@ def dispatch_visualizations(
             )
             rendered.append("spectral_noise_analysis")
 
-    # 9. GP Hyperparameter Convergence
     if plot_toggles.get("gp_hyperparameter_convergence") and data_orig:
         plot_gp_hyperparameter_convergence(
             data_orig,
@@ -267,51 +275,6 @@ def dispatch_visualizations(
         )
         rendered.append("gp_hyperparameter_convergence")
 
-    # 10. Training History
-    if plot_toggles.get("training_history") and "histories" in training_results:
-        plot_training_history(training_results["histories"])
-        rendered.append("training_history")
-
-    # 11. Prediction Comparison
-    if (
-        plot_toggles.get("prediction_comparison")
-        and data_orig is not None
-        and data_pred is not None
-    ):
-        plot_prediction_comparison(
-            data_orig,
-            data_pred,
-            config={"session_splits": session_splits, "die": die},
-        )
-        rendered.append("prediction_comparison")
-
-    # 12. Regional Spectrum Distribution
-    if (
-        plot_toggles.get("regional_spectrum_distribution")
-        and data_orig is not None
-        and data_pred is not None
-    ):
-        plot_regional_spectrum_distribution(
-            data_orig,
-            data_pred,
-            config={
-                "split": "test",
-                "save_path": "regional_spectrum_distribution.png",
-            },
-        )
-        rendered.append("regional_spectrum_distribution")
-
-    # 13. Atomic Percentage Distributions
-    if plot_toggles.get("atomic_percentage_distributions") and df_atomic is not None:
-        plot_atomic_percentage_distributions(df_atomic)
-        rendered.append("atomic_percentage_distributions")
-
-    # 14. Atomic Percentage MAE
-    if plot_toggles.get("atomic_percentage_mae") and df_atomic is not None:
-        plot_atomic_percentage_mae(df_atomic)
-        rendered.append("atomic_percentage_mae")
-
-    # 15. Sliding Window Slices
     if (
         plot_toggles.get("sliding_window_slices")
         and use_sw
@@ -332,7 +295,6 @@ def dispatch_visualizations(
             )
             rendered.append("sliding_window_slices")
 
-    # 16. Denoised vs. Non-Denoised Spectrum Comparison
     denoise_pair = pipeline_data.get("denoise_intensity_pair")
     if (
         plot_toggles.get("denoise_spectrum_comparison")
@@ -349,7 +311,6 @@ def dispatch_visualizations(
         )
         rendered.append("denoise_spectrum_comparison")
 
-    # 17. Denoised vs. Non-Denoised Atomic Percentage MAE Box Plot
     df_denoise_at = pipeline_data.get("df_denoise_atomic_samples")
     if (
         plot_toggles.get("denoise_atomic_percentage_mae")
@@ -358,5 +319,111 @@ def dispatch_visualizations(
     ):
         plot_denoise_atomic_percentage_mae(df_denoise_at)
         rendered.append("denoise_atomic_percentage_mae")
+
+
+def _dispatch_evaluation_and_quant_plots(
+    plot_toggles: dict[str, bool],
+    pipeline_data: dict[str, Any],
+    cfg: dict[str, Any],
+    rendered: list[str],
+) -> None:
+    """Render model training history, predictions, and quantification plots."""
+    die = int(cfg.get("die", 0))
+    session_splits = cfg.get("session_splits")
+
+    data_orig = pipeline_data.get("data_original")
+    data_pred = pipeline_data.get("data_predicted")
+    training_results = pipeline_data.get("training_results") or {}
+    df_atomic = pipeline_data.get("df_atomic_percentage_samples")
+
+    if plot_toggles.get("training_history") and "histories" in training_results:
+        plot_training_history(training_results["histories"])
+        rendered.append("training_history")
+
+    if (
+        plot_toggles.get("prediction_comparison")
+        and data_orig is not None
+        and data_pred is not None
+    ):
+        plot_prediction_comparison(
+            data_orig,
+            data_pred,
+            config={"session_splits": session_splits, "die": die},
+        )
+        rendered.append("prediction_comparison")
+
+    if (
+        plot_toggles.get("regional_spectrum_distribution")
+        and data_orig is not None
+        and data_pred is not None
+    ):
+        plot_regional_spectrum_distribution(
+            data_orig,
+            data_pred,
+            config={
+                "split": "test",
+                "save_path": "regional_spectrum_distribution.png",
+            },
+        )
+        rendered.append("regional_spectrum_distribution")
+
+    if plot_toggles.get("atomic_percentage_distributions") and df_atomic is not None:
+        plot_atomic_percentage_distributions(df_atomic)
+        rendered.append("atomic_percentage_distributions")
+
+    if plot_toggles.get("atomic_percentage_mae") and df_atomic is not None:
+        plot_atomic_percentage_mae(df_atomic)
+        rendered.append("atomic_percentage_mae")
+
+
+def dispatch_visualizations(
+    pipeline_data: dict[str, Any],
+    config: dict[str, Any] | None = None,
+) -> list[str]:
+    """Execute enabled diagnostic plots based on configuration flags.
+
+    Parameters
+    ----------
+    pipeline_data : dict[str, Any]
+        Packaged pipeline artifacts and data containing:
+        - 'df_meta': metadata DataFrame.
+        - 'ary_intensity': 2D measured intensity array.
+        - 'ary_energy': 2D binding energy array.
+        - 'data_original': tuple of (intensity, energy, df_meta).
+        - 'data_predicted': tuple of (pred_intensity, energy, pred_meta).
+        - 'training_results': model training histories dictionary.
+        - 'df_atomic_percentage_samples': atomic percentage DataFrame.
+        - 'gp_bundle': GP flux model bundle (optional).
+        - 'gp_flux_config': GP flux configuration (optional).
+        - 'noise_analysis': tuple of (signal, noise) arrays (optional).
+    config : dict[str, Any] | None, optional
+        Visualization configuration dictionary containing:
+        - 'show_plots' (bool): master switch to display plots (default True).
+        - 'plots' (dict[str, bool]): individual plot enablement toggles.
+        - 'source_tool' (str): source tool identifier.
+        - 'target_tool' (str): target tool identifier.
+        - 'example_region' (str): region for diagnostic single-region plots.
+        - 'sample_measurement_id' (str): measurement ID for single-sample plots.
+        - 'die' (int): die index (default 0).
+        - 'session_splits' (dict | list): split session mapping.
+        - 'use_sliding_window' (bool): whether sliding window is active.
+        - 'noise_plot_config' (dict): config for spectral noise plot.
+
+    Returns
+    -------
+    list[str]
+        List of plot identifier strings that were successfully rendered.
+    """
+    cfg = config or {}
+    show_plots = bool(cfg.get("show_plots", True))
+    if not show_plots:
+        return []
+
+    plot_toggles = {**DEFAULT_PLOT_TOGGLES, **(cfg.get("plots") or {})}
+    rendered: list[str] = []
+
+    _dispatch_timeline_plots(plot_toggles, pipeline_data, cfg, rendered)
+    _dispatch_noise_and_spectral_plots(plot_toggles, pipeline_data, cfg, rendered)
+    _dispatch_evaluation_and_quant_plots(plot_toggles, pipeline_data, cfg, rendered)
 
     return rendered
