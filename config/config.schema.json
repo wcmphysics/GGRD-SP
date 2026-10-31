@@ -1252,7 +1252,7 @@
           "default": null,
           "title": "Target Tool"
         },
-        "assignment": {
+        "direct_assignment": {
           "anyOf": [
             {
               "additionalProperties": {
@@ -1268,7 +1268,7 @@
             }
           ],
           "default": null,
-          "title": "Assignment"
+          "title": "Direct Assignment"
         }
       },
       "title": "SplittingConfig",
@@ -1408,6 +1408,17 @@
           "exclusiveMinimum": 0.0,
           "title": "Energy Scale Ev",
           "type": "number"
+        },
+        "num_layers": {
+          "default": 3,
+          "minimum": 2,
+          "title": "Num Layers",
+          "type": "integer"
+        },
+        "film_internal_layers": {
+          "default": true,
+          "title": "Film Internal Layers",
+          "type": "boolean"
         }
       },
       "title": "TrainConfig",

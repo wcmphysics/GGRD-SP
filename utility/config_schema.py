@@ -96,7 +96,7 @@ class SplittingConfig(BaseModel):
     seed: int | None = None
     source_tool: str | None = None
     target_tool: str | None = None
-    assignment: dict[str, list[str]] | None = None
+    direct_assignment: dict[str, list[str]] | None = None
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
