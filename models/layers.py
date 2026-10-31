@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 import torch
@@ -86,8 +85,6 @@ def validate_odd_kernel_size(
 def validate_common_model_config(
     cfg: dict[str, Any],
     n_points: int,
-    disallowed_keys: Iterable[str] | None = None,
-    model_spec: tuple[str, str] | None = None,
 ) -> int:
     """Return maximum allowed kernel size bounded by n_points and window size.
 
