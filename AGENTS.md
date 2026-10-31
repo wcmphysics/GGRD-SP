@@ -93,7 +93,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
   - Full spectra are rebuilt by averaging the overlapping patch predictions.
   - Validation cost and early stopping use the **reconstructed full spectrum**.
   - Window and stride can be tuned by Bayesian optimization.
-  - [Need to check] When using the unified layout, sliding window size needs to be fixed over all regions since the input length of a model is fixed?
+  - When using the unified layout, sliding window size is forced to be fixed over all regions for ease of maintenance (it's not necessary as CNN layers are indifferent to sequence size in general).
   - [Need to check] FiLM encoding like region for unifeid layout all fall back to first region? 
 
 ### 8. Cost function
@@ -108,7 +108,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
   | L2 on model parameters (`cost.l2_weight`) | 0 |
 
 - Works on both patch tensors and full regional spectra.
-- [Need to check] Due to the nature of the derivative of MSE, its gradient may vanish/explode if `I_pred/max(I_target)` or `I_target/max(I_target)` is too large/small compared to 0~1.
+- Possible devision by tiny number when `normalized_by_target_max` is on is guarded and will raise warning of hitting the guard.
 
 ### 9. Models, FiLM & training
 - Orchestration: build the model → define the Ax/BoTorch search → train with an LR scheduler (`ReduceLROnPlateau` or `CosineAnnealingLR`) and early stopping. Returns the best model.
@@ -136,7 +136,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
 - Computed per sample and aggregated per region:
   - normalized MSE;
   - raw RMSE;
-  - `peak_error_percentage`: relative error at the true peak location [need to check its calculation definition]
+  - `peak_error_percentage`: error in peak intensity of the predicted spectrum relative to the peak intensity of the target spectrum.  
   - `chebyshev_error_peak_normalized_percentage`: largest point-wise relative error (Chebyshev / L-infinity norm normalized by target maximum intensity).
 - Prints side-by-side train/test tables.
 
