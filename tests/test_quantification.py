@@ -199,6 +199,20 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
             calculate_atomic_percentages(
                 self.ary_ene, self.ary_int, self.meta_df, config={"rsf_table": None, "measurement_id": "M1"}
             )
+        # Missing element RSF in table raises KeyError naming the missing region
+        with self.assertRaises(KeyError):
+            calculate_atomic_percentages(
+                self.ary_ene, self.ary_int, self.meta_df,
+                config={"rsf_table": {"Al2p": 0.537}, "measurement_id": "NMG_M_J4_00000"}
+            )
+
+        # Normalization mode warning
+        with self.assertWarns(UserWarning):
+            calculate_atomic_percentages(
+                self.ary_ene, self.ary_int, self.meta_df,
+                config={"measurement_id": "NMG_M_J4_00000",
+                        "normalization_mode": "by_regional_max_intensity_of_source"}
+            )
 
         # load_rsf_table checks
         rsf_table = load_rsf_table()

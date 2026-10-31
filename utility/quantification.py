@@ -92,8 +92,59 @@ def load_rsf_table(
     )
 
 
-# Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation
-DEFAULT_SCOFIELD_RSF: dict[str, float] = load_rsf_table()
+class _LazyScofieldRSF(dict):
+    """Lazy dictionary wrapper deferring load_rsf_table() until first access."""
+
+    def __init__(self, config_or_path: Any = None) -> None:
+        super().__init__()
+        self._config_or_path = config_or_path
+        self._loaded = False
+
+    def _ensure_loaded(self) -> None:
+        if not self._loaded:
+            loaded_dict = load_rsf_table(self._config_or_path)
+            super().update(loaded_dict)
+            self._loaded = True
+
+    def __getitem__(self, key: Any) -> Any:
+        self._ensure_loaded()
+        return super().__getitem__(key)
+
+    def __iter__(self) -> Any:
+        self._ensure_loaded()
+        return super().__iter__()
+
+    def __len__(self) -> int:
+        self._ensure_loaded()
+        return super().__len__()
+
+    def __contains__(self, key: Any) -> bool:
+        self._ensure_loaded()
+        return super().__contains__(key)
+
+    def keys(self) -> Any:
+        self._ensure_loaded()
+        return super().keys()
+
+    def values(self) -> Any:
+        self._ensure_loaded()
+        return super().values()
+
+    def items(self) -> Any:
+        self._ensure_loaded()
+        return super().items()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._ensure_loaded()
+        return super().get(key, default)
+
+    def copy(self) -> dict:
+        self._ensure_loaded()
+        return super().copy()
+
+
+# Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation (lazily loaded)
+DEFAULT_SCOFIELD_RSF: dict[str, float] = _LazyScofieldRSF()
 
 
 def _mean_std(
@@ -211,10 +262,27 @@ def calculate_atomic_percentages(
             f"measurement_id={target_meas}, material={material}"
         )
 
+    norm_mode = cfg.get("normalization_mode")
+    if norm_mode is None and "normalization_mode" in df_meta.columns:
+        norm_series = df_meta["normalization_mode"].dropna()
+        if not norm_series.empty:
+            norm_mode = str(norm_series.iloc[0])
+    if norm_mode in (
+        "by_regional_max_intensity_of_source",
+        "by_regional_max_intensity",
+    ):
+        warnings.warn(
+            f"Atomic percentage quantification: normalization_mode '{norm_mode}' "
+            "normalizes each regional spectrum independently, which distorts "
+            "relative atomic percentages across elements.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     rows_data: list[dict[str, Any]] = []
-    for _, row in filtered_df.iterrows():
-        region = str(row["region"])
-        spec_idx = int(row["spectrum_index"])
+    for row in filtered_df.itertuples():
+        region = str(row.region)
+        spec_idx = int(row.spectrum_index)
         _, net_area = calculate_shirley_background(
             ary_energy[spec_idx],
             ary_intensity[spec_idx],
@@ -222,21 +290,21 @@ def calculate_atomic_percentages(
         )
 
         if region not in rsf_table:
-            warnings.warn(
-                f"Region '{region}' not found in rsf_table. Defaulting RSF to "
-                "1.0. Atomic percentages may be uncalibrated without specific "
-                "sensitivity factors."
+            raise KeyError(
+                f"Spectral region/element '{region}' is absent from "
+                f"quantification.rsf_table. Available RSF regions: "
+                f"{sorted(rsf_table.keys())}."
             )
-        rsf = float(rsf_table.get(region, 1.0))
+        rsf = float(rsf_table[region])
         if rsf <= 0.0:
             raise ValueError(
                 f"RSF for region '{region}' must be positive, got {rsf}"
             )
 
         rows_data.append({
-            "measurement_id": str(row["measurement_id"]),
-            "material": str(row["material"]) if "material" in row else "NMG",
-            "die": int(row["die"]),
+            "measurement_id": str(row.measurement_id),
+            "material": str(getattr(row, "material", "NMG")),
+            "die": int(row.die),
             "region": region,
             "scaled_area": max(0.0, net_area) / rsf,
         })
@@ -367,16 +435,33 @@ def calculate_atomic_percentage_split_statistics(
         )
         return pd.DataFrame(), pd.DataFrame()
 
+    norm_mode = cfg.get("normalization_mode")
+    if norm_mode is None and "normalization_mode" in df_meta_orig.columns:
+        norm_series = df_meta_orig["normalization_mode"].dropna()
+        if not norm_series.empty:
+            norm_mode = str(norm_series.iloc[0])
+    if norm_mode in (
+        "by_regional_max_intensity_of_source",
+        "by_regional_max_intensity",
+    ):
+        warnings.warn(
+            f"Atomic percentage quantification: normalization_mode '{norm_mode}' "
+            "normalizes each regional spectrum independently, which distorts "
+            "relative atomic percentages across elements.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     element_cols = [
         c for c in df_per_die_orig.columns if c.endswith("_atomic_percentage")
     ]
 
     records: list[dict[str, Any]] = []
-    for _, map_row in session_mapping.iterrows():
-        p_id = str(map_row["measurement_id"])
-        s_id = str(map_row["source_measurement_id"])
-        t_id = str(map_row["target_measurement_id"])
-        split_val = str(map_row["split"])
+    for map_row in session_mapping.itertuples():
+        p_id = str(map_row.measurement_id)
+        s_id = str(map_row.source_measurement_id)
+        t_id = str(map_row.target_measurement_id)
+        split_val = str(map_row.split)
 
         sub_p = df_per_die_pred[
             df_per_die_pred["measurement_id"] == p_id
