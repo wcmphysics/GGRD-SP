@@ -257,9 +257,9 @@ def _predict_sliding_window_region(
     group: pd.DataFrame,
     device: torch.device,
     cfg: dict[str, Any],
-    ary_energy: np.ndarray | None = None,
 ) -> np.ndarray:
     """Predict target spectra for a region using sliding-window patch models."""
+    # Resolve window size, stride step, and target device from model entry.
     is_seq = isinstance(model_entry, (tuple, list))
     m_obj = model_entry[0] if is_seq else model_entry
     w_size = (
@@ -274,9 +274,10 @@ def _predict_sliding_window_region(
     )
     m_dev = next((p.device for p in m_obj.parameters()), device)
     sw_cfg = {"window_size": w_size, "stride": s_step, "device": m_dev}
-    energy_arr = ary_energy if ary_energy is not None else cfg.get("ary_energy")
+    energy_arr = cfg.get("ary_energy")
     target_tool = str(cfg.get("target_tool", "H1"))
 
+    # Predict sliding window spectra for each sample and stack horizontally.
     return np.vstack(
         [
             predict_sliding_window_spectrum(
@@ -308,8 +309,18 @@ def _predict_full_spectrum_region(
     cfg: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Predict target spectra for a region without sliding window."""
-    cfg = cfg or {}
-    target_tool = str(cfg.get("target_tool", "H1"))
+    # Resolve target tool identity and batch processing parameters.
+    config_dict = cfg or {}
+    target_tool = str(
+        config_dict.get(
+            "target_tool",
+            group["target_tool"].iloc[0]
+            if "target_tool" in group.columns and not group.empty
+            else "H1",
+        )
+    )
+
+    # Execute batched forward inferences with optional FiLM conditioning.
     with torch.no_grad():
         preds = []
         for i in range(0, len(region_x), batch_size):
@@ -326,7 +337,7 @@ def _predict_full_spectrum_region(
                 group.iloc[i : i + batch_size],
                 target_tool,
                 device,
-                cfg,
+                config_dict,
                 energy_bounds=bounds,
             )
             out = (
@@ -351,6 +362,8 @@ def _predict_all_regions(
     predicted_intensities = np.zeros(
         (len(source_df), ary_intensity.shape[1]), dtype=np.float32
     )
+
+    # Iterate over unique spectral regions and apply corresponding models.
     for region, group in source_df.groupby("region"):
         group_new_indices = np.flatnonzero(
             (source_df["region"] == region).to_numpy()
@@ -371,15 +384,23 @@ def _predict_all_regions(
             model_entry, (tuple, list)
         )
         if is_sw:
+            sw_cfg = {**cfg, "ary_energy": ary_energy}
             predicted_intensities[group_new_indices] = (
                 _predict_sliding_window_region(
-                    model_entry, region_x, orig_indices, group, device, cfg, ary_energy
+                    model_entry, region_x, orig_indices, group, device, sw_cfg
                 )
             )
         else:
             predicted_intensities[group_new_indices] = (
                 _predict_full_spectrum_region(
-                    model_entry, region_x, orig_indices, group, device, batch_size, ary_energy, cfg
+                    model_entry,
+                    region_x,
+                    orig_indices,
+                    group,
+                    device,
+                    batch_size,
+                    ary_energy,
+                    cfg=cfg,
                 )
             )
     return predicted_intensities

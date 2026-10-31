@@ -244,37 +244,12 @@ def evaluate_sliding_window(
     return total / len(full_val_dataset)
 
 
-def train_model_region(
-    train_dataset: SpectrumPairDataset,
-    val_dataset: SpectrumPairDataset | None,
-    config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Train a neural network model for a single spectral region.
-
-    Parameters
-    ----------
-    train_dataset : SpectrumPairDataset
-        Training dataset for this region.
-    val_dataset : SpectrumPairDataset | None
-        Validation dataset for this region.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary containing training hyperparameters.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary containing trained model, best_val_loss, best_epoch,
-        history, and resolved configuration.
-    """
-    if len(train_dataset) == 0:
-        raise ValueError("Cannot train on an empty train_dataset.")
-    has_val = val_dataset is not None and len(val_dataset) > 0
-
 def _validate_training_hyperparameters(
     cfg: dict[str, Any],
     epochs: int,
 ) -> dict[str, Any]:
     """Validate and return learning rate, scheduler, and patience settings."""
+    # Validate integer parameter types and learning rate parameters.
     for int_key in _POSITIVE_INT_CONFIG_KEYS:
         if int_key in cfg:
             validate_positive_int(cfg[int_key], int_key)
@@ -288,6 +263,7 @@ def _validate_training_hyperparameters(
             f"got {relative_learning_rate}"
         )
 
+    # Extract and bounds-check learning rate scheduler hyperparameters.
     use_lr_sched = bool(cfg.get("use_learning_rate_scheduler", True))
     learning_rate_reduce_factor = float(
         cfg.get("learning_rate_reduce_factor", 0.9)
@@ -320,6 +296,7 @@ def _validate_training_hyperparameters(
             "Please increase 'learning_rate' or decrease 'min_learning_rate'."
         )
 
+    # Resolve early stopping patience and compare with scheduler patience.
     patience = int(
         cfg.get(
             "early_stopping_patience",
@@ -373,6 +350,7 @@ def _setup_training_dataloaders(
     full_len = int(train_dataset[0]["x"].shape[-1])
     explicit_ws = cfg.get("window_size_choice", cfg.get("window_size"))
 
+    # Configure sliding window patch dataset or standard whole-spectrum loaders.
     if use_sw:
         is_patched = isinstance(train_dataset, SpectrumPatchDataset)
         ws_cfg_val = explicit_ws if explicit_ws is not None else 15
@@ -414,6 +392,7 @@ def _setup_training_dataloaders(
         if not has_val:
             val_loader = None
 
+    # Validate odd kernel size against effective spatial sequence length.
     effective_max_k = (
         min(seq_len, explicit_ws) if explicit_ws is not None else seq_len
     )
@@ -442,6 +421,7 @@ def _setup_optimizer_and_scheduler(
         cfg.get("learning_rate_scheduler_patience", 10)
     )
 
+    # Configure dedicated parameter groups for shortcut FiLM generators.
     if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
         shortcut_lr = learning_rate * relative_learning_rate
         if shortcut_lr < min_learning_rate:
@@ -471,6 +451,7 @@ def _setup_optimizer_and_scheduler(
             model.parameters(), lr=learning_rate, weight_decay=weight_decay
         )
 
+    # Instantiate ReduceLROnPlateau learning rate scheduler if enabled.
     scheduler = (
         ReduceLROnPlateau(
             optimizer,
@@ -516,6 +497,7 @@ def _execute_training_epochs(
     run_cfg = {"device": device}
     eval_cfg = {"device": device, "window_size": w_size, "stride": s_step}
 
+    # Train and evaluate over epochs with dynamic LR and early stopping.
     for epoch in range(1, epochs + 1):
         tr_loss = train_one_epoch(
             model, train_loader, optimizer, criterion, config=run_cfg
@@ -581,6 +563,7 @@ def _execute_training_epochs(
                 )
             break
 
+    # Restore best checkpoint weights before returning.
     if best_state is not None:
         model.load_state_dict(best_state)
 
@@ -599,6 +582,7 @@ def _package_training_result(
     """Collate training outcomes and updated configuration into return
     dictionary.
     """
+    # Update config dictionary with resolved training hyperparameters.
     cfg.update(
         {
             "epochs": exec_meta["epochs"],
@@ -617,6 +601,8 @@ def _package_training_result(
             "seq_len": exec_meta["seq_len"],
         }
     )
+
+    # Package trained model weights, best loss metrics, and histories.
     return {
         "model": model,
         "best_val_loss": best_loss,
