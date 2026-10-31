@@ -10,7 +10,6 @@ from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.flux_and_intensity import compute_die_total_flux
 from utility.quantification import (
     DEFAULT_SCOFIELD_RSF,
-    _find_minima_endpoints,
     calculate_atomic_percentage_split_statistics,
     calculate_atomic_percentages,
     calculate_shirley_background,

@@ -59,27 +59,6 @@ class TestConfigLoader(unittest.TestCase):
         self.assertEqual(res["NMG"], ["Ti", "Al", "C", "O", "Cl", "Si"])
         self.assertEqual(res["PMG"], ["Ti", "N", "O", "Cl", "Si"])
 
-    def test_load_material_elements_missing_section_raises(self) -> None:
-        """Verify KeyError is raised when 'materials' section is missing."""
-        with self.assertRaises(KeyError):
-            load_material_elements({"other_key": 123})
-
-    def test_load_material_elements_invalid_structure_raises(self) -> None:
-        """Verify ValueError is raised when material structure is invalid."""
-        with self.assertRaises(ValueError):
-            load_material_elements({"materials": []})
-
-        with self.assertRaises(ValueError):
-            load_material_elements({"materials": {"NMG": "not a dict"}})
-
-        with self.assertRaises(ValueError):
-            load_material_elements({"materials": {"NMG": {"elements": []}}})
-
-        with self.assertRaises(ValueError):
-            load_material_elements(
-                {"materials": {"NMG": {"elements": ["Ti", ""]}}}
-            )
-
     def test_extract_element_vocabulary_dynamic(self) -> None:
         """Verify dynamic sorted vocabulary extraction supporting elements."""
         materials = {

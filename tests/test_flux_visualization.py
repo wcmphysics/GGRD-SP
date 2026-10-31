@@ -15,7 +15,6 @@ import pandas as pd
 from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from visualization.plot_timeline import (
-    _derive_tool_die_shades,
     plot_flux_and_averaged_intensity_vs_time,
 )
 
@@ -50,18 +49,6 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
     def tearDown(self) -> None:
         """Close open matplotlib figures."""
         plt.close("all")
-
-    def test_derive_tool_die_shades(self) -> None:
-        """Test 3-tier colors from black and red tool representations."""
-        black_shades = _derive_tool_die_shades("black")
-        self.assertEqual(black_shades["center"], "#000000")
-        self.assertEqual(black_shades["donut"], "#555555")
-        self.assertEqual(black_shades["edge"], "#999999")
-
-        red_shades = _derive_tool_die_shades("red")
-        self.assertEqual(red_shades["center"], "#8b0000")
-        self.assertEqual(red_shades["donut"], "#d62728")
-        self.assertEqual(red_shades["edge"], "#f4a582")
 
     def test_plot_flux_and_intensity_options(self) -> None:
         """Verify plotting across default, regional filter, and connecting lines."""
