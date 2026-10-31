@@ -20,6 +20,7 @@ Orchestrates sequential end-to-end XPS spectral transfer stages:
 from __future__ import annotations
 
 import sys
+import warnings
 import matplotlib.pyplot as plt
 import torch
 
@@ -194,12 +195,12 @@ def main() -> None:
     # STAGE 10: PREDICTION FROM MODEL
     # =========================================================================
     print("\n=== Stage 10: Transformed Spectrum Prediction ===")
-    config["prediction"]["session_splits"] = session_splits
+    prediction_cfg = {**config["prediction"], "session_splits": session_splits}
     data_original = (ary_intensity, ary_energy, df_meta)
     data_predicted = models.predict_spectra(
         models=training_results["models"],
         data=data_original,
-        config=config["prediction"],
+        config=prediction_cfg,
     )
     print(
         f"Predicted spectra shape: {data_predicted[0].shape} "
@@ -224,6 +225,19 @@ def main() -> None:
     # STAGE 12: ATOMIC PERCENTAGE QUANTIFICATION
     # =========================================================================
     print("\n=== Stage 12: Atomic % Quantification ===")
+    norm_mode = config.get("normalization", {}).get("normalization_mode", "")
+    if norm_mode in (
+        "by_regional_max_intensity_of_source",
+        "by_regional_max_intensity",
+    ):
+        warnings.warn(
+            f"Atomic percentage quantification in Stage 12 is executed on spectra "
+            f"normalized with regional mode '{norm_mode}'. Regional normalization alters "
+            "relative peak ratios between elements and produces distorted atomic "
+            "concentrations.",
+            UserWarning,
+            stacklevel=2,
+        )
     df_atomic_percentage_samples, df_atomic_percentage_summary = (
         utility.calculate_atomic_percentage_split_statistics(
             data_original, data_predicted, config=config["metrics_report"]

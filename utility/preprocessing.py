@@ -114,9 +114,15 @@ def preprocess(
 
     # 5. Inject resolved mappings into training and prediction configs
     if "training" in cfg and isinstance(cfg["training"], dict):
-        cfg["training"]["num_tools"] = len(tool_index_mapping)
-        cfg["training"]["region_index_mapping"] = region_index_mapping
+        cfg["training"] = {
+            **cfg["training"],
+            "num_tools": len(tool_index_mapping),
+            "region_index_mapping": region_index_mapping,
+        }
     if "prediction" in cfg and isinstance(cfg["prediction"], dict):
-        cfg["prediction"]["region_index_mapping"] = region_index_mapping
+        cfg["prediction"] = {
+            **cfg["prediction"],
+            "region_index_mapping": region_index_mapping,
+        }
 
     return df_res, tool_index_mapping, region_index_mapping
