@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+import warnings
 
 import torch
 import torch.nn as nn
@@ -77,12 +78,23 @@ class SpectralLoss(nn.Module):
             return y_pred, y_true
 
         if max_val is None:
-            scale = torch.amax(torch.abs(y_true), dim=-1, keepdim=True)
+            raw_scale = torch.amax(torch.abs(y_true), dim=-1, keepdim=True)
         else:
-            scale = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
-            while scale.dim() < y_pred.dim():
-                scale = scale.unsqueeze(-1)
-        scale = torch.clamp(scale, min=self.eps)
+            raw_scale = max_val.to(device=y_pred.device, dtype=y_pred.dtype)
+            while raw_scale.dim() < y_pred.dim():
+                raw_scale = raw_scale.unsqueeze(-1)
+
+        scale_ref = float(torch.amax(torch.abs(raw_scale)).item())
+        eps = max(1e-12, 1e-7 * float(scale_ref))
+        if bool((raw_scale <= eps).any()):
+            warnings.warn(
+                f"Denominator scale <= eps ({eps:.4e}) encountered in loss "
+                "normalization; denominator is tiny/near-zero and dynamic "
+                "eps was used.",
+                UserWarning,
+                stacklevel=3,
+            )
+        scale = torch.clamp(raw_scale, min=eps)
         return y_pred / scale, y_true / scale
 
     def forward(

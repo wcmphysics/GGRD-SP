@@ -89,6 +89,14 @@ class TestCostFunctions(unittest.TestCase):
         self.assertIn("log10: N/A", format_loss_log10(0.0))
         self.assertIn("log10: N/A", format_loss_log10(-0.5))
 
+    def test_dynamic_eps_warning_on_tiny_scale(self) -> None:
+        """Verify warning when denominator scale <= eps in loss normalization."""
+        criterion = SpectralLoss({"normalized_by_target_max": True})
+        y_zero = torch.zeros((1, 1, 10))
+        with self.assertWarns(UserWarning):
+            loss = criterion(y_zero, y_zero)
+        self.assertAlmostEqual(loss.item(), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
