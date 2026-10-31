@@ -185,6 +185,129 @@ def evaluate(
     )
 
 
+def _extract_dataset_tensors(
+    dataset: Any,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Extract stacked (x, y) tensors if dataset is homogeneous, else None."""
+    try:
+        if (
+            hasattr(dataset, "x")
+            and hasattr(dataset, "y")
+            and isinstance(dataset.x, torch.Tensor)
+            and isinstance(dataset.y, torch.Tensor)
+        ):
+            if (
+                dataset.x.dim() == 3
+                and dataset.y.dim() == 3
+                and dataset.x.shape[0] == dataset.y.shape[0]
+                and dataset.x.shape[-1] == dataset.y.shape[-1]
+            ):
+                return dataset.x, dataset.y
+        xs = [dataset[i]["x"] for i in range(len(dataset))]
+        ys = [dataset[i]["y"] for i in range(len(dataset))]
+        stacked_x = torch.stack(xs, dim=0) if xs[0].dim() == 2 else torch.cat(xs, dim=0)
+        stacked_y = torch.stack(ys, dim=0) if ys[0].dim() == 2 else torch.cat(ys, dim=0)
+        if (
+            stacked_x.dim() == 3
+            and stacked_y.dim() == 3
+            and stacked_x.shape[0] == stacked_y.shape[0]
+            and stacked_x.shape[-1] == stacked_y.shape[-1]
+        ):
+            return stacked_x, stacked_y
+        return None
+    except (RuntimeError, ValueError, KeyError, TypeError, IndexError):
+        return None
+
+
+def _evaluate_sliding_window_sample_by_sample(
+    model: nn.Module,
+    full_val_dataset: Any,
+    criterion: SpectralLoss,
+    config: dict[str, Any],
+    device: torch.device,
+    window_size: int,
+    stride: int,
+) -> float:
+    """Evaluate sliding-window loss sequentially sample by sample."""
+    model.eval()
+    p_cfg = {
+        "device": device,
+        "window_size": window_size,
+        "stride": stride,
+        "clamp_non_negative": bool(config.get("clamp_non_negative", True)),
+    }
+    total = 0.0
+    for idx in range(len(full_val_dataset)):
+        item = full_val_dataset[idx]
+        rec = predict_sliding_window_spectrum(
+            model,
+            item["x"].cpu().numpy().squeeze(),
+            config=p_cfg,
+            cond=_batch_cond(model, item, device, 1),
+            energy=item.get("energy"),
+        )
+        yp = torch.from_numpy(rec).float().view(1, 1, -1).to(device)
+        total += criterion(
+            yp, item["y"].unsqueeze(0).to(device), model=None
+        ).item()
+    return total / len(full_val_dataset)
+
+
+def _vectorized_sliding_window_predict(
+    model: nn.Module,
+    val_x: torch.Tensor,
+    window_size: int,
+    stride: int,
+    device: torch.device,
+    clamp_non_negative: bool = True,
+    batch_size: int = 64,
+) -> torch.Tensor:
+    """Predict and reconstruct full spectra using vectorized window batches
+    in PyTorch.
+    """
+    n_samples, _, seq_len = val_x.shape
+    start_indices = list(range(0, seq_len - window_size + 1, stride))
+    last_possible = seq_len - window_size
+    if start_indices and start_indices[-1] < last_possible:
+        start_indices.append(last_possible)
+
+    val_x_dev = val_x.to(device)
+    patches = torch.stack(
+        [val_x_dev[:, :, s : s + window_size] for s in start_indices], dim=1
+    )
+    num_windows = len(start_indices)
+    flat_patches = patches.view(-1, 1, window_size)
+
+    # Evaluate patches through model in batches.
+    with torch.no_grad():
+        if flat_patches.shape[0] <= batch_size:
+            flat_preds = model(flat_patches)
+        else:
+            flat_preds = torch.cat(
+                [
+                    model(flat_patches[i : i + batch_size])
+                    for i in range(0, flat_patches.shape[0], batch_size)
+                ],
+                dim=0,
+            )
+
+    preds = flat_preds.view(n_samples, num_windows, 1, window_size)
+    accum = torch.zeros(
+        n_samples, 1, seq_len, device=device, dtype=val_x.dtype
+    )
+    counts = torch.zeros(1, 1, seq_len, device=device, dtype=val_x.dtype)
+
+    # Accumulate overlapping patch predictions and normalize.
+    for k, s in enumerate(start_indices):
+        accum[:, :, s : s + window_size] += preds[:, k, :, :]
+        counts[:, :, s : s + window_size] += 1.0
+
+    recon = accum / counts.clamp(min=1.0)
+    if clamp_non_negative:
+        recon = torch.clamp(recon, min=0.0)
+    return recon
+
+
 def evaluate_sliding_window(
     model: nn.Module,
     full_val_dataset: SpectrumPairDataset,
@@ -218,30 +341,53 @@ def evaluate_sliding_window(
     cfg = config or {}
     w_size = int(cfg.get("window_size", 15))
     s_step = int(cfg.get("stride", max(1, w_size // 2)))
-    device = _resolve_device(model, cfg)
-
-    model.eval()
-    p_cfg = {
-        "device": device,
-        "window_size": w_size,
-        "stride": s_step,
-        "clamp_non_negative": True,
-    }
-    total = 0.0
-
-    for idx in range(len(full_val_dataset)):
-        item = full_val_dataset[idx]
-        rec = predict_sliding_window_spectrum(
-            model,
-            item["x"].cpu().numpy().squeeze(),
-            config=p_cfg,
-            cond=_batch_cond(model, item, device, 1),
-            energy=item.get("energy"),
+    if w_size < 1:
+        raise ValueError(f"window_size must be >= 1, got {w_size}")
+    if s_step < 1:
+        raise ValueError(f"stride must be >= 1, got {s_step}")
+    if s_step > w_size:
+        raise ValueError(
+            f"stride ({s_step}) cannot exceed window_size ({w_size}) "
+            "as it creates reconstruction gaps."
         )
-        yp = torch.from_numpy(rec).float().view(1, 1, -1).to(device)
-        total += crit(yp, item["y"].unsqueeze(0).to(device), model=None).item()
 
-    return total / len(full_val_dataset)
+    device = _resolve_device(model, cfg)
+    clamp_non_negative = bool(cfg.get("clamp_non_negative", True))
+    model.eval()
+
+    # Fall back to sample-by-sample when FiLM is active or data
+    # is heterogeneous.
+    if getattr(model, "use_film", False):
+        return _evaluate_sliding_window_sample_by_sample(
+            model, full_val_dataset, crit, cfg, device, w_size, s_step
+        )
+
+    tensors = _extract_dataset_tensors(full_val_dataset)
+    if tensors is None:
+        return _evaluate_sliding_window_sample_by_sample(
+            model, full_val_dataset, crit, cfg, device, w_size, s_step
+        )
+
+    val_x, val_y = tensors
+    seq_len = val_x.shape[-1]
+    if w_size > seq_len:
+        raise ValueError(
+            f"window_size ({w_size}) cannot exceed spectrum length ({seq_len})"
+        )
+
+    eval_batch_size = int(cfg.get("batch_size", 64))
+    recon = _vectorized_sliding_window_predict(
+        model,
+        val_x,
+        w_size,
+        s_step,
+        device,
+        clamp_non_negative=clamp_non_negative,
+        batch_size=eval_batch_size,
+    )
+    val_y_dev = val_y.to(device)
+    loss = crit(recon, val_y_dev, model=None).item()
+    return float(loss)
 
 
 def _validate_training_hyperparameters(

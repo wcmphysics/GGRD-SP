@@ -158,6 +158,64 @@ class TestSlidingWindowPipeline(unittest.TestCase):
         self.assertEqual(merged[len(p1)]["x"].shape, (1, 12))
         self.assertEqual(merged.x.shape, (len(merged), 1, 12))
 
+    def test_evaluate_sliding_window_vectorized_and_fallbacks(self) -> None:
+        """Verify vectorized evaluate_sliding_window numerical parity
+        and fallbacks.
+        """
+        model = ResNet1D(15, config=_DEFAULT_RESNET_TEST_CONFIG)
+        crit = SpectralLoss({"w_mse": 1.0, "w_shape": 0.5, "w_gradient": 0.5, "l2_weight": 0.0})
+
+        # 1. Numerical parity against sample-by-sample
+        eval_cfg = {"window_size": 15, "stride": 5, "batch_size": 4}
+        loss_vec = evaluate_sliding_window(
+            model=model, full_val_dataset=self.val_ds, criterion=crit, config=eval_cfg
+        )
+
+        # Compute sample-by-sample manually
+        total_sample = 0.0
+        for i in range(len(self.val_ds)):
+            item = self.val_ds[i]
+            rec = predict_sliding_window_spectrum(
+                model,
+                item["x"].cpu().numpy().squeeze(),
+                config={"window_size": 15, "stride": 5, "clamp_non_negative": True},
+            )
+            yp = torch.from_numpy(rec).float().view(1, 1, -1)
+            total_sample += crit(yp, item["y"].unsqueeze(0), model=None).item()
+        expected_loss = total_sample / len(self.val_ds)
+        self.assertAlmostEqual(loss_vec, expected_loss, places=6)
+
+        # 2. Empty dataset error
+        empty_ds = SpectrumPairDataset(np.zeros((0, 60)), np.zeros((0, 60)))
+        with self.assertRaises(ValueError):
+            evaluate_sliding_window(model, empty_ds, crit, eval_cfg)
+
+        # 3. Invalid stride > window_size
+        with self.assertRaises(ValueError):
+            evaluate_sliding_window(model, self.val_ds, crit, {"window_size": 10, "stride": 12})
+
+        # 4. Window size > sequence length
+        with self.assertRaises(ValueError):
+            evaluate_sliding_window(model, self.val_ds, crit, {"window_size": 100, "stride": 5})
+
+        # 5. Heterogeneous dataset triggers safe fallback
+        class HeterogeneousDataset(torch.utils.data.Dataset):
+            def __len__(self) -> int:
+                return 2
+
+            def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+                length = 60 if idx == 0 else 80
+                return {
+                    "x": torch.ones(1, length),
+                    "y": torch.ones(1, length),
+                }
+
+        het_ds = HeterogeneousDataset()
+        loss_het = evaluate_sliding_window(model, het_ds, crit, {"window_size": 15, "stride": 5})
+        self.assertIsInstance(loss_het, float)
+        self.assertGreater(loss_het, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
