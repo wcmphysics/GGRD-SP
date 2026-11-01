@@ -857,8 +857,10 @@ def _init_training_config(
         )
     epochs = validate_positive_int(cfg.get("epochs", 50), "epochs")
     lr_params = _validate_training_hyperparameters(cfg, epochs)
-    dev_str = cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
-    return cfg, lr_params, torch.device(dev_str), has_val
+    device = torch.device(cfg.get("device") or "cpu")
+    if device.type != "cpu":
+        raise ValueError(f"Training device {str(device)!r} is unsupported; expected a CPU device.")
+    return cfg, lr_params, device, has_val
 
 
 def _build_training_model(

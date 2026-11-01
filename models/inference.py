@@ -664,9 +664,9 @@ def predict_spectra(
     target_tool = str(cfg.get("target_tool", "H1"))
     cfg.setdefault("target_tool", target_tool)
     batch_size = int(cfg.get("batch_size", 64))
-    device = torch.device(
-        cfg.get("device") or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = torch.device(cfg.get("device") or "cpu")
+    if device.type != "cpu":
+        raise ValueError(f"Prediction device {str(device)!r} is unsupported; expected a CPU device.")
 
     source_df = _filter_source_metadata(df_meta, source_tool, cfg)
     models_dict = _normalize_prediction_models(models, device)
