@@ -118,7 +118,7 @@ def _run_epoch(
     optimizer: torch.optim.Optimizer | None = exec_ctx.get("optimizer")
     is_train = optimizer is not None
     model.train(is_train)
-    total_loss, num_batches = 0.0, 0
+    total_loss, num_samples = 0.0, 0
     with torch.set_grad_enabled(is_train):
         for batch in loader:
             x = batch["x"].to(device)
@@ -135,12 +135,12 @@ def _run_epoch(
             if is_train:
                 loss.backward()
                 optimizer.step()
-            total_loss += loss.item()
-            num_batches += 1
-    if num_batches == 0:
+            total_loss += loss.item() * len(x)
+            num_samples += len(x)
+    if num_samples == 0:
         label = "Training" if is_train else "Validation"
         raise ValueError(f"{label} dataloader is empty.")
-    return total_loss / num_batches
+    return total_loss / num_samples
 
 
 def train_one_epoch(

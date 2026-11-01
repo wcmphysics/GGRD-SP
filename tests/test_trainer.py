@@ -8,9 +8,11 @@ import unittest
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 
-from models.dataset import SpectrumPairDataset
-from models.trainer import train_model_region
+from models.cost import SpectralLoss
+from models.dataset import SpectrumPairDataset, default_spectrum_collate
+from models.trainer import evaluate, train_model_region, train_one_epoch
 
 
 class DummyConstantModel(nn.Module):
@@ -27,6 +29,25 @@ class DummyConstantModel(nn.Module):
 
 class TestReduceLROnPlateau(unittest.TestCase):
     """Test suite for ReduceLROnPlateau dynamic scheduler and validations."""
+
+    def test_epoch_loss_is_sample_weighted(self) -> None:
+        """Keep fixed-model epoch losses invariant to partial final batches."""
+        x = torch.zeros(3, 1, 5)
+        y = torch.tensor([0.0, 0.0, 3.0]).view(3, 1, 1).expand_as(x)
+        dataset = SpectrumPairDataset(x, y)
+        criterion = SpectralLoss({"normalized_by_target_max": False})
+        model = DummyConstantModel(n_points=5)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+        for batch_size in (1, 2, 3):
+            with self.subTest(batch_size=batch_size):
+                loader = DataLoader(
+                    dataset, batch_size=batch_size,
+                    collate_fn=default_spectrum_collate,
+                )
+                self.assertAlmostEqual(evaluate(model, loader, criterion), 3.0)
+                self.assertAlmostEqual(
+                    train_one_epoch(model, loader, optimizer, criterion), 3.0
+                )
 
     def setUp(self) -> None:
         np.random.seed(42)
