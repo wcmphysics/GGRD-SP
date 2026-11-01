@@ -1,97 +1,18 @@
 """Feature-wise Linear Modulation (FiLM) module.
 
-Enables dynamic feature conditioning using metadata (die ID,
-tool indices, standardized measurement time, standardized source
-die flux, relative regional intensity, and element multi-hot)
-without target data leakage.
+Enables dynamic feature conditioning using metadata (die one-hot,
+tool one-hot, standardized measurement time, standardized source
+die flux, relative regional intensity, region one-hot, element multi-hot,
+and energy bounds) without target data leakage.
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
-
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-
-
-def _parse_die(value: Any) -> int:
-    """Extract and validate integer die index bounded within [0, 8].
-
-    Raises
-    ------
-    ValueError
-        If die value is missing, null, non-integer, or outside [0, 8].
-    """
-    if value is None or pd.isna(value):
-        raise ValueError(
-            "Metadata field 'die' is missing or null. Expected an integer in [0, 8]."
-        )
-    try:
-        raw_val = value.item() if hasattr(value, "item") else value
-        die_idx = int(raw_val)
-    except (ValueError, TypeError) as exc:
-        raise ValueError(
-            f"Invalid die value '{value}': must be an integer index in [0, 8]."
-        ) from exc
-    if not (0 <= die_idx <= 8):
-        raise ValueError(
-            f"Die index {die_idx} is outside expected [0, 8] range."
-        )
-    return die_idx
-
-
-def _parse_region_index(
-    val: Any,
-    field_name: str = "region_index",
-    region_mapping: dict[str, int] | None = None,
-) -> int:
-    """Extract a non-negative integer region index or raise ValueError."""
-    if val is None or pd.isna(val):
-        raise ValueError(
-            f"Metadata field '{field_name}' is missing or null. Expected a "
-            "non-negative region index; ensure 'region_index' is populated "
-            "in df_meta."
-        )
-    if isinstance(val, str) and region_mapping and val in region_mapping:
-        idx = int(region_mapping[val])
-    else:
-        try:
-            idx = int(val.item() if hasattr(val, "item") else val)
-        except (ValueError, TypeError) as err:
-            raise ValueError(
-                f"Invalid region value '{val}' in '{field_name}'. Expected a "
-                f"non-negative int or a region name in region_index_mapping "
-                f"{sorted(region_mapping) if region_mapping else None}."
-            ) from err
-    if idx < 0:
-        raise ValueError(
-            f"Region index in '{field_name}' cannot be negative, got {idx}."
-        )
-    return idx
-
-
-def _parse_tool_index(val: Any, field_name: str) -> int:
-    """Extract integer tool index or raise informative ValueError."""
-    if val is None or pd.isna(val):
-        raise ValueError(
-            f"Metadata field '{field_name}' is missing or null. "
-            "Please ensure 'source_tool_index' and 'target_tool_index' are "
-            "populated in df_meta."
-        )
-    try:
-        idx = int(val.item() if hasattr(val, "item") else val)
-        if idx < 0:
-            raise ValueError(
-                f"Tool index in '{field_name}' cannot be negative, got {idx}."
-            )
-        return idx
-    except (ValueError, TypeError) as err:
-        raise ValueError(
-            f"Invalid tool index '{val}' in '{field_name}'. Expected non-negative int."
-        ) from err
 
 
 def _parse_required_float(val: Any, field_name: str) -> float:
@@ -119,6 +40,8 @@ def _extract_meta_column(meta: Any, key: str, n: int) -> list[Any]:
     """Extract a list of length n for a metadata key from dict or list."""
     if isinstance(meta, dict):
         val = meta.get(key)
+        if n == 1:
+            return [val]
         if isinstance(val, (list, tuple, np.ndarray, torch.Tensor)) and not isinstance(
             val, (str, bytes)
         ):
@@ -129,59 +52,53 @@ def _extract_meta_column(meta: Any, key: str, n: int) -> list[Any]:
     return [None] * n
 
 
-def _extract_categorical_condition_tensors(
+def _extract_vector_column(
+    meta: Any, key: str, n: int, device: torch.device | None
+) -> torch.Tensor:
+    """Extract 2D float tensor of shape (N, D) for pre-computed one-hot or multi-hot."""
+    raw_vals = _extract_meta_column(meta, key, n)
+    if any(x is None or (isinstance(x, float) and np.isnan(x)) for x in raw_vals):
+        raise ValueError(
+            f"Metadata field '{key}' contains missing, null, or unpaired entries. "
+            f"Ensure '{key}' is properly populated in df_meta before FiLM conditioning."
+        )
+    try:
+        arr = np.asarray(raw_vals, dtype=np.float32)
+        if arr.ndim == 1 and n == 1:
+            arr = arr.reshape(1, -1)
+        elif arr.ndim != 2:
+            raise ValueError(
+                f"Expected 2D array for '{key}', got shape {arr.shape}."
+            )
+        t = torch.from_numpy(arr)
+        return t.to(device) if device is not None else t
+    except Exception as exc:
+        raise ValueError(f"Failed to convert '{key}' into float tensor: {exc}") from exc
+
+
+def _extract_categorical_one_hot_tensors(
     meta: Any,
     n: int,
     device: torch.device | None,
     encode_die: bool,
     encode_tool: bool,
     encode_region: bool,
-    region_mapping: dict[str, int] | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Extract discrete categorical condition tensors (die, tools, region)."""
+    """Extract pre-computed one-hot tensors for die, tools, and region."""
     ret: dict[str, torch.Tensor] = {}
-
-    # Extract die index bounded within valid physical range.
     if encode_die:
-        ret["die"] = torch.tensor(
-            [_parse_die(x) for x in _extract_meta_column(meta, "die", n)],
-            dtype=torch.long,
-            device=device,
-        )
-
-    # Extract source and target tool categorical indices.
+        ret["die_one_hot"] = _extract_vector_column(meta, "die_one_hot", n, device)
     if encode_tool:
-        t_src = [
-            _parse_tool_index(x, "source_tool_index")
-            for x in _extract_meta_column(meta, "source_tool_index", n)
-        ]
-        t_tgt = [
-            _parse_tool_index(x, "target_tool_index")
-            for x in _extract_meta_column(meta, "target_tool_index", n)
-        ]
-        ret["source_tool_index"] = torch.tensor(
-            t_src, dtype=torch.long, device=device
+        ret["source_tool_one_hot"] = _extract_vector_column(
+            meta, "source_tool_one_hot", n, device
         )
-        ret["target_tool_index"] = torch.tensor(
-            t_tgt, dtype=torch.long, device=device
+        ret["target_tool_one_hot"] = _extract_vector_column(
+            meta, "target_tool_one_hot", n, device
         )
-
-    # Extract regional categorical index.
     if encode_region:
-        reg_vals = _extract_meta_column(meta, "region_index", n)
-        if all(x is None for x in reg_vals):
-            reg_vals = _extract_meta_column(meta, "region", n)
-        ret["region"] = torch.tensor(
-            [
-                _parse_region_index(
-                    x, "region_index", region_mapping=region_mapping
-                )
-                for x in reg_vals
-            ],
-            dtype=torch.long,
-            device=device,
+        ret["region_one_hot"] = _extract_vector_column(
+            meta, "region_one_hot", n, device
         )
-
     return ret
 
 
@@ -196,7 +113,6 @@ def _extract_continuous_condition_tensors(
     """Extract continuous numerical condition tensors (flux, time, rel_int)."""
     ret: dict[str, torch.Tensor] = {}
 
-    # Extract standardized total flux per die.
     if encode_flux:
         flux_vals = _extract_meta_column(
             meta, "total_flux_single_die_standardized", n
@@ -210,7 +126,6 @@ def _extract_continuous_condition_tensors(
             device=device,
         ).unsqueeze(-1)
 
-    # Extract standardized measurement time.
     if encode_time:
         time_vals = [
             _parse_required_float(x, "time_standardized")
@@ -220,25 +135,10 @@ def _extract_continuous_condition_tensors(
             time_vals, dtype=torch.float32, device=device
         ).unsqueeze(-1)
 
-    # Extract regional relative intensity with safe fallback.
     if encode_rel_int:
         rel_vals = _extract_meta_column(
             meta, "relative_intensity_single_region", n
         )
-        if all(x is None for x in rel_vals):
-            reg_means = _extract_meta_column(
-                meta, "mean_intensity_single_region", n
-            )
-            die_means = _extract_meta_column(meta, "mean_intensity_single_die", n)
-            if any(x is not None for x in reg_means) and any(
-                x is not None for x in die_means
-            ):
-                rel_vals = [
-                    float(r) / max(float(d), 1e-12)
-                    for r, d in zip(reg_means, die_means)
-                ]
-            else:
-                rel_vals = [1.0] * n
         ret["relative_intensity_single_region"] = torch.tensor(
             [
                 _parse_required_float(x, "relative_intensity_single_region")
@@ -249,58 +149,6 @@ def _extract_continuous_condition_tensors(
         ).unsqueeze(-1)
 
     return ret
-
-
-def _extract_element_multi_hot(
-    meta: Any,
-    n: int,
-    device: torch.device | None,
-    cfg: dict[str, Any],
-) -> torch.Tensor:
-    """Extract multi-hot material elemental composition vector."""
-    raw_mat = cfg.get("material_elements")
-    if raw_mat is None:
-        raise ValueError(
-            "prepare_film_condition_tensor requires 'material_elements' "
-            "in config when encode_elements=True."
-        )
-
-    # Normalize raw_mat to dict[str, list[str]]
-    mat_elements: dict[str, list[str]] = {}
-    for m_k, m_v in raw_mat.items():
-        if isinstance(m_v, dict) and "elements" in m_v:
-            mat_elements[str(m_k)] = [
-                str(x).strip() for x in m_v["elements"]
-            ]
-        elif isinstance(m_v, (list, tuple, set)):
-            mat_elements[str(m_k)] = [str(x).strip() for x in m_v]
-        else:
-            mat_elements[str(m_k)] = [str(m_v).strip()]
-
-    elem_vocab = cfg.get("element_vocab")
-    if elem_vocab is None or len(elem_vocab) == 0:
-        from utility.config_loader import extract_element_vocabulary
-
-        elem_vocab = extract_element_vocabulary(mat_elements)
-
-    mat_names = _extract_meta_column(meta, "material", n)
-    multi_hot_list: list[list[float]] = []
-    for m in mat_names:
-        if m is None or pd.isna(m):
-            raise ValueError("Metadata field 'material' is missing or null.")
-        m_str = str(m)
-        if m_str not in mat_elements:
-            raise KeyError(
-                f"Material '{m_str}' not found in material definitions. "
-                f"Available materials: {sorted(mat_elements.keys())}."
-            )
-        active_set = set(mat_elements[m_str])
-        multi_hot_list.append(
-            [1.0 if elem in active_set else 0.0 for elem in elem_vocab]
-        )
-    return torch.tensor(
-        multi_hot_list, dtype=torch.float32, device=device
-    )
 
 
 def _extract_energy_bounds_tensor(
@@ -335,33 +183,49 @@ def _extract_energy_bounds_tensor(
     return None
 
 
-def _extract_element_and_energy_tensors(
-    meta: Any,
-    n: int,
-    device: torch.device | None,
-    cfg: dict[str, Any],
-    energy_bounds: torch.Tensor | np.ndarray | None,
-    energy_scale_ev: float = 1000.0,
-) -> dict[str, torch.Tensor]:
-    """Extract material element multi-hot and scaled energy bounds tensors."""
-    ret: dict[str, torch.Tensor] = {}
-    if bool(cfg.get("encode_elements", False)):
-        ret["element_multi_hot"] = _extract_element_multi_hot(
-            meta, n, device, cfg
+def _is_single_sample_record(d: dict[str, Any], default_num_samples: int) -> bool:
+    """Check if dictionary represents a single sample record rather than column batches."""
+    if default_num_samples > 1:
+        scalar_keys = (
+            "time_standardized",
+            "total_flux_single_die_standardized",
+            "relative_intensity_single_region",
         )
+        for k in scalar_keys:
+            if k in d:
+                val = d[k]
+                if isinstance(val, (list, tuple, np.ndarray, torch.Tensor)):
+                    if len(val) == default_num_samples:
+                        return False
+        vector_keys = (
+            "die_one_hot",
+            "source_tool_one_hot",
+            "target_tool_one_hot",
+            "region_one_hot",
+            "element_multi_hot",
+        )
+        for k in vector_keys:
+            if k in d:
+                val = d[k]
+                if isinstance(val, (list, tuple)) and len(val) == default_num_samples:
+                    if len(val) > 0 and isinstance(val[0], (list, tuple, np.ndarray, torch.Tensor)):
+                        return False
+                if isinstance(val, (np.ndarray, torch.Tensor)) and val.ndim >= 2:
+                    return False
+        return False
 
-    eb = _extract_energy_bounds_tensor(
-        meta,
-        n,
-        device,
-        energy_bounds,
-        energy_scale_ev,
-        bool(cfg.get("encode_energy", False)),
-    )
-    if eb is not None:
-        ret["energy_bounds"] = eb
-
-    return ret
+    for v in d.values():
+        if v is None:
+            return True
+        if np.isscalar(v) and (pd.isna(v) or isinstance(v, (int, float, str, np.number))):
+            return True
+        if isinstance(v, (list, tuple)) and len(v) > 0 and not isinstance(
+            v[0], (list, tuple, np.ndarray, torch.Tensor)
+        ):
+            return True
+        if isinstance(v, (np.ndarray, torch.Tensor)) and v.ndim == 1:
+            return True
+    return False
 
 
 def _resolve_sample_count(
@@ -375,6 +239,8 @@ def _resolve_sample_count(
         else metadata
     )
     if isinstance(meta, dict):
+        if _is_single_sample_record(meta, default_num_samples):
+            return [meta], 1
         seq_lens = [
             len(v)
             for v in meta.values()
@@ -386,6 +252,28 @@ def _resolve_sample_count(
     return meta, default_num_samples
 
 
+REQUIRED_FILM_ENCODE_KEYS = (
+    "encode_die",
+    "encode_tool",
+    "encode_flux",
+    "encode_time",
+    "encode_energy",
+    "encode_region",
+    "encode_relative_intensity",
+    "encode_elements",
+)
+
+
+def _validate_film_config_keys(cfg: dict[str, Any]) -> None:
+    """Strictly validate that required encode_* flags are present without fallbacks."""
+    missing = [k for k in REQUIRED_FILM_ENCODE_KEYS if k not in cfg]
+    if missing:
+        raise KeyError(
+            f"FiLM configuration missing required keys: {missing}. "
+            "Please ensure all encode_* keys are explicitly configured."
+        )
+
+
 def prepare_film_condition_tensor(
     metadata: list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None = None,
     config: dict[str, Any] | None = None,
@@ -393,122 +281,79 @@ def prepare_film_condition_tensor(
     device: torch.device | None = None,
     energy_bounds: torch.Tensor | np.ndarray | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Extract and pack conditioning features from metadata.
+    """Extract and pack conditioning features from metadata directly without fallbacks.
 
-    Guarantees zero target leakage: only source measurements,
-    die indices, and explicit tool indices are used. Supports
-    list-of-dicts, collated dict-of-lists, and DataFrame.
-
-    Parameters
-    ----------
-    metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
-        Sample metadata with 'die', 'source_tool_index', 'target_tool_index',
-        and (when enabled) flux, time, relative intensity, and material.
-    config : dict[str, Any] | None, optional
-        Optional configuration containing:
-        - 'encode_die' (bool): Include die index (default True).
-        - 'encode_tool' (bool): Include tool indices (default True).
-        - 'encode_flux' (bool): Include standardized die flux.
-        - 'encode_time' (bool): Include 'time_standardized'.
-        - 'encode_energy' (bool): Include bounding energy (default False).
-        - 'encode_relative_intensity' (bool): Include relative regional
-          intensity.
-        - 'encode_elements' (bool): Include material element multi-hot vector.
-        - 'element_vocab' (list[str] | None): Dynamic element vocabulary.
-        - 'material_elements' (dict[str, list[str]] | None): Material map.
-        - 'energy_scale_ev' (float): Energy scale factor (1000.0).
-        - 'num_samples' (int): Batch size fallback when metadata is empty.
-    device : torch.device | None, optional
-        PyTorch computation device.
-    energy_bounds : torch.Tensor | np.ndarray | None, optional
-        Starting and ending binding energies, shape (B, 2).
-
-    Returns
-    -------
-    dict[str, torch.Tensor]
-        Dictionary with conditioning tensor features:
-        - 'die': LongTensor (B,) (if encode_die=True)
-        - 'source_tool_index': LongTensor (B,) (if encode_tool=True)
-        - 'target_tool_index': LongTensor (B,) (if encode_tool=True)
-        - 'region': LongTensor (B,) (if encode_region=True)
-        - 'total_flux_single_die_standardized': FloatTensor (B, 1)
-        - 'time_standardized': FloatTensor (B, 1) (if encode_time=True)
-        - 'relative_intensity_single_region': FloatTensor (B, 1)
-        - 'element_multi_hot': FloatTensor (B, vocab_size)
-        - 'energy_bounds': FloatTensor (B, 2) (if provided)
+    Guarantees zero target leakage: only source measurements, die one-hot,
+    and explicit tool one-hot are used.
     """
-    cfg = config or {}
-    dev_cfg = cfg.get("device")
-    dev = torch.device(dev_cfg) if dev_cfg is not None else device
-    meta, n = _resolve_sample_count(metadata, int(cfg.get("num_samples", 1)))
+    if config is None:
+        raise KeyError("prepare_film_condition_tensor requires an explicit 'config' dict.")
+    _validate_film_config_keys(config)
 
-    cat_tensors = _extract_categorical_condition_tensors(
-        meta, n, dev,
-        bool(cfg.get("encode_die", True)),
-        bool(cfg.get("encode_tool", True)),
-        bool(cfg.get("encode_region", False)),
-        cfg.get("region_index_mapping"),
+    dev_cfg = config.get("device")
+    dev = torch.device(dev_cfg) if dev_cfg is not None else device
+    meta, n = _resolve_sample_count(metadata, int(config.get("num_samples", 1)))
+
+    cat_tensors = _extract_categorical_one_hot_tensors(
+        meta,
+        n,
+        dev,
+        encode_die=bool(config["encode_die"]),
+        encode_tool=bool(config["encode_tool"]),
+        encode_region=bool(config["encode_region"]),
     )
     cont_tensors = _extract_continuous_condition_tensors(
-        meta, n, dev,
-        bool(cfg.get("encode_flux", True)),
-        bool(cfg.get("encode_time", True)),
-        bool(cfg.get("encode_relative_intensity", False)),
+        meta,
+        n,
+        dev,
+        encode_flux=bool(config["encode_flux"]),
+        encode_time=bool(config["encode_time"]),
+        encode_rel_int=bool(config["encode_relative_intensity"]),
     )
-    elem_energy_tensors = _extract_element_and_energy_tensors(
-        meta, n, dev, cfg, energy_bounds, float(cfg.get("energy_scale_ev", 1000.0))
+
+    elem_energy_tensors: dict[str, torch.Tensor] = {}
+    if bool(config["encode_elements"]):
+        elem_energy_tensors["element_multi_hot"] = _extract_vector_column(
+            meta, "element_multi_hot", n, dev
+        )
+
+    eb = _extract_energy_bounds_tensor(
+        meta,
+        n,
+        dev,
+        energy_bounds,
+        float(config["energy_scale_ev"]) if "energy_scale_ev" in config else 1000.0,
+        bool(config["encode_energy"]),
     )
+    if eb is not None:
+        elem_energy_tensors["energy_bounds"] = eb
+
     return {**cat_tensors, **cont_tensors, **elem_energy_tensors}
 
 
 class FiLMGenerator(nn.Module):
-    """Generates feature-wise linear modulation parameters.
+    """Generates feature-wise linear modulation parameters via dense MLP.
 
     Initializes output projections to zero so that initial
     gamma=1.0 and beta=0.0 for strict identity modulation.
-
-    Parameters
-    ----------
-    channels_list : list[int]
-        Target convolutional channel dimensions to modulate.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary:
-        - 'encode_die' (bool): Encode die identity (default True).
-        - 'num_dies' (int): Total unique dies (default 9).
-        - 'die_embed_dim' (int): Die embedding dim (default 4).
-        - 'encode_tool' (bool): Encode tool identities (default True).
-        - 'num_tools' (int): Maximum tools count (default 8).
-        - 'tool_embed_dim' (int): Tool embedding dim (default 4).
-        - 'num_regions' (int): Maximum regions count (default 16).
-        - 'region_embed_dim' (int): Region embedding dim (default 4).
-        - 'encode_region' (bool): Encode region identity (default False).
-        - 'hidden_dim' (int): FiLM MLP hidden dim (default 32).
-        - 'encode_flux' (bool): Encode standardized die flux (default True).
-        - 'encode_time' (bool): Encode 'time_standardized' (default True).
-        - 'encode_relative_intensity' (bool): Encode relative regional
-          intensity.
-        - 'encode_elements' (bool): Encode material element multi-hot vector.
-        - 'element_vocab' (list[str] | None): Dynamic element vocabulary.
-        - 'material_elements' (dict[str, list[str]] | None): Material map.
-        - 'use_sliding_window' (bool): Whether sliding window is used.
-        - 'encode_energy' (bool): Whether to encode bounding energy.
     """
 
     def __init__(
         self, channels_list: list[int], config: dict[str, Any] | None = None
     ) -> None:
         super().__init__()
-        cfg = config or {}
-        self.encode_die = bool(cfg.get("encode_die", True))
-        self.encode_tool = bool(cfg.get("encode_tool", True))
-        self.encode_flux = bool(cfg.get("encode_flux", True))
-        self.encode_time = bool(cfg.get("encode_time", True))
-        self.encode_region = bool(cfg.get("encode_region", False))
-        self.encode_relative_intensity = bool(
-            cfg.get("encode_relative_intensity", False)
-        )
-        self.encode_elements = bool(cfg.get("encode_elements", False))
-        self.encode_energy = bool(cfg.get("encode_energy", False))
+        if config is None:
+            raise KeyError("FiLMGenerator requires an explicit 'config' dict.")
+        _validate_film_config_keys(config)
+
+        self.encode_die = bool(config["encode_die"])
+        self.encode_tool = bool(config["encode_tool"])
+        self.encode_flux = bool(config["encode_flux"])
+        self.encode_time = bool(config["encode_time"])
+        self.encode_region = bool(config["encode_region"])
+        self.encode_relative_intensity = bool(config["encode_relative_intensity"])
+        self.encode_elements = bool(config["encode_elements"])
+        self.encode_energy = bool(config["encode_energy"])
 
         all_encodings = [
             self.encode_die,
@@ -528,75 +373,34 @@ class FiLMGenerator(nn.Module):
                 "At least one feature encoding must be enabled when FiLM is active."
             )
 
-        num_dies = int(cfg.get("num_dies", 9))
-        die_dim = int(cfg.get("die_embed_dim", 4)) if self.encode_die else 0
-        num_tools = int(cfg.get("num_tools", 8))
-        tool_dim = int(cfg.get("tool_embed_dim", 4)) if self.encode_tool else 0
-        num_regions = int(cfg.get("num_regions", 16))
-        region_dim = (
-            int(cfg.get("region_embed_dim", 4)) if self.encode_region else 0
-        )
-        hidden_dim = int(cfg.get("hidden_dim", 32))
+        if "hidden_dim" not in config:
+            raise KeyError("FiLMGenerator requires 'hidden_dim' in config.")
+        hidden_dim = int(config["hidden_dim"])
 
-        self.element_vocab = cfg.get("element_vocab")
-        self.material_elements = cfg.get("material_elements")
-        if self.encode_elements:
-            if not self.material_elements and "materials" in cfg:
-                self.material_elements = cfg.get("materials")
-            has_vocab_size = bool(cfg.get("element_vocab_size"))
-            if (
-                not self.material_elements
-                and not self.element_vocab
-                and not has_vocab_size
-            ):
-                raise ValueError(
-                    "FiLMGenerator requires 'material_elements' in config "
-                    "when encode_elements=True."
-                )
-            if self.material_elements and (
-                not self.element_vocab or len(self.element_vocab) == 0
-            ):
-                from utility.config_loader import extract_element_vocabulary
-
-                self.element_vocab = extract_element_vocabulary(
-                    self.material_elements
-                )
-
+        # Validate and accumulate dynamic dimensions for one-hot and
+        # continuous features.
+        die_dim = int(config["num_dies"]) if self.encode_die else 0
+        tool_dim = (2 * int(config["num_tools"])) if self.encode_tool else 0
+        region_dim = int(config["num_regions"]) if self.encode_region else 0
+        elem_dim = int(config["num_elements"]) if self.encode_elements else 0
         flux_dim = 1 if self.encode_flux else 0
         time_dim = 1 if self.encode_time else 0
-        energy_dim = 2 if self.encode_energy else 0
         rel_int_dim = 1 if self.encode_relative_intensity else 0
-        elem_dim = (
-            (
-                len(self.element_vocab)
-                if (self.encode_elements and self.element_vocab)
-                else int(cfg.get("element_vocab_size", 0))
-            )
-            if self.encode_elements
-            else 0
-        )
+        energy_dim = 2 if self.encode_energy else 0
 
         in_dim = (
             die_dim
-            + (2 * tool_dim)
+            + tool_dim
             + region_dim
+            + elem_dim
             + flux_dim
             + time_dim
-            + energy_dim
             + rel_int_dim
-            + elem_dim
+            + energy_dim
         )
+        self.in_dim = in_dim
         self.channels_list = list(channels_list)
-        self.die_embedding = (
-            nn.Embedding(num_dies, die_dim) if self.encode_die else None
-        )
-        self.tool_embedding = (
-            nn.Embedding(num_tools, tool_dim) if self.encode_tool else None
-        )
-        if self.encode_region:
-            self.region_embedding = nn.Embedding(num_regions, region_dim)
-        else:
-            self.region_embedding = None
+        self.config = dict(config)
 
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -617,18 +421,7 @@ class FiLMGenerator(nn.Module):
     def forward(
         self, cond: dict[str, torch.Tensor]
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        """Compute affine (gamma, beta) modulation parameters per layer.
-
-        Parameters
-        ----------
-        cond : dict[str, torch.Tensor]
-            Conditioning features dictionary.
-
-        Returns
-        -------
-        list[tuple[torch.Tensor, torch.Tensor]]
-            List of (gamma, beta) modulation pairs per target layer.
-        """
+        """Compute affine (gamma, beta) modulation parameters per layer."""
         target_device = self.mlp[0].weight.device
         cond_dev = {
             k: (
@@ -640,40 +433,41 @@ class FiLMGenerator(nn.Module):
         }
         feat_list: list[torch.Tensor] = []
         if self.encode_die:
-            if "die" not in cond_dev:
+            if "die_one_hot" not in cond_dev:
                 raise KeyError(
-                    "FiLMGenerator expects 'die' in conditioning dictionary "
+                    "FiLMGenerator expects 'die_one_hot' in conditioning dictionary "
                     "when encode_die=True."
                 )
-            feat_list.append(self.die_embedding(cond_dev["die"]))
+            feat_list.append(cond_dev["die_one_hot"])
 
         if self.encode_tool:
             if (
-                "source_tool_index" not in cond_dev
-                or "target_tool_index" not in cond_dev
+                "source_tool_one_hot" not in cond_dev
+                or "target_tool_one_hot" not in cond_dev
             ):
                 raise KeyError(
-                    "FiLMGenerator expects 'source_tool_index' and 'target_tool_index' in "
+                    "FiLMGenerator expects 'source_tool_one_hot' and 'target_tool_one_hot' in "
                     "conditioning dictionary when encode_tool=True."
                 )
-            feat_list.append(self.tool_embedding(cond_dev["source_tool_index"]))
-            feat_list.append(self.tool_embedding(cond_dev["target_tool_index"]))
+            feat_list.append(cond_dev["source_tool_one_hot"])
+            feat_list.append(cond_dev["target_tool_one_hot"])
 
         if self.encode_region:
-            reg_t = cond_dev.get("region")
-            if reg_t is None:
+            if "region_one_hot" not in cond_dev:
                 raise KeyError(
-                    "FiLMGenerator expects 'region' in conditioning dictionary "
+                    "FiLMGenerator expects 'region_one_hot' in conditioning dictionary "
                     "when encode_region=True."
                 )
-            max_allowed = self.region_embedding.num_embeddings - 1
-            if (reg_t > max_allowed).any() or (reg_t < 0).any():
-                raise ValueError(
-                    f"Region indices {sorted(set(reg_t.reshape(-1).tolist()))} "
-                    f"fall outside the embedding range [0, {max_allowed}]. "
-                    "Increase 'num_regions' or fix 'region_index' in df_meta."
+            feat_list.append(cond_dev["region_one_hot"])
+
+        if self.encode_elements:
+            if "element_multi_hot" not in cond_dev:
+                raise KeyError(
+                    "FiLMGenerator expects 'element_multi_hot' in conditioning dictionary "
+                    "when encode_elements=True."
                 )
-            feat_list.append(self.region_embedding(reg_t))
+            feat_list.append(cond_dev["element_multi_hot"])
+
         if self.encode_flux:
             flux_t = cond_dev.get("total_flux_single_die_standardized")
             if flux_t is None:
@@ -701,15 +495,6 @@ class FiLMGenerator(nn.Module):
                 )
             feat_list.append(rel_t)
 
-        if self.encode_elements:
-            elem_t = cond_dev.get("element_multi_hot")
-            if elem_t is None:
-                raise KeyError(
-                    "FiLMGenerator expects 'element_multi_hot' in conditioning "
-                    "dictionary when encode_elements=True."
-                )
-            feat_list.append(elem_t)
-
         if self.encode_energy:
             energy_t = cond_dev.get("energy_bounds")
             if energy_t is None:
@@ -731,23 +516,9 @@ class FiLMGenerator(nn.Module):
         energy_scale_ev: float = 1000.0,
         extra_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Export canonical conditioning configuration matching this generator.
-
-        Parameters
-        ----------
-        num_samples : int, optional
-            Batch size fallback (default 1).
-        energy_scale_ev : float, optional
-            Scaling factor for eV bounds (default 1000.0).
-        extra_config : dict[str, Any] | None, optional
-            Additional configuration overrides.
-
-        Returns
-        -------
-        dict[str, Any]
-            Configuration dictionary ready for prepare_film_condition_tensor.
-        """
+        """Export canonical conditioning configuration matching this generator."""
         base: dict[str, Any] = {
+            **self.config,
             "num_samples": num_samples,
             "energy_scale_ev": energy_scale_ev,
             "encode_die": self.encode_die,
@@ -758,8 +529,6 @@ class FiLMGenerator(nn.Module):
             "encode_relative_intensity": self.encode_relative_intensity,
             "encode_elements": self.encode_elements,
             "encode_energy": self.encode_energy,
-            "element_vocab": self.element_vocab,
-            "material_elements": self.material_elements,
         }
         if extra_config:
             base.update(extra_config)
@@ -774,26 +543,7 @@ class FiLMGenerator(nn.Module):
         energy_scale_ev: float = 1000.0,
         extra_config: dict[str, Any] | None = None,
     ) -> dict[str, torch.Tensor]:
-        """Pack conditioning tensors using this generator's configuration.
-
-        Parameters
-        ----------
-        metadata : list[dict[str, Any]] | dict[str, Any] | pd.DataFrame | None
-            Sample metadata records or DataFrame.
-        device : torch.device | None, optional
-            Computation device for output tensors.
-        energy_bounds : torch.Tensor | np.ndarray | None, optional
-            Energy bounds tensor or array, shape (B, 2).
-        energy_scale_ev : float, optional
-            Scaling factor for eV bounds (default 1000.0).
-        extra_config : dict[str, Any] | None, optional
-            Additional configuration overrides.
-
-        Returns
-        -------
-        dict[str, torch.Tensor]
-            Dictionary of conditioning feature tensors.
-        """
+        """Pack conditioning tensors using this generator's configuration."""
         n_samples = (
             len(metadata)
             if isinstance(metadata, (list, tuple, pd.DataFrame)) and len(metadata) > 0

@@ -11,129 +11,111 @@ from models.film import FiLMGenerator, prepare_film_condition_tensor
 
 
 class TestFiLMModulation(unittest.TestCase):
-    """Test suite verifying FiLM condition preparation and modulation generator.
-    """
+    """Test suite verifying FiLM condition preparation and modulation generator."""
 
     def setUp(self) -> None:
-        self.materials_cfg = {
-            "NMG": {"elements": ["Ti", "Al", "C", "O", "Cl", "Si"]},
-            "PMG": {"elements": ["Ti", "N", "O", "Cl", "Si"]},
-        }
         self.sample_meta = [
             {
-                "die": 0,
-                "source_tool_index": 0,
-                "target_tool_index": 1,
+                "die_one_hot": [1.0, 0.0, 0.0],
+                "source_tool_one_hot": [1.0, 0.0],
+                "target_tool_one_hot": [0.0, 1.0],
+                "region_one_hot": [0.0, 1.0, 0.0, 0.0],
+                "element_multi_hot": [1.0, 1.0, 0.0],
                 "total_flux_single_die_standardized": -0.5,
                 "time_standardized": -1.0,
-                "region_index": 2,
                 "relative_intensity_single_region": 0.85,
-                "material": "NMG",
             },
             {
-                "die": 5,
-                "source_tool_index": 0,
-                "target_tool_index": 1,
+                "die_one_hot": [0.0, 0.0, 1.0],
+                "source_tool_one_hot": [1.0, 0.0],
+                "target_tool_one_hot": [0.0, 1.0],
+                "region_one_hot": [0.0, 0.0, 0.0, 1.0],
+                "element_multi_hot": [0.0, 1.0, 1.0],
                 "total_flux_single_die_standardized": 1.25,
                 "time_standardized": 1.0,
-                "region_index": 11,
                 "relative_intensity_single_region": 1.30,
-                "material": "PMG",
             },
         ]
-
-    def test_prepare_film_condition_tensor_formats_and_features(self) -> None:
-        """Verify feature extraction across dict, list, and DataFrame inputs."""
-        # Test with list of dicts and energy bounds
-        we = np.array([[100.0, 106.0], [105.0, 111.0]])
-        cfg = {
-            "num_samples": 2,
+        self.base_cfg = {
+            "num_dies": 3,
+            "num_tools": 2,
+            "num_regions": 4,
+            "num_elements": 3,
+            "encode_die": True,
+            "encode_tool": True,
+            "encode_flux": True,
+            "encode_time": True,
+            "encode_energy": True,
             "encode_region": True,
             "encode_relative_intensity": True,
             "encode_elements": True,
-            "material_elements": self.materials_cfg,
             "energy_scale_ev": 1000.0,
+            "hidden_dim": 32,
         }
+
+    def test_prepare_film_condition_tensor_formats_and_features(self) -> None:
+        """Verify feature extraction across dict, list, and DataFrame inputs."""
+        we = np.array([[100.0, 106.0], [105.0, 111.0]])
+        cfg = {**self.base_cfg, "num_samples": 2}
         cond = prepare_film_condition_tensor(
             metadata=self.sample_meta,
             energy_bounds=we,
             config=cfg,
         )
 
-        self.assertEqual(cond["die"].tolist(), [0, 5])
-        self.assertEqual(cond["source_tool_index"].tolist(), [0, 0])
-        self.assertEqual(cond["target_tool_index"].tolist(), [1, 1])
-        self.assertEqual(cond["region"].tolist(), [2, 11])
+        self.assertEqual(cond["die_one_hot"].shape, (2, 3))
+        self.assertEqual(cond["source_tool_one_hot"].shape, (2, 2))
+        self.assertEqual(cond["target_tool_one_hot"].shape, (2, 2))
+        self.assertEqual(cond["region_one_hot"].shape, (2, 4))
+        self.assertEqual(cond["element_multi_hot"].shape, (2, 3))
         self.assertEqual(cond["total_flux_single_die_standardized"].shape, (2, 1))
         self.assertEqual(cond["time_standardized"].shape, (2, 1))
         self.assertEqual(cond["relative_intensity_single_region"].shape, (2, 1))
         self.assertEqual(cond["energy_bounds"].shape, (2, 2))
         self.assertAlmostEqual(cond["energy_bounds"][0, 0].item(), 0.1, places=4)
-        self.assertEqual(cond["element_multi_hot"].shape, (2, 7))
 
-        # Test DataFrame and column mapping
+        # Test DataFrame format
         df_meta = pd.DataFrame(self.sample_meta)
-        cond_df = prepare_film_condition_tensor(metadata=df_meta, config=cfg)
-        self.assertEqual(cond_df["die"].tolist(), [0, 5])
-
-        # Test scalar/dict input format
-        cond_dict = prepare_film_condition_tensor(
-            metadata={
-                "die": [0, 1],
-                "source_tool_index": 0,
-                "target_tool_index": 1,
-                "total_flux_single_die_standardized": 0.0,
-                "time_standardized": 0.0,
-            },
-            config={"num_samples": 2},
+        cond_df = prepare_film_condition_tensor(
+            metadata=df_meta, energy_bounds=we, config=cfg
         )
-        self.assertEqual(len(cond_dict["die"]), 2)
-        self.assertEqual(len(cond_dict["source_tool_index"]), 2)
+        self.assertEqual(cond_df["die_one_hot"].tolist(), cond["die_one_hot"].tolist())
 
     def test_missing_metadata_fields_raise(self) -> None:
-        """Verify missing mandatory metadata keys or elements config raise
-        error.
-        """
-        # Missing total_flux_single_die_standardized
-        bad_meta = [{"die": 0, "source_tool_index": 0, "target_tool_index": 1}]
-        with self.assertRaises(ValueError):
-            prepare_film_condition_tensor(bad_meta)
+        """Verify missing mandatory metadata keys or unpaired rows raise error."""
+        cfg = {**self.base_cfg, "num_samples": 1}
 
-        # Missing materials configuration when encode_elements is True
+        # Missing die_one_hot
+        bad_meta = [{k: v for k, v in self.sample_meta[0].items() if k != "die_one_hot"}]
         with self.assertRaises(ValueError):
-            prepare_film_condition_tensor(
-                self.sample_meta, config={"encode_elements": True}
-            )
+            prepare_film_condition_tensor(bad_meta, config=cfg)
 
-        # Missing or invalid die value
+        # Unpaired row with target_tool_one_hot = None
+        unpaired_meta = [{**self.sample_meta[0], "target_tool_one_hot": None}]
         with self.assertRaises(ValueError):
-            prepare_film_condition_tensor(
-                [{"die": None, "source_tool_index": 0, "target_tool_index": 1,
-                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
-            )
-        with self.assertRaises(ValueError):
-            prepare_film_condition_tensor(
-                [{"die": 12, "source_tool_index": 0, "target_tool_index": 1,
-                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
-            )
-        with self.assertRaises(ValueError):
-            prepare_film_condition_tensor(
-                [{"die": "invalid", "source_tool_index": 0, "target_tool_index": 1,
-                  "total_flux_single_die_standardized": 0.0, "time_standardized": 0.0}]
-            )
+            prepare_film_condition_tensor(unpaired_meta, config=cfg)
 
         # Missing energy bounds when encode_energy is True
         with self.assertRaises(ValueError):
             prepare_film_condition_tensor(
+                self.sample_meta, energy_bounds=None, config=cfg
+            )
+
+        # Missing required config flag without default
+        with self.assertRaises(KeyError):
+            prepare_film_condition_tensor(
                 self.sample_meta,
-                energy_bounds=None,
-                config={"encode_energy": True, "num_samples": 2},
+                config={k: v for k, v in cfg.items() if k != "encode_die"},
             )
 
     def test_film_generator_identity_initialization(self) -> None:
         """Verify FiLMGenerator outputs gamma=1.0 and beta=0.0 initially."""
-        film_gen = FiLMGenerator(channels_list=[16, 32])
-        cond = prepare_film_condition_tensor(metadata=self.sample_meta[:1])
+        film_gen = FiLMGenerator(channels_list=[16, 32], config=self.base_cfg)
+        cond = prepare_film_condition_tensor(
+            metadata=self.sample_meta[:1],
+            energy_bounds=np.array([[100.0, 150.0]]),
+            config=self.base_cfg,
+        )
 
         mods = film_gen(cond)
         self.assertEqual(len(mods), 2)
@@ -151,80 +133,44 @@ class TestFiLMModulation(unittest.TestCase):
         torch.testing.assert_close(beta2, torch.zeros_like(beta2))
 
     def test_film_generator_feature_toggles_and_dimensions(self) -> None:
-        """Verify feature toggle permutations compute correct input dimension.
-        """
-        base_cond = prepare_film_condition_tensor(
-            metadata=self.sample_meta,
-            energy_bounds=np.array([[100.0, 106.0], [105.0, 111.0]]),
-            config={
-                "encode_region": True,
-                "encode_relative_intensity": True,
-                "encode_elements": True,
-                "material_elements": self.materials_cfg,
-            },
-        )
+        """Verify feature toggle permutations compute correct input dimension."""
+        # die(3) + tools(2*2) + flux(1) + time(1) + rel_int(1) + region(4) + elem(3) + energy(2) = 19
+        fg_all = FiLMGenerator(channels_list=[8], config=self.base_cfg)
+        self.assertEqual(fg_all.in_dim, 19)
+        self.assertEqual(fg_all.mlp[0].in_features, 19)
 
-        test_cases = [
-            # die(4) + tools(2*4) + flux(1) + time(1) = 14
-            ({"encode_die": True, "encode_tool": True, "encode_flux": True, "encode_time": True}, 14),
-            # region(4) + rel_intensity(1) + energy(2) = 7
-            ({
-                "encode_die": False,
-                "encode_tool": False,
-                "encode_flux": False,
-                "encode_time": False,
-                "encode_region": True,
-                "num_regions": 16,
-                "region_embed_dim": 4,
-                "encode_relative_intensity": True,
-                "encode_energy": True,
-            }, 7),
-            # elements(7) only = 7
-            ({
-                "encode_die": False,
-                "encode_tool": False,
-                "encode_flux": False,
-                "encode_time": False,
-                "encode_elements": True,
-                "element_vocab_size": 7,
-            }, 7),
-        ]
-
-        for cfg_override, expected_dim in test_cases:
-            with self.subTest(dim=expected_dim):
-                fg = FiLMGenerator(channels_list=[8], config=cfg_override)
-                self.assertEqual(fg.mlp[0].in_features, expected_dim)
-                mods = fg(base_cond)
-                self.assertEqual(mods[0][0].shape, (2, 8))
+        # Toggle test: only die(3) + tools(4) = 7
+        subset_cfg = {
+            **self.base_cfg,
+            "encode_flux": False,
+            "encode_time": False,
+            "encode_energy": False,
+            "encode_region": False,
+            "encode_relative_intensity": False,
+            "encode_elements": False,
+        }
+        fg_sub = FiLMGenerator(channels_list=[8], config=subset_cfg)
+        self.assertEqual(fg_sub.in_dim, 7)
+        self.assertEqual(fg_sub.mlp[0].in_features, 7)
 
         # Raising error when all encodings are disabled
+        all_off_cfg = {
+            **self.base_cfg,
+            "encode_die": False,
+            "encode_tool": False,
+            "encode_flux": False,
+            "encode_time": False,
+            "encode_energy": False,
+            "encode_region": False,
+            "encode_relative_intensity": False,
+            "encode_elements": False,
+        }
         with self.assertRaises(ValueError):
-            FiLMGenerator(
-                [8],
-                config={
-                    "encode_die": False,
-                    "encode_tool": False,
-                    "encode_flux": False,
-                    "encode_time": False,
-                    "encode_energy": False,
-                    "encode_region": False,
-                    "encode_relative_intensity": False,
-                    "encode_elements": False,
-                },
-            )
+            FiLMGenerator([8], config=all_off_cfg)
 
     def test_condition_packing_helpers_and_modulation_application(self) -> None:
         """Verify helper configuration extractors and modulation application."""
-        fg = FiLMGenerator(
-            [16],
-            config={
-                "encode_die": True,
-                "encode_tool": True,
-                "encode_flux": True,
-                "encode_time": True,
-                "encode_energy": True,
-            },
-        )
+        fg = FiLMGenerator([16], config=self.base_cfg)
         cfg = fg.get_condition_config(num_samples=2, energy_scale_ev=500.0)
         self.assertEqual(cfg["num_samples"], 2)
         self.assertEqual(cfg["energy_scale_ev"], 500.0)
@@ -234,7 +180,7 @@ class TestFiLMModulation(unittest.TestCase):
         cond = fg.prepare_condition_tensor(
             self.sample_meta, energy_bounds=np.array([[100.0, 150.0], [120.0, 170.0]])
         )
-        self.assertIn("die", cond)
+        self.assertIn("die_one_hot", cond)
         self.assertIn("energy_bounds", cond)
 
         # Verify modulation application gamma * h + beta
