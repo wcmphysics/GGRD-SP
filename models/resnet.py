@@ -70,26 +70,16 @@ def _build_hidden_conv_and_norm_layers(
 def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Build dedicated FiLM configuration for the scaled shortcut connection.
 
-    Disables sliding window and energy bound encoding so shortcut scaling 
-    reflects only global sample and tool attributes.
-    
-    Notice the hidden design choice for disabling energy encoding here:
-    # When sliding window = ON, unified model = ON/OFF:
-        Shortcut FiLM should be independent of the current window such that
-        all windows share the same scaling. Physically speaking the scale 
-        between tools should not vary that much within one energy region.
-        Practically speaking forced shared scaling for all windows avoids
-        abrupt change when merging spectra from all windows. As a result, 
-        energy encoding is turned off.
-    # When sliding window is OFF, unified model = OFF
-        One might want to choose bounding energy of the current region to
-        be encoded, but we choose NOT TO for the same physical reason above.
-        This also makes the behavior of FiLM for shortcut clean. 
-    # when sliding window is OFF, unified model = ON
-        no clear definition for bounding energy or representative energy
-        for a model to learn.
+    Uses 'shortcut_film_config' if present in cfg, otherwise falls back to cfg,
+    forcing sliding window and energy bound encoding off so shortcut scaling 
+    reflects global tool attributes.
     """
-    return {**cfg, "use_sliding_window": False, "encode_energy": False,}
+    sc_base = dict(cfg.get("shortcut_film_config", cfg))
+    # Propagate shared dimension counts from parent cfg if not present
+    for k in ("num_dies", "num_tools", "num_regions", "num_elements"):
+        if k in cfg and k not in sc_base:
+            sc_base[k] = cfg[k]
+    return {**sc_base, "use_sliding_window": False, "encode_energy": False}
 
 
 def _extract_and_clamp_shortcut_gain(
@@ -301,6 +291,7 @@ class ResNetScaledShort1D(ResNet1D):
         self,
         x: torch.Tensor,
         cond: dict[str, torch.Tensor] | torch.Tensor | None = None,
+        shortcut_cond: dict[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """Apply scaled-shortcut residual transformation:
         y = gamma_out * x + Delta(x, cond).
@@ -311,7 +302,10 @@ class ResNetScaledShort1D(ResNet1D):
             Input spectral tensor of shape
             (batch_size, 1, n_points_generalized).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
-            Metadata conditioning features dictionary. Required.
+            Metadata conditioning features dictionary for internal layers.
+        shortcut_cond : dict[str, torch.Tensor] | None, optional
+            Independent conditioning features dictionary for shortcut FiLM.
+            If None, falls back to cond.
 
         Returns
         -------
@@ -322,16 +316,18 @@ class ResNetScaledShort1D(ResNet1D):
         Raises
         ------
         ValueError
-            If x is not a 3D tensor or cond is None or not a dict.
+            If x is not a 3D tensor or shortcut conditioning is missing.
         """
         validate_3d_spectrum_tensor(x)
-        if cond is None or not isinstance(cond, dict):
+        effective_shortcut_cond = shortcut_cond if shortcut_cond is not None else cond
+        if effective_shortcut_cond is None or not isinstance(effective_shortcut_cond, dict):
+            got_type = type(effective_shortcut_cond).__name__ if effective_shortcut_cond is not None else "None"
             raise ValueError(
                 "ResNetScaledShort1D requires a metadata conditioning dictionary "
-                f"'cond', got {type(cond).__name__ if cond is not None else 'None'}."
+                f"'shortcut_cond', got {got_type}."
             )
 
-        shortcut_mods = self.shortcut_film_gen(cond)
+        shortcut_mods = self.shortcut_film_gen(effective_shortcut_cond)
         gamma_out = _extract_and_clamp_shortcut_gain(shortcut_mods)
         film_modulations = self._get_film_modulations(cond)
         delta = self._forward_delta(x, film_modulations)

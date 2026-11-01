@@ -82,6 +82,27 @@ def _create_mock_spectral_data() -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     df_meta["target_spectrum_index"] = tgt_indices
     df_meta["total_flux_single_die_standardized"] = 0.0
     df_meta["time_standardized"] = 0.0
+    df_meta["relative_intensity_single_region"] = 1.0
+    df_meta["die_one_hot"] = [
+        [1.0 if i == d else 0.0 for i in range(n_dies)] for d in df_meta["die"]
+    ]
+    df_meta["source_tool_one_hot"] = [
+        [1.0 if i == idx else 0.0 for i in range(2)]
+        for idx in df_meta["source_tool_index"]
+    ]
+    df_meta["target_tool_one_hot"] = [
+        (
+            [1.0 if i == int(idx) else 0.0 for i in range(2)]
+            if pd.notna(idx)
+            else None
+        )
+        for idx in df_meta["target_tool_index"]
+    ]
+    df_meta["region_one_hot"] = [
+        [1.0 if i == r else 0.0 for i in range(len(regions))]
+        for r in df_meta["region_index"]
+    ]
+    df_meta["element_multi_hot"] = [[1.0, 0.0] for _ in range(len(df_meta))]
 
     return ary_intensity, ary_energy, df_meta
 
@@ -138,7 +159,19 @@ class TestUnifiedModel(unittest.TestCase):
                     "padding_mode": "reflect",
                     "use_film": True,
                 },
-                {"use_film": True, "encode_region": True, "num_regions": 8, "region_embed_dim": 4},
+                {
+                    "use_film": True,
+                    "encode_die": False,
+                    "encode_tool": False,
+                    "encode_flux": False,
+                    "encode_time": False,
+                    "encode_energy": False,
+                    "encode_region": True,
+                    "encode_relative_intensity": False,
+                    "encode_elements": False,
+                    "num_regions": int(self.df_meta["region"].nunique()),
+                    "hidden_dim": 16,
+                },
             ),
             ("residual_unet", {"depth": 2, "residual_unet_channel": 8, "kernel_size": 3}, None),
             ("unet", {"depth": 2, "unet_channel": 8, "kernel_size": 3}, None),

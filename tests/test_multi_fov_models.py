@@ -102,8 +102,13 @@ class TestInceptionTime1D(unittest.TestCase):
             "encode_time": True,
             "encode_energy": True,
             "encode_region": True,
+            "encode_relative_intensity": True,
             "encode_elements": False,
+            "num_dies": 3,
+            "num_tools": 2,
             "num_regions": 5,
+            "num_elements": 2,
+            "hidden_dim": 16,
             "inception_channel": 8,
             "bottleneck_channels": 8,
             "num_blocks": 1,
@@ -111,12 +116,14 @@ class TestInceptionTime1D(unittest.TestCase):
         model = InceptionTime1D(50, config=film_cfg)
         x = torch.randn(2, 1, 50)
         cond = {
-            "die": torch.tensor([0, 1]),
-            "source_tool_index": torch.tensor([0, 0]),
-            "target_tool_index": torch.tensor([1, 1]),
+            "die_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            "source_tool_one_hot": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+            "target_tool_one_hot": torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
             "time_standardized": torch.tensor([[0.5], [-0.2]]),
             "total_flux_single_die_standardized": torch.tensor([[1.0], [0.0]]),
-            "region": torch.tensor([1, 2]),
+            "region_one_hot": torch.tensor(
+                [[0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]]
+            ),
             "relative_intensity_single_region": torch.tensor([[1.0], [0.8]]),
             "energy_bounds": torch.tensor([[100.0, 150.0], [100.0, 150.0]]),
         }
@@ -180,20 +187,25 @@ class TestTCN1D(unittest.TestCase):
             "encode_time": True,
             "encode_energy": True,
             "encode_region": True,
+            "encode_relative_intensity": True,
             "encode_elements": False,
+            "num_dies": 3,
+            "num_tools": 2,
             "num_regions": 3,
+            "num_elements": 2,
+            "hidden_dim": 16,
             "tcn_channel": 8,
             "dilations": [1, 2],
         }
         model = TCN1D(60, config=cfg)
         x = torch.randn(2, 1, 60)
         cond = {
-            "die": torch.tensor([0, 1]),
-            "source_tool_index": torch.tensor([0, 0]),
-            "target_tool_index": torch.tensor([1, 1]),
+            "die_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            "source_tool_one_hot": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+            "target_tool_one_hot": torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
             "time_standardized": torch.tensor([[0.1], [-0.5]]),
             "total_flux_single_die_standardized": torch.tensor([[0.2], [-0.1]]),
-            "region": torch.tensor([0, 1]),
+            "region_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
             "relative_intensity_single_region": torch.tensor([[0.5], [0.7]]),
             "energy_bounds": torch.tensor([[50.0, 100.0], [50.0, 100.0]]),
         }
@@ -259,8 +271,13 @@ class TestFPN1D(unittest.TestCase):
             "encode_time": True,
             "encode_energy": True,
             "encode_region": True,
+            "encode_relative_intensity": True,
             "encode_elements": False,
+            "num_dies": 3,
+            "num_tools": 2,
             "num_regions": 4,
+            "num_elements": 2,
+            "hidden_dim": 16,
             "fpn_base_channel": 8,
             "fpn_pyramid_channel": 16,
             "depth": 2,
@@ -268,12 +285,14 @@ class TestFPN1D(unittest.TestCase):
         model = FPN1D(50, config=cfg)
         x = torch.randn(2, 1, 50)
         cond = {
-            "die": torch.tensor([0, 1]),
-            "source_tool_index": torch.tensor([0, 0]),
-            "target_tool_index": torch.tensor([1, 1]),
+            "die_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            "source_tool_one_hot": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+            "target_tool_one_hot": torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
             "time_standardized": torch.tensor([[0.2], [0.3]]),
             "total_flux_single_die_standardized": torch.tensor([[0.5], [0.4]]),
-            "region": torch.tensor([1, 2]),
+            "region_one_hot": torch.tensor(
+                [[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+            ),
             "relative_intensity_single_region": torch.tensor([[0.9], [0.8]]),
             "energy_bounds": torch.tensor([[100.0, 150.0], [100.0, 150.0]]),
         }
@@ -322,7 +341,7 @@ class TestDedicatedModelConfigFiles(unittest.TestCase):
         self.assertEqual(raw["training"]["train_config"]["epochs"], 50)
         self.assertEqual(raw["training"]["train_config"]["learning_rate"], 0.001)
         self.assertIn("inception_channels", raw["bayesian_opt"])
-        self.assertIn("region_embed_dim", raw["film"])
+        self.assertIn("encode_region", raw["film"])
 
     def test_explicit_overrides_persist_after_merge(self) -> None:
         """Verify explicit user overrides are not overwritten by defaults."""

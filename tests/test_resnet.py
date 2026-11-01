@@ -21,6 +21,19 @@ _DEFAULT_RESNET_FIXED_CONFIG = {
     "use_batch_norm": True,
     "padding_mode": "reflect",
     "use_film": False,
+    "encode_die": True,
+    "encode_tool": True,
+    "encode_flux": True,
+    "encode_time": True,
+    "encode_energy": True,
+    "encode_region": True,
+    "encode_relative_intensity": True,
+    "encode_elements": True,
+    "hidden_dim": 16,
+    "num_dies": 3,
+    "num_tools": 2,
+    "num_regions": 4,
+    "num_elements": 2,
 }
 
 _DEFAULT_RESNET_TEST_CONFIG = {
@@ -118,11 +131,15 @@ class TestResNet1DArchitecture(unittest.TestCase):
         layers.
         """
         cond = {
-            "die": torch.tensor([0, 1]),
-            "source_tool_index": torch.tensor([0, 0]),
-            "target_tool_index": torch.tensor([1, 1]),
+            "die_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            "source_tool_one_hot": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+            "target_tool_one_hot": torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
+            "region_one_hot": torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
+            "element_multi_hot": torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
             "total_flux_single_die_standardized": torch.tensor([[0.5], [-0.5]]),
             "time_standardized": torch.tensor([[0.2], [-0.2]]),
+            "relative_intensity_single_region": torch.tensor([[1.0], [1.0]]),
+            "energy_bounds": torch.tensor([[0.1, 0.2], [0.2, 0.3]]),
         }
         model = ResNet1D(
             40,
@@ -145,11 +162,15 @@ class TestResNetScaledShort1DArchitecture(unittest.TestCase):
 
     def setUp(self) -> None:
         self.cond = {
-            "die": torch.tensor([0, 1]),
-            "source_tool_index": torch.tensor([0, 0]),
-            "target_tool_index": torch.tensor([1, 1]),
+            "die_one_hot": torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            "source_tool_one_hot": torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
+            "target_tool_one_hot": torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
+            "region_one_hot": torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
+            "element_multi_hot": torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
             "total_flux_single_die_standardized": torch.tensor([[0.5], [-0.5]]),
             "time_standardized": torch.tensor([[0.2], [-0.2]]),
+            "relative_intensity_single_region": torch.tensor([[1.0], [1.0]]),
+            "energy_bounds": torch.tensor([[0.1, 0.2], [0.2, 0.3]]),
         }
 
     def test_initialization_and_condition_validation(self) -> None:
@@ -247,6 +268,8 @@ class TestResNetPipelineIntegration(unittest.TestCase):
             np.float32
         )
         cls.y_raw = (cls.x_raw * 1.05).astype(np.float32)
+        cls.energy = np.linspace(100.0, 120.0, cls.n_pts, dtype=np.float32)
+        cls.energy_arr = np.tile(cls.energy, (8, 1))
         cls.meta_list = [
             {
                 "spectrum_index": i,
@@ -256,6 +279,12 @@ class TestResNetPipelineIntegration(unittest.TestCase):
                 "region": "Al2p",
                 "source_tool_index": 0,
                 "target_tool_index": 1,
+                "die_one_hot": [1.0, 0.0, 0.0],
+                "source_tool_one_hot": [1.0, 0.0],
+                "target_tool_one_hot": [0.0, 1.0],
+                "region_one_hot": [1.0, 0.0, 0.0, 0.0],
+                "element_multi_hot": [1.0, 0.0],
+                "relative_intensity_single_region": 1.0,
                 "total_flux_single_die_standardized": 0.1,
                 "time_standardized": -0.1,
                 "split": "test",
@@ -265,7 +294,7 @@ class TestResNetPipelineIntegration(unittest.TestCase):
             for i in range(8)
         ]
         cls.dataset = SpectrumPairDataset(
-            cls.x_raw, cls.y_raw, metadata=cls.meta_list
+            cls.x_raw, cls.y_raw, energy=cls.energy_arr, metadata=cls.meta_list
         )
         cls.meta_df = pd.DataFrame(cls.meta_list)
 

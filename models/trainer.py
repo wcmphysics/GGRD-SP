@@ -59,28 +59,51 @@ def _batch_cond(
     batch: dict[str, Any],
     dev: torch.device,
     n: int | None = None,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare independent conditioning dictionaries for film_gen and shortcut_film_gen."""
     if not getattr(model, "use_film", False):
-        return None
+        return None, None
     num_samples = n if n is not None else len(batch["x"])
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
-    film_gen = getattr(model, "film_gen", None) or getattr(
-        model, "shortcut_film_gen", None
-    )
+    film_gen = getattr(model, "film_gen", None)
+    shortcut_film_gen = getattr(model, "shortcut_film_gen", None)
+
     energy_bounds = batch.get("energy_bounds")
-    if energy_bounds is None and "energy" in batch:
+    if energy_bounds is None and "energy" in batch and batch["energy"] is not None:
         e = batch["energy"]
-        if isinstance(e, torch.Tensor) and e.dim() >= 2:
-            e_flat = e.view(e.shape[0], -1)
+        e_tensor = torch.as_tensor(e, dtype=torch.float32)
+        if e_tensor.dim() == 1 and e_tensor.numel() >= 2:
+            energy_bounds = torch.stack([e_tensor[0], e_tensor[-1]]).unsqueeze(0)
+        elif e_tensor.dim() >= 2:
+            e_flat = e_tensor.view(e_tensor.shape[0], -1)
             energy_bounds = torch.stack([e_flat[:, 0], e_flat[:, -1]], dim=-1)
 
-    return film_gen.prepare_condition_tensor(
-        batch.get("meta"),
-        device=dev,
-        energy_bounds=energy_bounds,
-        energy_scale_ev=energy_scale_ev,
-        extra_config={"num_samples": num_samples},
+    meta = batch.get("meta")
+    cond = (
+        film_gen.prepare_condition_tensor(
+            meta,
+            device=dev,
+            energy_bounds=energy_bounds,
+            energy_scale_ev=energy_scale_ev,
+            extra_config={"num_samples": num_samples},
+        )
+        if film_gen is not None
+        else None
     )
+
+    shortcut_cond = (
+        shortcut_film_gen.prepare_condition_tensor(
+            meta,
+            device=dev,
+            energy_bounds=None,
+            energy_scale_ev=energy_scale_ev,
+            extra_config={"num_samples": num_samples},
+        )
+        if shortcut_film_gen is not None
+        else None
+    )
+
+    return cond, shortcut_cond
 
 
 def _resolve_device(
@@ -109,10 +132,15 @@ def _run_epoch(
             y = batch["y"].to(device)
             mv = batch.get("max_val")
             max_v = mv.to(device) if isinstance(mv, torch.Tensor) else None
-            cond = _batch_cond(model, batch, device)
+            cond, shortcut_cond = _batch_cond(model, batch, device)
             if is_train:
                 optimizer.zero_grad()
-            yp = model(x, cond=cond) if cond is not None else model(x)
+            if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
+                yp = model(x, cond=cond, shortcut_cond=shortcut_cond)
+            elif cond is not None:
+                yp = model(x, cond=cond)
+            else:
+                yp = model(x)
             loss = criterion(
                 yp, y, model=model if is_train else None, loss_context=max_v
             )
@@ -318,12 +346,14 @@ def _evaluate_sliding_window_sample_by_sample(
             if isinstance(x_raw, torch.Tensor)
             else np.asarray(x_raw).squeeze()
         )
+        c, sc = _batch_cond(model, item, device, 1)
         rec = predict_sliding_window_spectrum(
             model,
             x_np,
             config=p_cfg,
-            cond=_batch_cond(model, item, device, 1),
+            cond=c,
             energy=item.get("energy"),
+            shortcut_cond=sc,
         )
         yp = torch.as_tensor(
             rec, dtype=torch.float32, device=device
@@ -616,7 +646,8 @@ def _setup_optimizer_and_scheduler(
     scheduler.
     """
     weight_decay = float(cfg.get("weight_decay", 0.0))
-    relative_learning_rate = float(cfg.get("relative_learning_rate", 0.1))
+    sc_cfg = cfg.get("shortcut_film_config") if isinstance(cfg.get("shortcut_film_config"), dict) else cfg
+    relative_learning_rate = float(sc_cfg.get("relative_learning_rate", 0.1))
     learning_rate_reduce_factor = float(
         cfg.get("learning_rate_reduce_factor", 0.9)
     )

@@ -294,6 +294,7 @@ def perform_model_training_and_bayesian_optimization(
     )
     verbose = bool(pipeline_config.get("verbose", False))
     film_cfg = dict(pipeline_config.get("film_config") or {})
+    shortcut_film_cfg = dict(pipeline_config.get("shortcut_film_config") or {})
 
     trained_models: dict[str, Any] = {}
     val_evaluation_results: dict[str, float] = {}
@@ -308,9 +309,7 @@ def perform_model_training_and_bayesian_optimization(
             actual_num = len(regional_datasets["all"].get("regions", []))
         else:
             actual_num = len(regional_datasets)
-        target_num_regions = max(
-            16, actual_num, int(film_cfg.get("num_regions", 16))
-        )
+        target_num_regions = int(film_cfg.get("num_regions") or actual_num)
         film_cfg["num_regions"] = target_num_regions
         pipeline_config["film_config"] = film_cfg
         target_datasets = {"all": _combine_regional_bundles(regional_datasets)}
@@ -370,6 +369,7 @@ def perform_model_training_and_bayesian_optimization(
 
         for k, v in film_cfg.items():
             region_train_config.setdefault(k, v)
+        region_train_config.setdefault("shortcut_film_config", shortcut_film_cfg)
         region_train_config.update(
             {
                 "model_type": region_model_type,
