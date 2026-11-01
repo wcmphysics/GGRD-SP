@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
@@ -172,6 +173,40 @@ class TestOrchestrationPipeline(unittest.TestCase):
         )
         self.assertIn("Al2p", res["models"])
         self.assertIn("Al2p", res["bayesian_opt_results"])
+
+    def test_bayesian_retraining_preserves_evaluated_stride(self) -> None:
+        """Keep the trial stride, clamped only to the selected window size."""
+        for stride, selected_window, expected_stride in ((2, 9, 2), (8, 5, 5)):
+            with self.subTest(stride=stride, selected_window=selected_window):
+                # Exercise both preserved and window-clamped trial strides.
+                datasets = create_regional_datasets(
+                    self.df_meta, self.ary_intensity, self.ary_energy,
+                    config={
+                        "source_tool": "J4", "target_tool": "H1",
+                        "regions": ["Al2p"], "use_sliding_window": True,
+                        "window_size": 9, "stride": stride,
+                    },
+                )
+                best = {"best_parameters": {"window_size": selected_window}}
+                with patch(
+                    "models.orchestration.optimize_model_hyperparameters",
+                    return_value=best,
+                ) as search:
+                    result = perform_model_training_and_bayesian_optimization(
+                        datasets, SpectralLoss(),
+                        config={
+                            "model_type": "resnet",
+                            "train_config": {
+                                **_DEFAULT_RESNET_TEST_CONFIG,
+                                "epochs": 1, "batch_size": 4,
+                            },
+                        },
+                        bayesian_opt_config={"use_bayesian_opt": True},
+                    )
+                self.assertEqual(search.call_args.kwargs["config"]["stride"], stride)
+                _, window, final_stride = result["models"]["Al2p"]
+                self.assertEqual(window, selected_window)
+                self.assertEqual(final_stride, expected_stride)
 
     def test_orchestration_validation_errors(self) -> None:
         """Verify validation error handling for training orchestration."""

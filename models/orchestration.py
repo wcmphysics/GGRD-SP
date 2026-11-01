@@ -407,7 +407,7 @@ def perform_model_training_and_bayesian_optimization(
                 region_train_config.update(best_parameters)
                 if is_sw and "window_size" in best_parameters:
                     window_size_points = int(best_parameters["window_size"])
-                    stride_points = max(1, window_size_points // 2)
+                    stride_points = max(1, min(window_size_points, stride_points))
                     input_sequence_length = window_size_points
                     dataset_train = SpectrumPatchDataset(
                         dataset_train_full,
