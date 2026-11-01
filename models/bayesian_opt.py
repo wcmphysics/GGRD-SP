@@ -357,7 +357,7 @@ def _validate_architecture_constraints(
     use_sw: bool,
 ) -> None:
     """Validate kernel size and depth consistency against sequence length."""
-    if window_spec is not None:
+    if use_sw and window_spec is not None:
         min_seq_len = min(window_spec["values"])
     elif use_sw:
         min_seq_len = min(full_len, 15)

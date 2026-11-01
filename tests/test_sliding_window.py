@@ -10,6 +10,7 @@ import pandas as pd
 from torch.utils.data import Dataset, Subset
 
 from models.bayesian_opt import optimize_model_hyperparameters
+from models.bayesian_opt import _build_search_parameters
 from models.cost import SpectralLoss
 from models.dataset import SpectrumPairDataset, SpectrumPatchDataset
 from models.inference import (
@@ -50,6 +51,30 @@ class TestSlidingWindowPipeline(unittest.TestCase):
 
         cls.train_ds = SpectrumPairDataset(x_raw[:8], y_raw[:8])
         cls.val_ds = SpectrumPairDataset(x_raw[8:], y_raw[8:])
+
+    def test_full_spectrum_search_ignores_window_architecture_limits(self) -> None:
+        """Apply kernel and depth limits to the active model input length."""
+        configs = {
+            "resnet": {"kernel_sizes": [21], "resnet_channels": [8]},
+            "unet": {"kernel_sizes": [3], "depths": [5], "unet_channels": [8]},
+        }
+        for model_type, config in configs.items():
+            with self.subTest(model_type=model_type):
+                config = {**config, "window_size_choices": [15]}
+                parameters = _build_search_parameters(model_type, config, 100, False)
+                self.assertNotIn("window_size", [p["name"] for p in parameters])
+                with self.assertRaises(ValueError):
+                    _build_search_parameters(model_type, config, 100, True)
+
+    def test_numpy_spectra_with_different_lengths_use_validation_fallback(self) -> None:
+        """Reconstruct heterogeneous NumPy spectra through identity inference."""
+        spectra = [np.arange(1, length + 1, dtype=np.float32) for length in (8, 9)]
+        dataset = [{"x": spectrum[None, :], "y": spectrum[None, :]} for spectrum in spectra]
+        loss = evaluate_sliding_window(
+            torch.nn.Identity(), dataset,
+            config={"window_size": 3, "stride": 2},
+        )
+        self.assertAlmostEqual(loss, 0.0)
 
     def test_spectrum_patch_dataset_and_reconstruction(self) -> None:
         """Verify patch dataset slicing, window prediction, and reconstruction.

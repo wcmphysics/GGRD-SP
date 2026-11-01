@@ -9,6 +9,7 @@ import math
 import warnings
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
