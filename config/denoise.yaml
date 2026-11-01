@@ -1,0 +1,44 @@
+# Configuration for noise analysis and regional spectral de-noising
+denoise:
+  method: "savgol"
+  regions:
+    - "Cl2p"
+    - "Ti2p"
+  apply_to: "both"
+  savgol:
+    window_length: 11
+    polynomial_order: 3
+    boundary_mode: "interp"
+  wavelet:
+    transform_type: "stationary"
+    wavelet_name: "sym4"
+    decomposition_level: 2
+    threshold_mode: "soft"
+    threshold_rule: "universal"
+    threshold_scale: 1.0
+  fourier:
+    filter_type: "dct"
+    cutoff_ratio: 0.25
+    filter_order: 4
+    rolloff_type: "butterworth"
+    padding_mode: "even"
+  gp:
+    kernel:
+      type: "matern52"
+      initial_lengthscale_ev: 1.0
+    noise_model: "homoscedastic"
+    confidence_type: "observation"
+    training:
+      num_iterations: 50
+      learning_rate: 0.2
+  region_configs:
+    Cl2p:
+      method: "savgol"
+      savgol:
+        window_length: 11
+        polynomial_order: 3
+    Ti2p:
+      method: "savgol"
+      savgol:
+        window_length: 9
+        polynomial_order: 3

@@ -87,6 +87,33 @@ def _merge_subdict_defaults(
             dest.setdefault(k, v)
 
 
+def merge_stage_configs(
+    raw_config: dict[str, Any],
+    config_dir: str | Path | None = None,
+) -> None:
+    """Merge stage configurations (data_generation, gp_flux, denoise)
+    into raw config.
+    """
+    stage_files = {
+        "data_generation": "data_generation.yaml",
+        "gp_flux": "gp_flux.yaml",
+        "denoise": "denoise.yaml",
+    }
+    for section_key, file_name in stage_files.items():
+        candidates: list[Path] = []
+        if config_dir is not None:
+            candidates.append(Path(config_dir) / file_name)
+        candidates.append(Path("config") / file_name)
+        stage_path = next((p for p in candidates if p.is_file()), None)
+        if stage_path is None:
+            continue
+        stage_raw = load_yaml(stage_path)
+        if isinstance(stage_raw, dict):
+            # Option B format: outer key matches section_key
+            content = stage_raw.get(section_key, stage_raw)
+            _merge_subdict_defaults(raw_config, section_key, content)
+
+
 def merge_dedicated_model_config(
     raw_config: dict[str, Any],
     config_dir: str | Path | None = None,
@@ -127,9 +154,6 @@ def merge_dedicated_model_config(
         raw_config, "bayesian_opt", model_raw.get("bayesian_opt")
     )
     _merge_subdict_defaults(raw_config, "film", model_raw.get("film"))
-    _merge_subdict_defaults(
-        raw_config, "shortcut_film", model_raw.get("shortcut_film")
-    )
 
 
 def load_material_elements(
@@ -341,11 +365,6 @@ def _inject_model_and_training_settings(
         film.setdefault("use_film", use_film)
         film.setdefault("num_regions", len(regions))
 
-    shortcut_film = resolved.setdefault("shortcut_film", {})
-    if isinstance(shortcut_film, dict):
-        shortcut_film.setdefault("use_film", use_film)
-        shortcut_film.setdefault("num_regions", len(regions))
-
     # Convert Bayesian optimization hyperparameter bounds to tuples.
     bo = resolved.setdefault("bayesian_opt", {})
     if isinstance(bo, dict):
@@ -363,7 +382,6 @@ def _inject_model_and_training_settings(
         training.setdefault("unified_model", unified_model)
         training.setdefault("use_film", film.get("use_film", use_film))
         training.setdefault("film_config", film)
-        training.setdefault("shortcut_film_config", shortcut_film)
         if isinstance(cost, dict) and "l2_weight" in cost:
             train_cfg = training.setdefault("train_config", {})
             if isinstance(train_cfg, dict):
@@ -374,7 +392,6 @@ def _inject_model_and_training_settings(
         prediction.setdefault("source_tool", source_tool)
         prediction.setdefault("target_tool", target_tool)
         prediction.setdefault("film_config", film)
-        prediction.setdefault("shortcut_film_config", shortcut_film)
 
 
 def _inject_evaluation_settings(
@@ -497,6 +514,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         Resolved configuration dictionary with fully populated stage configs.
     """
     resolved = dict(config)
+    merge_stage_configs(resolved)
     merge_dedicated_model_config(resolved)
 
     global_cfg = resolved.get("global", {})
@@ -558,6 +576,7 @@ def load_config(
     """
     raw = load_yaml(file_path)
     config_dir = Path(file_path).parent
+    merge_stage_configs(raw, config_dir)
     merge_dedicated_model_config(raw, config_dir)
     if validate:
         from utility.config_schema import PipelineConfig

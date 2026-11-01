@@ -61,7 +61,6 @@ class TestConfigLoader(unittest.TestCase):
             "denoise",
             "noise_plot",
             "film",
-            "shortcut_film",
             "bayesian_opt",
             "training",
             "prediction",

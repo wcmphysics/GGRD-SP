@@ -154,7 +154,6 @@ class TestConfigSchema(unittest.TestCase):
         self.assertIsInstance(cfg, dict)
         self.assertIn("global", cfg)
         self.assertIn("film", cfg)
-        self.assertIn("shortcut_film", cfg)
 
     def test_load_config_validation_failure_on_corrupted_data(self) -> None:
         """Verify load_config raises ValidationError on invalid data."""

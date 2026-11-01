@@ -324,22 +324,6 @@ class FiLMConfig(BaseModel):
     encode_elements: bool = True
     energy_scale_ev: float = Field(1000.0, gt=0.0)
     hidden_dim: int = Field(32, gt=0)
-    model_config = ConfigDict(extra="allow")
-
-
-class ShortcutFiLMConfig(BaseModel):
-    """FiLM configuration dedicated to ResNetScaledShort1D shortcut scaling."""
-
-    encode_die: bool = True
-    encode_tool: bool = True
-    encode_flux: bool = True
-    encode_time: bool = True
-    encode_energy: bool = False
-    encode_region: bool = True
-    encode_relative_intensity: bool = True
-    encode_elements: bool = True
-    energy_scale_ev: float = Field(1000.0, gt=0.0)
-    hidden_dim: int = Field(32, gt=0)
     relative_learning_rate: float = Field(0.1, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
@@ -504,7 +488,7 @@ class PipelineConfig(BaseModel):
     """Root configuration schema for the GGRD-SP spectral transfer pipeline."""
 
     global_: GlobalConfig = Field(default_factory=GlobalConfig, alias="global")
-    data_generation: DataGenerationConfig
+    data_generation: DataGenerationConfig = Field(default_factory=DataGenerationConfig)
     pairing: PairingConfig = Field(default_factory=PairingConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
     splitting: SplittingConfig = Field(default_factory=SplittingConfig)
@@ -515,7 +499,6 @@ class PipelineConfig(BaseModel):
     denoise: DenoiseConfig = Field(default_factory=DenoiseConfig)
     noise_plot: NoisePlotConfig = Field(default_factory=NoisePlotConfig)
     film: FiLMConfig = Field(default_factory=FiLMConfig)
-    shortcut_film: ShortcutFiLMConfig = Field(default_factory=ShortcutFiLMConfig)
     bayesian_opt: BayesianOptConfig = Field(default_factory=BayesianOptConfig)
     training: TrainingSectionConfig = Field(default_factory=TrainingSectionConfig)
     prediction: PredictionConfig = Field(default_factory=PredictionConfig)
@@ -527,10 +510,13 @@ class PipelineConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def merge_model_dedicated_defaults(cls, data: Any) -> Any:
-        """Merge dedicated per-model configuration defaults into input dict."""
+        """Merge dedicated per-model and stage configuration defaults
+        into input dict.
+        """
         if isinstance(data, dict):
-            from utility.config_loader import merge_dedicated_model_config
+            from utility.config_loader import merge_dedicated_model_config, merge_stage_configs
 
+            merge_stage_configs(data)
             merge_dedicated_model_config(data)
         return data
 

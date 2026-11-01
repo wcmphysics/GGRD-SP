@@ -1,0 +1,24 @@
+# Configuration for Gaussian Process die flux modeling over time
+gp_flux:
+  reference_date: "2026-01-01"
+  unpaired_split: "train"
+  target_column: "total_flux_single_die"
+  kernel:
+    time_continuous:
+      type: "rbf"
+      initial_lengthscale: 5.0
+    time_jump:
+      enabled: true
+      initial_step_time_days: 10.0
+      initial_steepness: 2.0
+      learn_step_time: true
+    die:
+      type: "index"
+      num_dies: 9
+      rank: 2
+    composition: "product_with_jump"
+  training:
+    num_iterations: 150
+    learning_rate: 0.05
+  plot:
+    plot_die: 0

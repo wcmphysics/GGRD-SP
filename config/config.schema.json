@@ -635,6 +635,12 @@
           "exclusiveMinimum": 0,
           "title": "Hidden Dim",
           "type": "integer"
+        },
+        "relative_learning_rate": {
+          "default": 0.1,
+          "exclusiveMinimum": 0.0,
+          "title": "Relative Learning Rate",
+          "type": "number"
         }
       },
       "title": "FiLMConfig",
@@ -1171,72 +1177,6 @@
       "title": "ShirleyGenerationConfig",
       "type": "object"
     },
-    "ShortcutFiLMConfig": {
-      "additionalProperties": true,
-      "description": "FiLM configuration dedicated to ResNetScaledShort1D shortcut scaling.",
-      "properties": {
-        "encode_die": {
-          "default": true,
-          "title": "Encode Die",
-          "type": "boolean"
-        },
-        "encode_tool": {
-          "default": true,
-          "title": "Encode Tool",
-          "type": "boolean"
-        },
-        "encode_flux": {
-          "default": true,
-          "title": "Encode Flux",
-          "type": "boolean"
-        },
-        "encode_time": {
-          "default": true,
-          "title": "Encode Time",
-          "type": "boolean"
-        },
-        "encode_energy": {
-          "default": false,
-          "title": "Encode Energy",
-          "type": "boolean"
-        },
-        "encode_region": {
-          "default": true,
-          "title": "Encode Region",
-          "type": "boolean"
-        },
-        "encode_relative_intensity": {
-          "default": true,
-          "title": "Encode Relative Intensity",
-          "type": "boolean"
-        },
-        "encode_elements": {
-          "default": true,
-          "title": "Encode Elements",
-          "type": "boolean"
-        },
-        "energy_scale_ev": {
-          "default": 1000.0,
-          "exclusiveMinimum": 0.0,
-          "title": "Energy Scale Ev",
-          "type": "number"
-        },
-        "hidden_dim": {
-          "default": 32,
-          "exclusiveMinimum": 0,
-          "title": "Hidden Dim",
-          "type": "integer"
-        },
-        "relative_learning_rate": {
-          "default": 0.1,
-          "exclusiveMinimum": 0.0,
-          "title": "Relative Learning Rate",
-          "type": "number"
-        }
-      },
-      "title": "ShortcutFiLMConfig",
-      "type": "object"
-    },
     "SplittingConfig": {
       "additionalProperties": true,
       "description": "Session-level train-val-test partitioning parameters.",
@@ -1616,9 +1556,6 @@
     "film": {
       "$ref": "#/$defs/FiLMConfig"
     },
-    "shortcut_film": {
-      "$ref": "#/$defs/ShortcutFiLMConfig"
-    },
     "bayesian_opt": {
       "$ref": "#/$defs/BayesianOptConfig"
     },
@@ -1639,7 +1576,6 @@
     }
   },
   "required": [
-    "data_generation",
     "quantification"
   ],
   "title": "PipelineConfig",
