@@ -29,6 +29,16 @@ class GlobalConfig(BaseModel):
     sample_measurement_id: str = "NMG_M_J4_00000"
     model_config = ConfigDict(extra="allow")
 
+    @model_validator(mode="after")
+    def validate_film_compatibility(self) -> GlobalConfig:
+        """Reject FiLM for architectures that do not implement conditioning."""
+        if self.model_type.lower() == "deeplabv3" and self.use_film:
+            raise ValueError(
+                "model_type='deeplabv3' does not support use_film=True; "
+                "expected global.use_film=False."
+            )
+        return self
+
 
 class ToolOffsetConfig(BaseModel):
     """Synthetic spectral drift and scale offsets per measurement tool."""
@@ -112,6 +122,12 @@ class SplittingConfig(BaseModel):
                 raise ValueError(
                     f"Partition ratios must sum to 1.0, got {total:.4f} "
                     f"(train={self.train_ratio}, val={self.val_ratio}, test={self.test_ratio})."
+                )
+            if self.train_ratio == 0.0 or self.val_ratio + self.test_ratio == 0.0:
+                raise ValueError(
+                    f"Unsupported random split ratios: train={self.train_ratio}, "
+                    f"val={self.val_ratio}, test={self.test_ratio}. Expected a "
+                    "positive train_ratio and at least one positive evaluation ratio."
                 )
         elif self.method == "direct" and not self.direct_assignment:
             raise ValueError(

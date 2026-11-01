@@ -116,6 +116,22 @@ class TestConfigSchema(unittest.TestCase):
             SplittingConfig(method="direct")
         self.assertIn("requires 'direct_assignment' mapping", str(ctx.exception))
 
+    def test_unsupported_random_split_ratios_rejected(self) -> None:
+        """Require training data and at least one evaluation partition."""
+        for train, val, test in ((1.0, 0.0, 0.0), (0.0, 0.5, 0.5), (0.0, 1.0, 0.0)):
+            with self.subTest(ratios=(train, val, test)):
+                with self.assertRaisesRegex(ValidationError, "Unsupported random split ratios"):
+                    SplittingConfig(train_ratio=train, val_ratio=val, test_ratio=test)
+        for train, val, test in ((0.7, 0.3, 0.0), (0.7, 0.0, 0.3)):
+            with self.subTest(ratios=(train, val, test)):
+                SplittingConfig(train_ratio=train, val_ratio=val, test_ratio=test)
+
+    def test_deeplabv3_film_rejected(self) -> None:
+        """Reject unsupported global FiLM configuration before execution."""
+        with self.assertRaisesRegex(ValidationError, "does not support use_film=True"):
+            GlobalConfig(model_type="deeplabv3", use_film=True)
+        GlobalConfig(model_type="deeplabv3", use_film=False)
+
     def test_normalization_mode_enum_validation(self) -> None:
         """Verify normalization rejects unknown normalization modes."""
         valid_modes = [

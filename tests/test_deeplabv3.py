@@ -16,6 +16,13 @@ from models.trainer import train_model_region
 class TestDeepLabV3Architecture(unittest.TestCase):
     """Test suite for DeepLabV3 model modules and forward transformations."""
 
+    def test_film_configuration_rejected(self) -> None:
+        """Reject unsupported FiLM in direct and factory construction."""
+        with self.assertRaisesRegex(ValueError, "does not support use_film=True"):
+            DeepLabV3(n_points=30, config={"use_film": True})
+        with self.assertRaisesRegex(ValueError, "does not support use_film=True"):
+            instantiate_model("deeplabv3", seq_len=30, config={"use_film": True})
+
     def test_input_dimension_enforcement(self) -> None:
         """Verify model enforces strictly (batch, 1, seq_len) shape."""
         model = DeepLabV3(

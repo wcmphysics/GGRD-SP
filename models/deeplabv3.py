@@ -226,6 +226,11 @@ class DeepLabV3(nn.Module):
     def __init__(self, n_points: int, config: dict[str, Any] | None = None) -> None:
         super().__init__()
         cfg = config or {}
+        if cfg.get("use_film", False):
+            raise ValueError(
+                "DeepLabV3 does not support use_film=True; "
+                "expected use_film=False."
+            )
         self.n_points = int(n_points)
         max_allowed_k = validate_common_model_config(cfg, self.n_points)
 
