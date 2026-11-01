@@ -47,8 +47,8 @@ class TestPreprocessing(unittest.TestCase):
             },
             {
                 "spectrum_index": 2,
-                "tool": "J4",
-                "target_tool": "J5",
+                "tool": "J5",
+                "target_tool": "J4",
                 "measurement_id": "M2",
                 "die": 1,
                 "region": "Al2p",
@@ -124,7 +124,7 @@ class TestPreprocessing(unittest.TestCase):
         self.assertIn("source_tool_index", df_out.columns)
         self.assertNotIn("target_tool_index", df_out.columns)
         self.assertNotIn("time_standardized", df_out.columns)
-        self.assertEqual(len(tool_map), 1)
+        self.assertEqual(len(tool_map), 2)
 
     def test_preprocess_missing_required_columns(self) -> None:
         """Verify ValueError is raised when required columns are missing."""
