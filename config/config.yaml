@@ -1,22 +1,6 @@
 # yaml-language-server: $schema=config.schema.json
-# Pipeline and material configuration for GGRD-SP
+# Pipeline configuration for GGRD-SP
 
-materials:
-  NMG:
-    elements:
-      - Ti
-      - Al
-      - C
-      - O
-      - Cl
-      - Si
-  PMG:
-    elements:
-      - Ti
-      - N
-      - O
-      - Cl
-      - Si
 
 global:
   material: "NMG"
@@ -188,6 +172,8 @@ noise_plot:
 # dedicated config files under config/ (e.g., config/resnet.yaml, config/inception_time.yaml).
 # Specific keys can be overridden here if needed.
 film: {}
+
+shortcut_film: {}
 
 bayesian_opt: {}
 

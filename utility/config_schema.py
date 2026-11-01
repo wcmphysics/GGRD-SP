@@ -14,13 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 import yaml
 
 
-class MaterialSpec(BaseModel):
-    """Specification of chemical elements in a specimen material."""
-
-    elements: list[str] = Field(..., min_length=1)
-    model_config = ConfigDict(extra="allow")
-
-
 class GlobalConfig(BaseModel):
     """Global experiment and pipeline execution parameters."""
 
@@ -329,14 +322,25 @@ class FiLMConfig(BaseModel):
     encode_region: bool = True
     encode_relative_intensity: bool = True
     encode_elements: bool = True
-    region_embed_dim: int = Field(4, gt=0)
     energy_scale_ev: float = Field(1000.0, gt=0.0)
-    die_embed_dim: int = Field(4, gt=0)
-    tool_embed_dim: int = Field(4, gt=0)
+    hidden_dim: int = Field(32, gt=0)
+    model_config = ConfigDict(extra="allow")
+
+
+class ShortcutFiLMConfig(BaseModel):
+    """FiLM configuration dedicated to ResNetScaledShort1D shortcut scaling."""
+
+    encode_die: bool = True
+    encode_tool: bool = True
+    encode_flux: bool = True
+    encode_time: bool = True
+    encode_energy: bool = False
+    encode_region: bool = True
+    encode_relative_intensity: bool = True
+    encode_elements: bool = True
+    energy_scale_ev: float = Field(1000.0, gt=0.0)
     hidden_dim: int = Field(32, gt=0)
     relative_learning_rate: float = Field(0.1, gt=0.0)
-    material_elements: dict[str, list[str]] | None = None
-    element_vocab: list[str] | None = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -499,7 +503,6 @@ class VisualizationConfig(BaseModel):
 class PipelineConfig(BaseModel):
     """Root configuration schema for the GGRD-SP spectral transfer pipeline."""
 
-    materials: dict[str, MaterialSpec] = Field(..., min_length=1)
     global_: GlobalConfig = Field(default_factory=GlobalConfig, alias="global")
     data_generation: DataGenerationConfig
     pairing: PairingConfig = Field(default_factory=PairingConfig)
@@ -512,6 +515,7 @@ class PipelineConfig(BaseModel):
     denoise: DenoiseConfig = Field(default_factory=DenoiseConfig)
     noise_plot: NoisePlotConfig = Field(default_factory=NoisePlotConfig)
     film: FiLMConfig = Field(default_factory=FiLMConfig)
+    shortcut_film: ShortcutFiLMConfig = Field(default_factory=ShortcutFiLMConfig)
     bayesian_opt: BayesianOptConfig = Field(default_factory=BayesianOptConfig)
     training: TrainingSectionConfig = Field(default_factory=TrainingSectionConfig)
     prediction: PredictionConfig = Field(default_factory=PredictionConfig)
@@ -587,7 +591,6 @@ __all__ = [
     "FiLMConfig",
     "GlobalConfig",
     "GPFluxConfig",
-    "MaterialSpec",
     "MetricsReportConfig",
     "NO_SLIDING_WINDOW_MODEL_TYPES",
     "NoiseAnalysisConfig",
@@ -597,6 +600,7 @@ __all__ = [
     "PredictionConfig",
     "QuantificationConfig",
     "ShirleyGenerationConfig",
+    "ShortcutFiLMConfig",
     "SplittingConfig",
     "TrainingSectionConfig",
     "VisualizationConfig",

@@ -43,9 +43,17 @@ film:
   encode_region: true
   encode_relative_intensity: true
   encode_elements: true
-  region_embed_dim: 4
   energy_scale_ev: 1000.0
-  die_embed_dim: 4
-  tool_embed_dim: 4
+  hidden_dim: 32
+
+shortcut_film:
+  encode_die: true
+  encode_tool: true
+  encode_flux: true
+  encode_time: true
+  encode_energy: false
+  encode_region: true
+  encode_relative_intensity: true
+  encode_elements: true
   hidden_dim: 32
   relative_learning_rate: 0.1

@@ -30,7 +30,6 @@ class TestConfigSchema(unittest.TestCase):
         cfg = PipelineConfig.from_yaml(config_path)
 
         self.assertIsInstance(cfg, PipelineConfig)
-        self.assertIn("NMG", cfg.materials)
         self.assertEqual(cfg.global_.source_tool, "J4")
         self.assertEqual(cfg.global_.target_tool, "J5")
 
@@ -51,7 +50,6 @@ class TestConfigSchema(unittest.TestCase):
 
             self.assertEqual(schema_data.get("title"), "PipelineConfig")
             self.assertIn("properties", schema_data)
-            self.assertIn("materials", schema_data["properties"])
             self.assertIn("global", schema_data["properties"])
 
     def test_kernel_size_odd_validation(self) -> None:
@@ -150,30 +148,13 @@ class TestConfigSchema(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PipelineConfig.model_validate(raw_data)
 
-    def test_empty_materials_rejected(self) -> None:
-        """Verify empty materials dictionary is rejected."""
-        with open("config/config.yaml", "r", encoding="utf-8") as f:
-            raw_data: dict[str, Any] = yaml.safe_load(f)
-
-        raw_data["materials"] = {}
-        with self.assertRaises(ValidationError):
-            PipelineConfig.model_validate(raw_data)
-
-    def test_empty_material_elements_rejected(self) -> None:
-        """Verify material with empty elements list is rejected."""
-        with open("config/config.yaml", "r", encoding="utf-8") as f:
-            raw_data: dict[str, Any] = yaml.safe_load(f)
-
-        raw_data["materials"]["NMG"]["elements"] = []
-        with self.assertRaises(ValidationError):
-            PipelineConfig.model_validate(raw_data)
-
     def test_load_config_with_validation_success(self) -> None:
         """Verify load_config executes schema validation by default."""
         cfg = load_config("config/config.yaml", validate=True)
         self.assertIsInstance(cfg, dict)
         self.assertIn("global", cfg)
-        self.assertIn("material_elements", cfg["film"])
+        self.assertIn("film", cfg)
+        self.assertIn("shortcut_film", cfg)
 
     def test_load_config_validation_failure_on_corrupted_data(self) -> None:
         """Verify load_config raises ValidationError on invalid data."""

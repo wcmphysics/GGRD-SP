@@ -7,16 +7,14 @@ import unittest
 from pathlib import Path
 
 from utility.config_loader import (
-    extract_element_vocabulary,
     load_config,
-    load_material_elements,
     load_yaml,
     resolve_pipeline_config,
 )
 
 
 class TestConfigLoader(unittest.TestCase):
-    """Test suite for YAML loading and element vocabulary extraction."""
+    """Test suite for YAML loading and configuration resolution."""
 
     def test_load_yaml_missing_file_raises(self) -> None:
         """Verify FileNotFoundError is raised when file does not exist."""
@@ -47,43 +45,10 @@ class TestConfigLoader(unittest.TestCase):
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
-    def test_load_material_elements_valid(self) -> None:
-        """Verify proper extraction of material element lists."""
-        cfg = {
-            "materials": {
-                "NMG": {"elements": ["Ti", "Al", "C", "O", "Cl", "Si"]},
-                "PMG": {"elements": ["Ti", "N", "O", "Cl", "Si"]},
-            }
-        }
-        res = load_material_elements(cfg)
-        self.assertEqual(res["NMG"], ["Ti", "Al", "C", "O", "Cl", "Si"])
-        self.assertEqual(res["PMG"], ["Ti", "N", "O", "Cl", "Si"])
-
-    def test_extract_element_vocabulary_dynamic(self) -> None:
-        """Verify dynamic sorted vocabulary extraction supporting elements."""
-        materials = {
-            "MatA": ["Ti", "Al", "C", "O", "Cl", "Si", "Fe", "Cu"],
-            "MatB": ["Zn", "Mo", "W", "Ni", "Ta", "Hf", "Ti"],
-        }
-        vocab = extract_element_vocabulary(materials)
-        # Expected sorted unique set of 14 elements
-        expected = sorted([
-            "Al", "C", "Cl", "Cu", "Fe", "Hf", "Mo", "Ni", "O", "Si", "Ta",
-            "Ti", "W", "Zn"
-        ])
-        self.assertEqual(vocab, expected)
-        self.assertEqual(len(vocab), 14)
-
-    def test_extract_element_vocabulary_empty_raises(self) -> None:
-        """Verify ValueError is raised if materials dictionary is empty."""
-        with self.assertRaises(ValueError):
-            extract_element_vocabulary({})
-
     def test_load_config_pipeline(self) -> None:
         """Verify config.yaml loads with all required stages."""
         cfg = load_config("config/config.yaml")
         required_stages = [
-            "materials",
             "global",
             "data_generation",
             "pairing",
@@ -96,6 +61,7 @@ class TestConfigLoader(unittest.TestCase):
             "denoise",
             "noise_plot",
             "film",
+            "shortcut_film",
             "bayesian_opt",
             "training",
             "prediction",
@@ -104,24 +70,7 @@ class TestConfigLoader(unittest.TestCase):
         for stage in required_stages:
             self.assertIn(stage, cfg, f"Stage '{stage}' missing from default config.")
 
-        # Verify materials content
-        mat_elements = load_material_elements(cfg)
-        self.assertIn("NMG", mat_elements)
-        self.assertIn("PMG", mat_elements)
-        self.assertEqual(
-            mat_elements["NMG"], ["Ti", "Al", "C", "O", "Cl", "Si"]
-        )
-        self.assertEqual(
-            mat_elements["PMG"], ["Ti", "N", "O", "Cl", "Si"]
-        )
-
-        # Verify dynamic vocabulary
-        vocab = extract_element_vocabulary(mat_elements)
-        self.assertEqual(vocab, sorted(["Al", "C", "Cl", "N", "O", "Si", "Ti"]))
-
         # Verify resolve_pipeline_config resolution inside load_config
-        self.assertIn("material_elements", cfg["film"])
-        self.assertIn("element_vocab", cfg["film"])
         self.assertEqual(cfg["pairing"]["source_tool"], cfg["global"]["source_tool"])
         self.assertIs(cfg["training"]["film_config"], cfg["film"])
         self.assertIs(cfg["prediction"]["film_config"], cfg["film"])
@@ -129,9 +78,6 @@ class TestConfigLoader(unittest.TestCase):
     def test_resolve_pipeline_config_propagation_and_overrides(self) -> None:
         """Verify global defaults propagate and explicit overrides persist."""
         raw_cfg = {
-            "materials": {
-                "MatA": {"elements": ["Ti", "O"]},
-            },
             "global": {
                 "source_tool": "ToolA",
                 "target_tool": "ToolB",
@@ -169,8 +115,6 @@ class TestConfigLoader(unittest.TestCase):
             resolved["metrics_report"]["metrics"],
         )
         self.assertNotIn("peak_err%", resolved["metrics_report"]["metrics"])
-        # Element vocabulary and materials populated in film
-        self.assertEqual(resolved["film"]["element_vocab"], ["O", "Ti"])
         # Training and prediction share film_config reference
         self.assertIs(resolved["training"]["film_config"], resolved["film"])
         self.assertIs(resolved["prediction"]["film_config"], resolved["film"])

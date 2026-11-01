@@ -4,9 +4,7 @@
 from utility.config_loader import (
     MODEL_CONFIG_MAP,
     NO_SLIDING_WINDOW_MODEL_TYPES,
-    extract_element_vocabulary,
     load_config,
-    load_material_elements,
     load_yaml,
     merge_dedicated_model_config,
     resolve_pipeline_config,
@@ -60,8 +58,6 @@ __all__ = [
     # Config loading
     "PipelineConfig",
     "load_yaml",
-    "load_material_elements",
-    "extract_element_vocabulary",
     "load_config",
     "resolve_pipeline_config",
     "merge_dedicated_model_config",

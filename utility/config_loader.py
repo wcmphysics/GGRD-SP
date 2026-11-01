@@ -127,6 +127,9 @@ def merge_dedicated_model_config(
         raw_config, "bayesian_opt", model_raw.get("bayesian_opt")
     )
     _merge_subdict_defaults(raw_config, "film", model_raw.get("film"))
+    _merge_subdict_defaults(
+        raw_config, "shortcut_film", model_raw.get("shortcut_film")
+    )
 
 
 def load_material_elements(
@@ -338,6 +341,11 @@ def _inject_model_and_training_settings(
         film.setdefault("use_film", use_film)
         film.setdefault("num_regions", len(regions))
 
+    shortcut_film = resolved.setdefault("shortcut_film", {})
+    if isinstance(shortcut_film, dict):
+        shortcut_film.setdefault("use_film", use_film)
+        shortcut_film.setdefault("num_regions", len(regions))
+
     # Convert Bayesian optimization hyperparameter bounds to tuples.
     bo = resolved.setdefault("bayesian_opt", {})
     if isinstance(bo, dict):
@@ -355,6 +363,7 @@ def _inject_model_and_training_settings(
         training.setdefault("unified_model", unified_model)
         training.setdefault("use_film", film.get("use_film", use_film))
         training.setdefault("film_config", film)
+        training.setdefault("shortcut_film_config", shortcut_film)
         if isinstance(cost, dict) and "l2_weight" in cost:
             train_cfg = training.setdefault("train_config", {})
             if isinstance(train_cfg, dict):
@@ -365,6 +374,7 @@ def _inject_model_and_training_settings(
         prediction.setdefault("source_tool", source_tool)
         prediction.setdefault("target_tool", target_tool)
         prediction.setdefault("film_config", film)
+        prediction.setdefault("shortcut_film_config", shortcut_film)
 
 
 def _inject_evaluation_settings(
@@ -488,7 +498,6 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     """
     resolved = dict(config)
     merge_dedicated_model_config(resolved)
-    _resolve_materials_and_vocab(resolved)
 
     global_cfg = resolved.get("global", {})
     source_tool = str(global_cfg.get("source_tool", "J4"))
