@@ -85,7 +85,9 @@ def _extract_and_clamp_shortcut_gain(
         UserWarning,
         stacklevel=3,
     )
-    return torch.nn.functional.softplus(gamma_out)
+    return torch.where(
+        gamma_out >= 0.0, gamma_out, torch.nn.functional.softplus(gamma_out)
+    )
 
 
 class ResNet1D(nn.Module):

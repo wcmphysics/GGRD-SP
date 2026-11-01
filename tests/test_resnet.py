@@ -14,6 +14,7 @@ from models.bayesian_opt import optimize_model_hyperparameters
 from models.dataset import SpectrumPairDataset
 from models.inference import predict_spectra
 from models.resnet import REQUIRED_RESNET_KEYS, ResNet1D, ResNetScaledShort1D
+from models.resnet import _extract_and_clamp_shortcut_gain
 from models.trainer import instantiate_model, train_model_region
 
 _DEFAULT_RESNET_FIXED_CONFIG = {
@@ -196,6 +197,27 @@ class TestResNetScaledShort1DArchitecture(unittest.TestCase):
             with self.subTest(cond=invalid_cond):
                 with self.assertRaises(ValueError):
                     model(x, cond=invalid_cond)
+
+    def test_shortcut_gain_is_independent_of_batch_composition(self) -> None:
+        """Keep each gain and its gradient independent of neighboring gains."""
+        gains = torch.tensor([[1.0], [-1.0]], requires_grad=True)
+        with self.assertWarns(UserWarning):
+            corrected = _extract_and_clamp_shortcut_gain(
+                [(gains, torch.zeros_like(gains))]
+            )
+        corrected.sum().backward()
+        for index, value in enumerate((1.0, -1.0)):
+            with self.subTest(gain=value), warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                single = torch.tensor([[value]], requires_grad=True)
+                corrected_single = _extract_and_clamp_shortcut_gain(
+                    [(single, torch.zeros_like(single))]
+                )
+                corrected_single.sum().backward()
+                torch.testing.assert_close(corrected[index], corrected_single[0])
+                torch.testing.assert_close(gains.grad[index], single.grad[0])
+        self.assertEqual(corrected[0].item(), 1.0)
+        self.assertGreater(corrected[1].item(), 0.0)
 
     def test_shortcut_gain_identity_and_clamping(self) -> None:
         """Verify identity gain init and non-negative clamp with warning."""
