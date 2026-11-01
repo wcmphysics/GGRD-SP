@@ -130,6 +130,32 @@ class TestConfigLoader(unittest.TestCase):
             resolved["bayesian_opt"]["l2_bounds"], tuple
         )
 
+    def test_quantification_settings_reach_metrics_report(self) -> None:
+        """Forward nondefault quantification settings and preserve overrides."""
+        raw = load_yaml("config/config.yaml")
+        raw["global"]["material"] = "PMG"
+        raw["quantification"].update({
+            "default_endpoint_strategy": "direct",
+            "default_endpoint_average_ev": 0.5,
+            "max_iter": 7,
+            "tol": 0.02,
+            "region_endpoint_config": {
+                "Ti2p": {"strategy": "direct", "energy_endpoints": [450, 470]},
+            },
+        })
+        resolved = resolve_pipeline_config(raw)
+        self.assertEqual(
+            resolved["metrics_report"]["quantification_config"],
+            resolved["quantification"],
+        )
+
+        raw["metrics_report"]["quantification_config"]["tol"] = 0.03
+        resolved = resolve_pipeline_config(raw)
+        self.assertEqual(
+            resolved["metrics_report"]["quantification_config"]["tol"], 0.03
+        )
+        self.assertEqual(resolved["quantification"]["tol"], 0.02)
+
     def test_single_source_of_truth_propagation(self) -> None:
         """Verify global.use_film, global.material, and cost.l2_weight."""
         raw = load_yaml("config/config.yaml")

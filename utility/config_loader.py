@@ -458,10 +458,8 @@ def _inject_evaluation_settings(
         rsf_tbl = quant.get("rsf_table")
         if rsf_tbl and isinstance(denoise_cfg, dict):
             denoise_cfg.setdefault("rsf_table", rsf_tbl)
-        if rsf_tbl and isinstance(metrics_rep, dict):
-            metrics_quant = metrics_rep.setdefault("quantification_config", {})
-            if isinstance(metrics_quant, dict):
-                metrics_quant.setdefault("rsf_table", rsf_tbl)
+        if isinstance(metrics_rep, dict):
+            _merge_subdict_defaults(metrics_rep, "quantification_config", quant)
 
 
 def _resolve_materials_and_vocab(resolved: dict[str, Any]) -> None:
