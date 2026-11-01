@@ -108,6 +108,56 @@ def _resolve_device(
     return torch.device(dev)
 
 
+def _region_name(record: Any, index: int) -> str:
+    """Require an identifiable regional name for weighted sample metadata."""
+    region = record.get("region") if isinstance(record, dict) else None
+    if not isinstance(region, str) or not region.strip():
+        raise ValueError(
+            f"Regional loss weighting received metadata[{index}]={record!r}; "
+            "expected a record containing a nonempty string 'region'."
+        )
+    return region
+
+
+def _calculate_batch_loss(
+    criterion: SpectralLoss,
+    y_pred: torch.Tensor,
+    y_true: torch.Tensor,
+    context: dict[str, Any],
+) -> torch.Tensor:
+    """Pass regional context to the loss while retaining sample averaging."""
+    model = context.get("model")
+    max_val = context.get("max_val")
+    if not criterion.region_weights:
+        return criterion(y_pred, y_true, model=model, loss_context=max_val)
+
+    metadata = context.get("meta")
+    if isinstance(metadata, dict):
+        metadata = [metadata]
+    if not isinstance(metadata, list) or len(metadata) != len(y_pred):
+        raise ValueError(
+            f"Regional loss weighting received metadata {metadata!r}; "
+            f"expected one region record per sample ({len(y_pred)} records)."
+        )
+
+    # Group only the loss calculation; model batches remain unchanged.
+    indices_by_region: dict[str, list[int]] = {}
+    for index, record in enumerate(metadata):
+        region = _region_name(record, index)
+        indices_by_region.setdefault(region, []).append(index)
+    total_loss = y_pred.sum() * 0.0
+    for region, indices in indices_by_region.items():
+        loss_context = {
+            "region": region,
+            "max_val": max_val[indices] if isinstance(max_val, torch.Tensor) else None,
+        }
+        regional_loss = criterion(
+            y_pred[indices], y_true[indices], model=model, loss_context=loss_context
+        )
+        total_loss = total_loss + regional_loss * (len(indices) / len(y_pred))
+    return total_loss
+
+
 def _run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -129,8 +179,9 @@ def _run_epoch(
             if is_train:
                 optimizer.zero_grad()
             yp = model(x, cond=cond) if cond is not None else model(x)
-            loss = criterion(
-                yp, y, model=model if is_train else None, loss_context=max_v
+            loss = _calculate_batch_loss(
+                criterion, yp, y,
+                {"model": model if is_train else None, "max_val": max_v, "meta": batch.get("meta")},
             )
             if is_train:
                 loss.backward()
@@ -169,7 +220,7 @@ def train_one_epoch(
     Returns
     -------
     float
-        Average training loss across all batches.
+        Sample-weighted average training loss.
     """
     cfg = config or {}
     opt = optimizer or cfg.get("optimizer")
@@ -207,7 +258,7 @@ def evaluate(
     Returns
     -------
     float
-        Average validation loss across all batches.
+        Sample-weighted average validation loss.
     """
     return _run_epoch(
         model, loader, criterion, {"device": _resolve_device(model, config)}
@@ -348,7 +399,9 @@ def _evaluate_sliding_window_sample_by_sample(
         yt = torch.as_tensor(
             item["y"], dtype=torch.float32, device=device
         ).view(1, 1, -1)
-        total += criterion(yp, yt, model=None).item()
+        total += _calculate_batch_loss(
+            criterion, yp, yt, {"meta": item.get("meta")}
+        ).item()
     return total / len(full_val_dataset)
 
 
@@ -452,7 +505,11 @@ def evaluate_sliding_window(
         batch_size=eval_batch_size,
     )
     val_y_dev = val_y.to(device=device, dtype=recon.dtype)
-    loss = crit(recon, val_y_dev, model=None).item()
+    metadata = (
+        [full_val_dataset[index].get("meta") for index in range(len(full_val_dataset))]
+        if crit.region_weights else None
+    )
+    loss = _calculate_batch_loss(crit, recon, val_y_dev, {"meta": metadata}).item()
     return float(loss)
 
 
