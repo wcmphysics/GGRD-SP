@@ -225,7 +225,9 @@ class TestResNetScaledShort1DArchitecture(unittest.TestCase):
             )
 
     def test_film_layer_toggles_and_energy_isolation(self) -> None:
-        """Verify film_internal_layers toggle and energy encoding isolation."""
+        """Verify film_internal_layers toggle and regional energy bounds on
+        shortcut.
+        """
         # film_internal_layers=False disables internal FiLM, keeps shortcut FiLM
         model_no_internal = ResNetScaledShort1D(
             30,
@@ -239,7 +241,7 @@ class TestResNetScaledShort1DArchitecture(unittest.TestCase):
         )
         self.assertIsNone(model_no_internal.film_gen)
         self.assertIsNotNone(model_no_internal.shortcut_film_gen)
-        self.assertFalse(model_no_internal.shortcut_film_gen.encode_energy)
+        self.assertTrue(model_no_internal.shortcut_film_gen.encode_energy)
 
         # film_internal_layers=True keeps internal FiLM with energy enabled
         model_internal = ResNetScaledShort1D(
@@ -253,7 +255,7 @@ class TestResNetScaledShort1DArchitecture(unittest.TestCase):
             },
         )
         self.assertTrue(model_internal.film_gen.encode_energy)
-        self.assertFalse(model_internal.shortcut_film_gen.encode_energy)
+        self.assertTrue(model_internal.shortcut_film_gen.encode_energy)
 
 
 class TestResNetPipelineIntegration(unittest.TestCase):
@@ -328,6 +330,21 @@ class TestResNetPipelineIntegration(unittest.TestCase):
         )
         self.assertEqual(predicted_intensity.shape, (8, self.n_pts))
         self.assertEqual(len(predicted_dataframe), 8)
+
+        # Test predict_spectra with sliding window enabled and FiLM
+        pred_sw_i, pred_sw_e, pred_sw_df = predict_spectra(
+            models={"Al2p": res["model"]},
+            data=(self.x_raw, self.energy_arr, self.meta_df),
+            config={
+                "source_tool": "J4",
+                "target_tool": "H1",
+                "use_sliding_window": True,
+                "window_size": 16,
+                "stride": 8,
+            },
+        )
+        self.assertEqual(pred_sw_i.shape, (8, self.n_pts))
+        self.assertEqual(len(pred_sw_df), 8)
 
     def test_ax_bayesian_optimization_integration(self) -> None:
         """Verify Ax Bayesian optimization searches ResNet hyperparameter space.

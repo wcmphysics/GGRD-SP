@@ -37,7 +37,6 @@ def predict_sliding_window_spectrum(
     config: dict[str, Any] | None = None,
     cond: dict[str, torch.Tensor] | None = None,
     energy: np.ndarray | torch.Tensor | None = None,
-    shortcut_cond: dict[str, torch.Tensor] | None = None,
 ) -> np.ndarray:
     """Transform a full 1D spectrum using a trained sliding window
     patch model.
@@ -55,7 +54,7 @@ def predict_sliding_window_spectrum(
     windows, start_indices = extract_sliding_windows(
         spectrum_1d, window_size=w_size, stride=s_step
     )
-    film_gen = getattr(model, "film_gen", None)
+    film_gen = getattr(model, "film_gen", None) or getattr(model, "shortcut_film_gen", None)
     encode_energy = bool(getattr(film_gen, "encode_energy", False))
     energy_scale_ev = float(getattr(model, "energy_scale_ev", 1000.0))
 
@@ -75,11 +74,6 @@ def predict_sliding_window_spectrum(
                 windows[i : i + bs], dtype=torch.float32, device=device
             ).unsqueeze(1)
             b_cond = _repeat_cond(cond, len(b_wins)) if cond is not None else None
-            b_sc = (
-                _repeat_cond(shortcut_cond, len(b_wins))
-                if shortcut_cond is not None
-                else None
-            )
             if b_cond is not None and encode_energy:
                 if energy_np is not None:
                     bounds = [
@@ -91,20 +85,22 @@ def predict_sliding_window_spectrum(
                         ]
                         for s in start_indices[i : i + bs]
                     ]
+                    reg_bounds = [
+                        [float(energy_np[0]), float(energy_np[-1])]
+                    ] * len(b_wins)
                 else:
                     bounds = [[0.0, 0.0]] * len(b_wins)
+                    reg_bounds = [[0.0, 0.0]] * len(b_wins)
                 scale_floor = max(energy_scale_ev, 1e-6)
-                scaled_b = (
+                b_cond["energy_bounds"] = (
                     torch.tensor(bounds, dtype=torch.float32, device=device)
                     / scale_floor
                 )
-                b_cond["energy_bounds"] = scaled_b
-            if hasattr(model, "shortcut_film_gen") and model.shortcut_film_gen is not None:
-                out = model(b_wins, cond=b_cond, shortcut_cond=b_sc)
-            elif b_cond is not None:
-                out = model(b_wins, cond=b_cond)
-            else:
-                out = model(b_wins)
+                b_cond["region_energy_bounds"] = (
+                    torch.tensor(reg_bounds, dtype=torch.float32, device=device)
+                    / scale_floor
+                )
+            out = model(b_wins, cond=b_cond) if b_cond is not None else model(b_wins)
             patches.append(out.squeeze(1).cpu().numpy())
 
     recon = reconstruct_from_patches(
@@ -357,14 +353,13 @@ def _extract_film_condition(
     dev: torch.device,
     cfg: dict[str, Any],
     energy_bounds: torch.Tensor | np.ndarray | None = None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Extract independent FiLM condition dictionaries for film_gen and
-    shortcut_film_gen.
-    """
+) -> dict[str, torch.Tensor] | None:
+    """Extract unified FiLM condition dictionary for model conditioning."""
     if not getattr(m, "use_film", False):
-        return None, None
-    film_gen = getattr(m, "film_gen", None)
-    shortcut_film_gen = getattr(m, "shortcut_film_gen", None)
+        return None
+    film_gen = getattr(m, "film_gen", None) or getattr(m, "shortcut_film_gen", None)
+    if film_gen is None:
+        return None
 
     # Use target_tool_one_hot from sub_df or derive from tool_index_mapping
     # if missing.
@@ -385,31 +380,16 @@ def _extract_film_condition(
             r_copy["target_tool_one_hot"] = vec
         records.append(r_copy)
 
-    cond = (
-        film_gen.prepare_condition_tensor(
-            metadata=records,
-            device=dev,
-            energy_bounds=energy_bounds,
-            energy_scale_ev=float(getattr(m, "energy_scale_ev", 1000.0)),
-            extra_config={"num_samples": len(records)},
-        )
-        if film_gen is not None
-        else None
-    )
+    if energy_bounds is None and getattr(film_gen, "encode_energy", False):
+        energy_bounds = np.zeros((len(records), 2), dtype=np.float32)
 
-    shortcut_cond = (
-        shortcut_film_gen.prepare_condition_tensor(
-            metadata=records,
-            device=dev,
-            energy_bounds=None,
-            energy_scale_ev=float(getattr(m, "energy_scale_ev", 1000.0)),
-            extra_config={"num_samples": len(records)},
-        )
-        if shortcut_film_gen is not None
-        else None
+    return film_gen.prepare_condition_tensor(
+        metadata=records,
+        device=dev,
+        energy_bounds=energy_bounds,
+        energy_scale_ev=float(getattr(m, "energy_scale_ev", 1000.0)),
+        extra_config={"num_samples": len(records)},
     )
-
-    return cond, shortcut_cond
 
 
 def _filter_source_metadata(
@@ -480,20 +460,30 @@ def _predict_sliding_window_region(
     # Predict sliding window spectra for each sample and stack horizontally.
     rows = []
     for i, x_s in enumerate(region_x):
-        c, sc = _extract_film_condition(
-            m_obj, group.iloc[i : i + 1], target_tool, m_dev, cfg
+        cur_e = (
+            energy_arr[orig_indices[i]]
+            if energy_arr is not None
+            else None
+        )
+        sample_bounds = (
+            np.array([[float(cur_e[0]), float(cur_e[-1])]], dtype=np.float32)
+            if cur_e is not None
+            else None
+        )
+        c = _extract_film_condition(
+            m_obj,
+            group.iloc[i : i + 1],
+            target_tool,
+            m_dev,
+            cfg,
+            energy_bounds=sample_bounds,
         )
         row_pred = predict_sliding_window_spectrum(
             m_obj,
             x_s,
             config=sw_cfg,
             cond=c,
-            energy=(
-                energy_arr[orig_indices[i]]
-                if energy_arr is not None
-                else None
-            ),
-            shortcut_cond=sc,
+            energy=cur_e,
         )
         rows.append(row_pred)
     return np.vstack(rows)
@@ -533,7 +523,7 @@ def _predict_full_spectrum_region(
             batch_orig = orig_indices[i : i + batch_size]
             batch_e = ary_energy[batch_orig]
             bounds = np.column_stack([batch_e[:, 0], batch_e[:, -1]])
-            cond, shortcut_cond = _extract_film_condition(
+            cond = _extract_film_condition(
                 model_entry,
                 group.iloc[i : i + batch_size],
                 target_tool,
@@ -541,12 +531,7 @@ def _predict_full_spectrum_region(
                 config_dict,
                 energy_bounds=bounds,
             )
-            if hasattr(model_entry, "shortcut_film_gen") and model_entry.shortcut_film_gen is not None:
-                out = model_entry(bx, cond=cond, shortcut_cond=shortcut_cond)
-            elif cond is not None:
-                out = model_entry(bx, cond=cond)
-            else:
-                out = model_entry(bx)
+            out = model_entry(bx, cond=cond) if cond is not None else model_entry(bx)
             preds.append(out.squeeze(1).cpu().numpy())
     return np.vstack(preds)
 

@@ -181,7 +181,7 @@ def preprocess(
         "tool_index_mapping": tool_index_mapping,
         "die_index_mapping": die_index_mapping,
     }
-    for sec_key in ("training", "prediction", "film", "shortcut_film"):
+    for sec_key in ("training", "prediction", "film"):
         if sec_key in cfg and isinstance(cfg[sec_key], dict):
             cfg[sec_key].update(film_updates)
 

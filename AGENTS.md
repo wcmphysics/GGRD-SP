@@ -124,7 +124,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
 
 - **FiLM** (`global.use_film`): `h' = γ(c)·h + β(c)`.
   - The condition `c` contains: die index, source/target tool index, `time_standardized`, standardized source die flux, region index, relative intensity, energy bounds / `energy_scale_ev`, and a material element multi-hot vector. None of these may leak target information.
-  - Energy bounds: conv blocks encode the window bounds when sliding window is on and the regional bounds when it's off. The scaled-shortcut FiLM always uses `encode_energy: false`, so the tool scaling is the same for every window.
+  - Energy bounds: conv blocks encode the window bounds when sliding window is on and the regional bounds when it's off. The scaled-shortcut FiLM always encodes the regional energy bounds of the fed spectrum, remaining fixed across moving sliding windows.
 - **Search space:** learning rate, L2 weight, batch size, kernel size, channels, depth, and (if sliding window is on) window and stride.
 
 ### 10. Prediction

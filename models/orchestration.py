@@ -294,7 +294,6 @@ def perform_model_training_and_bayesian_optimization(
     )
     verbose = bool(pipeline_config.get("verbose", False))
     film_cfg = dict(pipeline_config.get("film_config") or {})
-    shortcut_film_cfg = dict(pipeline_config.get("shortcut_film_config") or {})
 
     trained_models: dict[str, Any] = {}
     val_evaluation_results: dict[str, float] = {}
@@ -369,7 +368,6 @@ def perform_model_training_and_bayesian_optimization(
 
         for k, v in film_cfg.items():
             region_train_config.setdefault(k, v)
-        region_train_config.setdefault("shortcut_film_config", shortcut_film_cfg)
         region_train_config.update(
             {
                 "model_type": region_model_type,

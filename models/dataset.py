@@ -106,6 +106,7 @@ class SpectrumPatchDataset(Dataset):
         max_vals_list: list[float] = []
         meta_list: list[dict[str, Any]] = []
         energy_bounds_list: list[list[float]] = []
+        region_energy_bounds_list: list[list[float]] = []
 
         for idx in range(len(full_dataset)):
             item = full_dataset[idx]
@@ -142,12 +143,15 @@ class SpectrumPatchDataset(Dataset):
                     if isinstance(e_tensor, torch.Tensor)
                     else np.asarray(e_tensor).ravel()
                 )
+                reg_b = [float(e_arr[0]), float(e_arr[-1])]
+                region_energy_bounds_list.extend([reg_b] * n_win)
                 for s in start_indices:
                     end_idx = min(s + window_size - 1, len(e_arr) - 1)
                     energy_bounds_list.append(
                         [float(e_arr[s]), float(e_arr[end_idx])]
                     )
             else:
+                region_energy_bounds_list.extend([[0.0, 0.0]] * n_win)
                 energy_bounds_list.extend([[0.0, 0.0]] * n_win)
 
         if not patch_indices:
@@ -160,6 +164,9 @@ class SpectrumPatchDataset(Dataset):
         self.meta_list = meta_list
         self.energy_bounds = torch.tensor(
             energy_bounds_list, dtype=torch.float32
+        )
+        self.region_energy_bounds = torch.tensor(
+            region_energy_bounds_list, dtype=torch.float32
         )
 
     def __len__(self) -> int:
@@ -248,6 +255,9 @@ class SpectrumPatchDataset(Dataset):
         merged.energy_bounds = torch.cat(
             [d.energy_bounds for d in datasets], dim=0
         )
+        merged.region_energy_bounds = torch.cat(
+            [d.region_energy_bounds for d in datasets], dim=0
+        )
         merged.meta_list = [m for d in datasets for m in d.meta_list]
         return merged
 
@@ -259,6 +269,7 @@ class SpectrumPatchDataset(Dataset):
             "y": item["y"][..., s:e],
             "max_val": self.max_vals[idx],
             "energy_bounds": self.energy_bounds[idx],
+            "region_energy_bounds": self.region_energy_bounds[idx],
         }
         if self.meta_list and idx < len(self.meta_list):
             ret["meta"] = self.meta_list[idx]

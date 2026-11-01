@@ -67,21 +67,6 @@ def _build_hidden_conv_and_norm_layers(
     return hidden_convs, hidden_bns
 
 
-def _build_shortcut_film_config(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Build dedicated FiLM configuration for the scaled shortcut connection.
-
-    Uses 'shortcut_film_config' if present in cfg, otherwise falls back to cfg,
-    forcing sliding window and energy bound encoding off so shortcut scaling 
-    reflects global tool attributes.
-    """
-    sc_base = dict(cfg.get("shortcut_film_config", cfg))
-    # Propagate shared dimension counts from parent cfg if not present
-    for k in ("num_dies", "num_tools", "num_regions", "num_elements"):
-        if k in cfg and k not in sc_base:
-            sc_base[k] = cfg[k]
-    return {**sc_base, "use_sliding_window": False, "encode_energy": False}
-
-
 def _extract_and_clamp_shortcut_gain(
     shortcut_mods: list[tuple[torch.Tensor, torch.Tensor]],
 ) -> torch.Tensor:
@@ -284,8 +269,7 @@ class ResNetScaledShort1D(ResNet1D):
         if not self.film_internal_layers:
             self.film_gen = None
 
-        shortcut_cfg = _build_shortcut_film_config(cfg)
-        self.shortcut_film_gen = FiLMGenerator([1], config=shortcut_cfg)
+        self.shortcut_film_gen = FiLMGenerator([1], config=cfg)
 
     def forward(
         self,
@@ -302,10 +286,10 @@ class ResNetScaledShort1D(ResNet1D):
             Input spectral tensor of shape
             (batch_size, 1, n_points_generalized).
         cond : dict[str, torch.Tensor] | torch.Tensor | None, optional
-            Metadata conditioning features dictionary for internal layers.
+            Metadata conditioning features dictionary.
         shortcut_cond : dict[str, torch.Tensor] | None, optional
-            Independent conditioning features dictionary for shortcut FiLM.
-            If None, falls back to cond.
+            Optional explicit conditioning dictionary for shortcut FiLM.
+            If None, defaults to cond with regional energy bounds applied.
 
         Returns
         -------
@@ -316,16 +300,24 @@ class ResNetScaledShort1D(ResNet1D):
         Raises
         ------
         ValueError
-            If x is not a 3D tensor or shortcut conditioning is missing.
+            If x is not a 3D tensor or conditioning is missing.
         """
         validate_3d_spectrum_tensor(x)
-        effective_shortcut_cond = shortcut_cond if shortcut_cond is not None else cond
-        if effective_shortcut_cond is None or not isinstance(effective_shortcut_cond, dict):
-            got_type = type(effective_shortcut_cond).__name__ if effective_shortcut_cond is not None else "None"
+        if cond is None or not isinstance(cond, dict):
+            got_type = type(cond).__name__ if cond is not None else "None"
             raise ValueError(
                 "ResNetScaledShort1D requires a metadata conditioning dictionary "
-                f"'shortcut_cond', got {got_type}."
+                f"'cond', got {got_type}."
             )
+
+        if shortcut_cond is not None:
+            effective_shortcut_cond = shortcut_cond
+        elif "region_energy_bounds" in cond and self.shortcut_film_gen.encode_energy:
+            # Regional energy bound is fixed for shortcut FiLM across windows
+            effective_shortcut_cond = dict(cond)
+            effective_shortcut_cond["energy_bounds"] = cond["region_energy_bounds"]
+        else:
+            effective_shortcut_cond = cond
 
         shortcut_mods = self.shortcut_film_gen(effective_shortcut_cond)
         gamma_out = _extract_and_clamp_shortcut_gain(shortcut_mods)
