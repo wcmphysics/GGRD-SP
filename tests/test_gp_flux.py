@@ -61,6 +61,14 @@ class TestSigmoidStepKernel(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_cross_covariance_diagonal_uses_both_inputs(self) -> None:
+        """Match cross-covariance diagonals for distinct input sets."""
+        kern = SigmoidStepKernel(step_time=4.0, steepness=1.5)
+        x1 = torch.tensor([[2.0], [4.0], [6.0]])
+        x2 = torch.tensor([[4.0], [6.0], [8.0]])
+        expected = torch.diagonal(kern(x1, x2).to_dense())
+        torch.testing.assert_close(kern(x1, x2, diag=True), expected)
+
     def test_learnable_step_time_toggle(self) -> None:
         """Verify learn_step_time flag toggles Parameter vs Buffer."""
         kern_learn = SigmoidStepKernel(learn_step_time=True)

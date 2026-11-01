@@ -79,9 +79,9 @@ class SigmoidStepKernel(gpytorch.kernels.Kernel):
         """Compute sigmoid step covariance matrix between x1 and x2."""
         del params
         s1 = torch.sigmoid(self.steepness * (x1 - self.step_time))
-        if diag:
-            return (s1**2).squeeze(-1)
         s2 = torch.sigmoid(self.steepness * (x2 - self.step_time))
+        if diag:
+            return (s1 * s2).squeeze(-1)
         return torch.matmul(s1, s2.transpose(-1, -2))
 
 
