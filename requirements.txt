@@ -7,3 +7,9 @@ ax-platform
 PyQt6
 gpytorch
 tqdm
+matplotlib
+scipy
+pydantic
+PyYAML
+PyWavelets
+linear-operator
