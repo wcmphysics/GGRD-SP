@@ -27,10 +27,11 @@ def plot_fourier_comparison(data: tuple, config: dict) -> None:
     raw = intensity[index, :num_points]
     energies = energy[index, :num_points]
     frequencies = np.arange(len(raw)) / max(len(raw) - 1, 1)
+    physical_frequencies = np.arange(len(raw)) / len(raw)
     coefficients = np.abs(dct(raw, type=2, norm="ortho"))
     figure, axes = plt.subplots(1, 2, figsize=(13, 5), constrained_layout=True)
     coefficient_axis = axes[0].twinx()
-    coefficient_axis.plot(frequencies, coefficients, color="0.7", alpha=0.7,
+    coefficient_axis.plot(physical_frequencies, coefficients, color="0.7", alpha=0.7,
                           label="DCT magnitude")
     axes[1].plot(energies, raw, color="black", alpha=0.6, label="Raw")
 
@@ -41,13 +42,15 @@ def plot_fourier_comparison(data: tuple, config: dict) -> None:
         kind = settings["filter_type"]
         if kind == "dct":
             response = 1 / (1 + (frequencies / cutoff) ** (2 * order))
+            marker = cutoff * (len(raw) - 1) / len(raw)
         else:
             numerator, denominator = butter(order, cutoff)
-            _, transfer = freqz(numerator, denominator, worN=frequencies * np.pi)
+            _, transfer = freqz(numerator, denominator, worN=physical_frequencies * np.pi)
             response = np.abs(transfer) ** 2
+            marker = cutoff
         label = f"{kind}: cutoff={cutoff:g}, order={order}"
-        line, = axes[0].plot(frequencies, response, label=label)
-        axes[0].axvline(cutoff, color=line.get_color(), linestyle=":", alpha=0.6)
+        line, = axes[0].plot(physical_frequencies, response, label=label)
+        axes[0].axvline(marker, color=line.get_color(), linestyle=":", alpha=0.6)
         filtered, _, _ = denoise_spectrum_fourier(energies, raw, settings)
         axes[1].plot(energies, filtered, color=line.get_color(), label=label)
     axes[0].set(title="Gain (Butterworth ignores edge effects)",
