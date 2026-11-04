@@ -410,6 +410,17 @@
         "fourier": {
           "$ref": "#/$defs/DenoiseFourierConfig"
         },
+        "fourier_comparison": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FourierComparisonConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "gp": {
           "$ref": "#/$defs/DenoiseGPConfig"
         },
@@ -644,6 +655,93 @@
         }
       },
       "title": "FiLMConfig",
+      "type": "object"
+    },
+    "FourierComparisonConfig": {
+      "description": "Settings for the standalone Fourier comparison.",
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "spectrum": {
+          "$ref": "#/$defs/FourierComparisonSpectrumConfig"
+        },
+        "output_path": {
+          "title": "Output Path",
+          "type": "string"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/FourierComparisonFilterConfig"
+          },
+          "minItems": 1,
+          "title": "Filters",
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "spectrum",
+        "output_path",
+        "filters"
+      ],
+      "title": "FourierComparisonConfig",
+      "type": "object"
+    },
+    "FourierComparisonFilterConfig": {
+      "description": "One filter shown in the Fourier comparison.",
+      "properties": {
+        "filter_type": {
+          "enum": [
+            "dct",
+            "butterworth"
+          ],
+          "title": "Filter Type",
+          "type": "string"
+        },
+        "cutoff_ratio": {
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Cutoff Ratio",
+          "type": "number"
+        },
+        "filter_order": {
+          "minimum": 1,
+          "title": "Filter Order",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "filter_type",
+        "cutoff_ratio",
+        "filter_order"
+      ],
+      "title": "FourierComparisonFilterConfig",
+      "type": "object"
+    },
+    "FourierComparisonSpectrumConfig": {
+      "description": "Identify a spectrum for the Fourier comparison.",
+      "properties": {
+        "measurement_id": {
+          "title": "Measurement Id",
+          "type": "string"
+        },
+        "die": {
+          "title": "Die",
+          "type": "integer"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string"
+        }
+      },
+      "required": [
+        "measurement_id",
+        "die",
+        "region"
+      ],
+      "title": "FourierComparisonSpectrumConfig",
       "type": "object"
     },
     "GPFluxConfig": {

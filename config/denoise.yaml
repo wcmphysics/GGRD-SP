@@ -5,6 +5,16 @@ denoise:
     - "Cl2p"
     - "Ti2p"
   apply_to: "both"
+  fourier_comparison:
+    enabled: false
+    spectrum:
+      measurement_id: "NMG_M_J4_00000"
+      die: 0
+      region: "Cl2p"
+    output_path: "tmp/fourier_comparison.png"
+    filters:
+      - {filter_type: "dct", cutoff_ratio: 0.25, filter_order: 4}
+      - {filter_type: "butterworth", cutoff_ratio: 0.25, filter_order: 4}
   savgol:
     window_length: 11
     polynomial_order: 3

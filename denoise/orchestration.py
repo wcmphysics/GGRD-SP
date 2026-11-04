@@ -302,6 +302,7 @@ def get_default_denoise_config() -> dict[str, Any]:
         "savgol": get_default_savgol_config(),
         "wavelet": get_default_wavelet_config(),
         "fourier": get_default_fourier_config(),
+        "fourier_comparison": {},
         "gp": get_default_gp_denoise_config(),
         "region_configs": {},
     }

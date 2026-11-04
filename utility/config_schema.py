@@ -295,6 +295,31 @@ class DenoiseFourierConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class FourierComparisonFilterConfig(BaseModel):
+    """One filter shown in the Fourier comparison."""
+
+    filter_type: Literal["dct", "butterworth"]
+    cutoff_ratio: float = Field(gt=0.0, lt=1.0)
+    filter_order: int = Field(ge=1)
+
+
+class FourierComparisonSpectrumConfig(BaseModel):
+    """Identify a spectrum for the Fourier comparison."""
+
+    measurement_id: str
+    die: int
+    region: str
+
+
+class FourierComparisonConfig(BaseModel):
+    """Settings for the standalone Fourier comparison."""
+
+    enabled: bool
+    spectrum: FourierComparisonSpectrumConfig
+    output_path: str
+    filters: list[FourierComparisonFilterConfig] = Field(min_length=1)
+
+
 class DenoiseGPConfig(BaseModel):
     """Gaussian process filtering hyperparameters."""
 
@@ -314,6 +339,7 @@ class DenoiseConfig(BaseModel):
     savgol: DenoiseSavgolConfig = Field(default_factory=DenoiseSavgolConfig)
     wavelet: DenoiseWaveletConfig = Field(default_factory=DenoiseWaveletConfig)
     fourier: DenoiseFourierConfig = Field(default_factory=DenoiseFourierConfig)
+    fourier_comparison: FourierComparisonConfig | None = None
     gp: DenoiseGPConfig = Field(default_factory=DenoiseGPConfig)
     region_configs: dict[str, Any] = Field(default_factory=dict)
     rsf_table: dict[str, float] | None = None
