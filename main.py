@@ -29,6 +29,7 @@ import models
 import utility
 import visualization
 from denoise.denoise_comparison import plot_denoise_comparison
+from visualization.plot_gp_flux_components import plot_gp_flux_kernel_contributions
 
 
 def main() -> None:
@@ -162,6 +163,16 @@ def main() -> None:
     )
     print("\nDie Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
+    if show_plots and config["visualization"]["show_plots"]:
+        flux_plots = config["visualization"]["plots"]
+        if flux_plots.get("gp_die_flux_timeline", False):
+            visualization.plot_gp_die_flux_timeline(gp_bundle, config["gp_flux"])
+        if flux_plots.get("gp_die_flux_kernel_contributions", False):
+            plot_gp_flux_kernel_contributions(gp_bundle, config["gp_flux"])
+        if flux_plots.get("gp_die_flux_timeline", False) or flux_plots.get(
+            "gp_die_flux_kernel_contributions", False
+        ):
+            plt.show()
 
     # =========================================================================
     # STAGE 7: DATASET AND DATALOADER DEFINITION (With Augmentation)

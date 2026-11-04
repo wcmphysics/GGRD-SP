@@ -30,7 +30,6 @@ from visualization.plot_spectral import (
 )
 from visualization.plot_timeline import (
     plot_flux_and_averaged_intensity_vs_time,
-    plot_gp_die_flux_timeline,
     plot_max_intensity_vs_time,
     plot_normalized_max_intensity_vs_time,
     plot_pairing_timeline,
@@ -38,7 +37,6 @@ from visualization.plot_timeline import (
 from visualization.plot_training import plot_training_history
 
 DEFAULT_PLOT_TOGGLES: dict[str, bool] = {
-    "gp_die_flux_timeline": True,
     "pairing_timeline": True,
     "flux_and_averaged_intensity": False,
     "max_intensity": False,
@@ -73,21 +71,6 @@ def _dispatch_timeline_plots(
     df_meta = pipeline_data.get("df_meta")
     ary_intensity = pipeline_data.get("ary_intensity")
     ary_energy = pipeline_data.get("ary_energy")
-
-    # Plot GP die flux timeline over measurement sessions.
-    if plot_toggles.get("gp_die_flux_timeline"):
-        gp_bundle = pipeline_data.get("gp_bundle") or pipeline_data.get(
-            "gp_die_flux_bundle"
-        )
-        gp_cfg = (
-            pipeline_data.get("gp_flux_config")
-            or pipeline_data.get("gp_flux")
-            or cfg.get("gp_flux_config")
-            or cfg.get("gp_flux")
-        )
-        if gp_bundle is not None and gp_cfg is not None:
-            plot_gp_die_flux_timeline(gp_bundle, gp_cfg)
-            rendered.append("gp_die_flux_timeline")
 
     # Plot tool-to-tool pairing timeline and delta-t intervals.
     if plot_toggles.get("pairing_timeline") and df_meta is not None:

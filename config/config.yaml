@@ -106,6 +106,7 @@ visualization:
   show_plots: true
   plots:
     gp_die_flux_timeline: false
+    gp_die_flux_kernel_contributions: false
     pairing_timeline: false
     flux_and_averaged_intensity: false
     max_intensity: false

@@ -27,6 +27,7 @@ from utility.pairing import pair_source_target_spectra
 from utility.pseudo_measurement import generate_pseudo_measurements
 from utility.splitting import split_measurement_sessions
 from visualization.plot_timeline import plot_gp_die_flux_timeline
+from visualization.plot_gp_flux_components import plot_gp_flux_kernel_contributions
 
 
 class TestSigmoidStepKernel(unittest.TestCase):
@@ -82,12 +83,25 @@ class TestSigmoidStepKernel(unittest.TestCase):
 class TestBuildCompositeKernel(unittest.TestCase):
     """Test suite for configurable kernel composition factory."""
 
+    def test_multiple_components_are_independent(self) -> None:
+        """Ensure each configured component has independent parameters."""
+        cfg = {
+            "time_continuous": [{"initial_lengthscale": 3.0}, {"initial_lengthscale": 30.0}],
+            "time_jump": [{"initial_step_time_days": 5.0}, {"initial_step_time_days": 10.0}],
+            "die": {"type": "index", "num_dies": 2},
+        }
+        kernel = build_composite_kernel(cfg)
+        components = kernel.kernels[0].kernels
+        self.assertEqual(len(components), 4)
+        self.assertIsNot(components[0].base_kernel.raw_lengthscale, components[1].base_kernel.raw_lengthscale)
+        self.assertIsNot(components[2].base_kernel.raw_step_time, components[3].base_kernel.raw_step_time)
+
     def test_kernel_factory_options(self) -> None:
         """Verify building kernels with various continuous types."""
         for k_type in ["rbf", "matern52", "matern32", "matern12"]:
             cfg = {
-                "time_continuous": {"type": k_type, "initial_lengthscale": 3.0},
-                "time_jump": {"enabled": True, "initial_step_time_days": 8.0},
+                "time_continuous": [{"type": k_type, "initial_lengthscale": 3.0}],
+                "time_jump": [{"initial_step_time_days": 8.0}],
                 "die": {"type": "index", "num_dies": 9, "rank": 2},
                 "composition": "product_with_jump",
             }
@@ -99,8 +113,8 @@ class TestBuildCompositeKernel(unittest.TestCase):
     def test_kernel_without_jump(self) -> None:
         """Verify building kernel with time jump disabled."""
         cfg = {
-            "time_continuous": {"type": "rbf"},
-            "time_jump": {"enabled": False},
+            "time_continuous": [{"type": "rbf"}],
+            "time_jump": [],
             "die": {"type": "rbf"},
             "composition": "product",
         }
@@ -181,7 +195,7 @@ class TestGPFluxPipeline(unittest.TestCase):
         """Verify model training convergence and posterior prediction bounds."""
         cfg = {
             "training": {"num_iterations": 20, "learning_rate": 0.05},
-            "kernel": {"time_jump": {"enabled": True}},
+            "kernel": {"time_jump": [{}]},
         }
         ds = build_gp_flux_dataset(self.df_meta, "J4", cfg)
         model, likelihood = train_gp_die_flux_model(ds["train_x"], ds["train_y"], cfg)
@@ -230,6 +244,10 @@ class TestGPFluxPipeline(unittest.TestCase):
         cfg = {
             "training": {"num_iterations": 10, "learning_rate": 0.05},
             "plot": {"plot_die": 0},
+            "kernel": {
+                "time_continuous": [{"initial_lengthscale": 3.0}, {"initial_lengthscale": 30.0}],
+                "time_jump": [{"initial_step_time_days": 5.0}, {"initial_step_time_days": 10.0}],
+            },
         }
         bundle, _ = run_gp_flux_pipeline(self.df_meta, cfg)
         fig, (ax_s, ax_t) = plot_gp_die_flux_timeline(bundle, cfg)
@@ -244,6 +262,17 @@ class TestGPFluxPipeline(unittest.TestCase):
         cfg_custom = {**cfg, "split_colors": {"test": "limegreen"}}
         fig_cust, _ = plot_gp_die_flux_timeline(bundle, cfg_custom)
         self.assertIsNotNone(fig_cust)
+
+        # Contributions and baseline must reconstruct the actual posterior mean.
+        fig_components, axes = plot_gp_flux_kernel_contributions(bundle, cfg)
+        for axis, (tool, dataset) in zip(axes, bundle["datasets"].items()):
+            total_line = next(line for line in axis.lines if line.get_label() == "Total prediction")
+            times = total_line.get_xdata()
+            inputs = torch.tensor(np.column_stack([times, np.zeros_like(times)]), dtype=torch.float32)
+            model, likelihood = bundle["models"][tool]
+            expected, _, _ = predict_gp_die_flux(model, likelihood, inputs, dataset["scaler"])
+            np.testing.assert_allclose(total_line.get_ydata(), expected, rtol=1e-4, atol=1e-2)
+        self.assertIsNotNone(fig_components)
 
     def test_tool_ordering_robustness(self) -> None:
         """Verify pipeline correctly identifies tools when rows are inverted."""
