@@ -7,9 +7,14 @@ gp_flux:
     time_continuous:
       - type: "rbf"
         initial_lengthscale: 5.0
+      - type: "rbf"
+        initial_lengthscale: 10.0
     time_jump:
       - initial_step_time_days: 10.0
         initial_steepness: 2.0
+        learn_step_time: true
+      - initial_step_time_days: 20.0
+        initial_steepness: 4.0
         learn_step_time: true
     die:
       type: "index"
