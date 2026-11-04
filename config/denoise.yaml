@@ -5,16 +5,22 @@ denoise:
     - "Cl2p"
     - "Ti2p"
   apply_to: "both"
-  fourier_comparison:
+  denoise_comparison:
     enabled: true
     spectrum:
       measurement_id: "NMG_M_J4_00000"
       die: 0
       region: "Cl2p"
-    output_path: "tmp/fourier_comparison.png"
-    filters:
+    output_directory: "tmp"
+    fourier:
       - {filter_type: "butterworth", cutoff_ratio: 0.10, filter_order: 2}
       - {filter_type: "butterworth", cutoff_ratio: 0.15, filter_order: 4}
+    savgol:
+      - {window_length: 11, polynomial_order: 3}
+      - {window_length: 21, polynomial_order: 3}
+    wavelet:
+      - {wavelet_name: "sym4", decomposition_level: 2, threshold_mode: "soft", threshold_rule: "universal", threshold_scale: 1.0}
+      - {wavelet_name: "sym4", decomposition_level: 2, threshold_mode: "soft", threshold_rule: "universal", threshold_scale: 0.5}
   savgol:
     window_length: 11
     polynomial_order: 3

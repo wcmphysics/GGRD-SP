@@ -149,6 +149,95 @@
       "title": "BayesianOptConfig",
       "type": "object"
     },
+    "ComparisonSavgolConfig": {
+      "description": "Savgol settings for one comparison curve.",
+      "properties": {
+        "window_length": {
+          "minimum": 3,
+          "title": "Window Length",
+          "type": "integer"
+        },
+        "polynomial_order": {
+          "minimum": 1,
+          "title": "Polynomial Order",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "window_length",
+        "polynomial_order"
+      ],
+      "title": "ComparisonSavgolConfig",
+      "type": "object"
+    },
+    "ComparisonSpectrumConfig": {
+      "description": "Identify a spectrum for the denoising comparison.",
+      "properties": {
+        "measurement_id": {
+          "title": "Measurement Id",
+          "type": "string"
+        },
+        "die": {
+          "title": "Die",
+          "type": "integer"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string"
+        }
+      },
+      "required": [
+        "measurement_id",
+        "die",
+        "region"
+      ],
+      "title": "ComparisonSpectrumConfig",
+      "type": "object"
+    },
+    "ComparisonWaveletConfig": {
+      "description": "Stationary wavelet settings for one comparison curve.",
+      "properties": {
+        "wavelet_name": {
+          "title": "Wavelet Name",
+          "type": "string"
+        },
+        "decomposition_level": {
+          "minimum": 1,
+          "title": "Decomposition Level",
+          "type": "integer"
+        },
+        "threshold_mode": {
+          "enum": [
+            "soft",
+            "hard"
+          ],
+          "title": "Threshold Mode",
+          "type": "string"
+        },
+        "threshold_rule": {
+          "enum": [
+            "universal",
+            "bayes"
+          ],
+          "title": "Threshold Rule",
+          "type": "string"
+        },
+        "threshold_scale": {
+          "exclusiveMinimum": 0,
+          "title": "Threshold Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wavelet_name",
+        "decomposition_level",
+        "threshold_mode",
+        "threshold_rule",
+        "threshold_scale"
+      ],
+      "title": "ComparisonWaveletConfig",
+      "type": "object"
+    },
     "CostConfig": {
       "additionalProperties": true,
       "description": "Multi-component spectral transfer loss function weights.",
@@ -369,6 +458,56 @@
       "title": "DatasetConfig",
       "type": "object"
     },
+    "DenoiseComparisonConfig": {
+      "description": "Settings for the standalone denoising comparison.",
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "spectrum": {
+          "$ref": "#/$defs/ComparisonSpectrumConfig"
+        },
+        "output_directory": {
+          "title": "Output Directory",
+          "type": "string"
+        },
+        "fourier": {
+          "items": {
+            "$ref": "#/$defs/FourierComparisonFilterConfig"
+          },
+          "minItems": 1,
+          "title": "Fourier",
+          "type": "array"
+        },
+        "savgol": {
+          "items": {
+            "$ref": "#/$defs/ComparisonSavgolConfig"
+          },
+          "minItems": 1,
+          "title": "Savgol",
+          "type": "array"
+        },
+        "wavelet": {
+          "items": {
+            "$ref": "#/$defs/ComparisonWaveletConfig"
+          },
+          "minItems": 1,
+          "title": "Wavelet",
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "spectrum",
+        "output_directory",
+        "fourier",
+        "savgol",
+        "wavelet"
+      ],
+      "title": "DenoiseComparisonConfig",
+      "type": "object"
+    },
     "DenoiseConfig": {
       "additionalProperties": true,
       "description": "Regional de-noising execution configuration.",
@@ -410,10 +549,10 @@
         "fourier": {
           "$ref": "#/$defs/DenoiseFourierConfig"
         },
-        "fourier_comparison": {
+        "denoise_comparison": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FourierComparisonConfig"
+              "$ref": "#/$defs/DenoiseComparisonConfig"
             },
             {
               "type": "null"
@@ -657,38 +796,6 @@
       "title": "FiLMConfig",
       "type": "object"
     },
-    "FourierComparisonConfig": {
-      "description": "Settings for the standalone Fourier comparison.",
-      "properties": {
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "spectrum": {
-          "$ref": "#/$defs/FourierComparisonSpectrumConfig"
-        },
-        "output_path": {
-          "title": "Output Path",
-          "type": "string"
-        },
-        "filters": {
-          "items": {
-            "$ref": "#/$defs/FourierComparisonFilterConfig"
-          },
-          "minItems": 1,
-          "title": "Filters",
-          "type": "array"
-        }
-      },
-      "required": [
-        "enabled",
-        "spectrum",
-        "output_path",
-        "filters"
-      ],
-      "title": "FourierComparisonConfig",
-      "type": "object"
-    },
     "FourierComparisonFilterConfig": {
       "description": "One filter shown in the Fourier comparison.",
       "properties": {
@@ -718,30 +825,6 @@
         "filter_order"
       ],
       "title": "FourierComparisonFilterConfig",
-      "type": "object"
-    },
-    "FourierComparisonSpectrumConfig": {
-      "description": "Identify a spectrum for the Fourier comparison.",
-      "properties": {
-        "measurement_id": {
-          "title": "Measurement Id",
-          "type": "string"
-        },
-        "die": {
-          "title": "Die",
-          "type": "integer"
-        },
-        "region": {
-          "title": "Region",
-          "type": "string"
-        }
-      },
-      "required": [
-        "measurement_id",
-        "die",
-        "region"
-      ],
-      "title": "FourierComparisonSpectrumConfig",
       "type": "object"
     },
     "GPFluxConfig": {

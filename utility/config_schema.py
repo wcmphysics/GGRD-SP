@@ -303,21 +303,47 @@ class FourierComparisonFilterConfig(BaseModel):
     filter_order: int = Field(ge=1)
 
 
-class FourierComparisonSpectrumConfig(BaseModel):
-    """Identify a spectrum for the Fourier comparison."""
+class ComparisonSpectrumConfig(BaseModel):
+    """Identify a spectrum for the denoising comparison."""
 
     measurement_id: str
     die: int
     region: str
 
 
-class FourierComparisonConfig(BaseModel):
-    """Settings for the standalone Fourier comparison."""
+class ComparisonSavgolConfig(BaseModel):
+    """Savgol settings for one comparison curve."""
+
+    window_length: int = Field(ge=3)
+    polynomial_order: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> ComparisonSavgolConfig:
+        """Require an odd window longer than the polynomial order."""
+        if self.window_length % 2 != 1 or self.window_length <= self.polynomial_order:
+            raise ValueError("window_length must be odd and greater than polynomial_order")
+        return self
+
+
+class ComparisonWaveletConfig(BaseModel):
+    """Stationary wavelet settings for one comparison curve."""
+
+    wavelet_name: str
+    decomposition_level: int = Field(ge=1)
+    threshold_mode: Literal["soft", "hard"]
+    threshold_rule: Literal["universal", "bayes"]
+    threshold_scale: float = Field(gt=0)
+
+
+class DenoiseComparisonConfig(BaseModel):
+    """Settings for the standalone denoising comparison."""
 
     enabled: bool
-    spectrum: FourierComparisonSpectrumConfig
-    output_path: str
-    filters: list[FourierComparisonFilterConfig] = Field(min_length=1)
+    spectrum: ComparisonSpectrumConfig
+    output_directory: str
+    fourier: list[FourierComparisonFilterConfig] = Field(min_length=1)
+    savgol: list[ComparisonSavgolConfig] = Field(min_length=1)
+    wavelet: list[ComparisonWaveletConfig] = Field(min_length=1)
 
 
 class DenoiseGPConfig(BaseModel):
@@ -339,7 +365,7 @@ class DenoiseConfig(BaseModel):
     savgol: DenoiseSavgolConfig = Field(default_factory=DenoiseSavgolConfig)
     wavelet: DenoiseWaveletConfig = Field(default_factory=DenoiseWaveletConfig)
     fourier: DenoiseFourierConfig = Field(default_factory=DenoiseFourierConfig)
-    fourier_comparison: FourierComparisonConfig | None = None
+    denoise_comparison: DenoiseComparisonConfig | None = None
     gp: DenoiseGPConfig = Field(default_factory=DenoiseGPConfig)
     region_configs: dict[str, Any] = Field(default_factory=dict)
     rsf_table: dict[str, float] | None = None

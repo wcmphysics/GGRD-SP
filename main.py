@@ -28,7 +28,7 @@ import denoise
 import models
 import utility
 import visualization
-from denoise.fourier_comparison import plot_fourier_comparison
+from denoise.denoise_comparison import plot_denoise_comparison
 
 
 def main() -> None:
@@ -89,10 +89,10 @@ def main() -> None:
     # STAGE 4: NOISE ANALYSIS AND DE-NOISING
     # =========================================================================
     print("\n=== Stage 4: Noise Analysis & Regional De-noising ===")
-    if (config["denoise"]["fourier_comparison"] or {}).get("enabled", False):
-        plot_fourier_comparison(
+    if (config["denoise"]["denoise_comparison"] or {}).get("enabled", False):
+        plot_denoise_comparison(
             (ary_intensity, ary_energy, df_meta),
-            config["denoise"]["fourier_comparison"],
+            config["denoise"]["denoise_comparison"],
         )
     ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
         denoise.perform_spectral_noise_analysis(
