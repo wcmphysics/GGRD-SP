@@ -147,7 +147,6 @@ class GPFluxTimeContinuous(BaseModel):
 class GPFluxTimeJump(BaseModel):
     """Learnable sigmoid maintenance baseline shift kernel."""
 
-    enabled: bool = True
     initial_step_time_days: float = 10.0
     initial_steepness: float = Field(2.0, gt=0.0)
     learn_step_time: bool = True
@@ -166,8 +165,10 @@ class GPFluxDie(BaseModel):
 class GPFluxKernel(BaseModel):
     """Composite covariance kernel specification for die flux."""
 
-    time_continuous: GPFluxTimeContinuous = Field(default_factory=GPFluxTimeContinuous)
-    time_jump: GPFluxTimeJump = Field(default_factory=GPFluxTimeJump)
+    time_continuous: list[GPFluxTimeContinuous] = Field(
+        default_factory=lambda: [GPFluxTimeContinuous()], min_length=1
+    )
+    time_jump: list[GPFluxTimeJump] = Field(default_factory=lambda: [GPFluxTimeJump()])
     die: GPFluxDie = Field(default_factory=GPFluxDie)
     composition: str = "product_with_jump"
     model_config = ConfigDict(extra="allow")

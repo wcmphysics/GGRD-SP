@@ -889,10 +889,19 @@
       "description": "Composite covariance kernel specification for die flux.",
       "properties": {
         "time_continuous": {
-          "$ref": "#/$defs/GPFluxTimeContinuous"
+          "items": {
+            "$ref": "#/$defs/GPFluxTimeContinuous"
+          },
+          "minItems": 1,
+          "title": "Time Continuous",
+          "type": "array"
         },
         "time_jump": {
-          "$ref": "#/$defs/GPFluxTimeJump"
+          "items": {
+            "$ref": "#/$defs/GPFluxTimeJump"
+          },
+          "title": "Time Jump",
+          "type": "array"
         },
         "die": {
           "$ref": "#/$defs/GPFluxDie"
@@ -943,11 +952,6 @@
       "additionalProperties": true,
       "description": "Learnable sigmoid maintenance baseline shift kernel.",
       "properties": {
-        "enabled": {
-          "default": true,
-          "title": "Enabled",
-          "type": "boolean"
-        },
         "initial_step_time_days": {
           "default": 10.0,
           "title": "Initial Step Time Days",

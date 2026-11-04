@@ -102,33 +102,34 @@ def build_composite_kernel(
         The constructed GPyTorch covariance kernel.
     """
     cfg = kernel_config or {}
-    t_cfg = cfg.get("time_continuous", {})
-    t_jump_cfg = cfg.get("time_jump", {})
+    t_configs = cfg.get("time_continuous", [{"type": "rbf", "initial_lengthscale": 5.0}])
+    jump_configs = cfg.get("time_jump", [{}])
     die_cfg = cfg.get("die", {})
     comp = cfg.get("composition", "product_with_jump")
 
     # 1. Continuous time kernel
-    k_type = str(t_cfg.get("type", "rbf")).lower()
-    if k_type in _MATERN_NU_MAP:
-        base_t: gpytorch.kernels.Kernel = gpytorch.kernels.MaternKernel(
-            nu=_MATERN_NU_MAP[k_type], active_dims=[0]
-        )
-    else:
-        base_t = gpytorch.kernels.RBFKernel(active_dims=[0])
-    base_t.lengthscale = float(t_cfg.get("initial_lengthscale", 5.0))
-    k_time_cont = gpytorch.kernels.ScaleKernel(base_t)
+    continuous = []
+    for t_cfg in t_configs:
+        k_type = str(t_cfg.get("type", "rbf")).lower()
+        if k_type in _MATERN_NU_MAP:
+            base_t = gpytorch.kernels.MaternKernel(nu=_MATERN_NU_MAP[k_type], active_dims=[0])
+        else:
+            base_t = gpytorch.kernels.RBFKernel(active_dims=[0])
+        base_t.lengthscale = float(t_cfg.get("initial_lengthscale", 5.0))
+        continuous.append(gpytorch.kernels.ScaleKernel(base_t))
+    k_time_cont = gpytorch.kernels.AdditiveKernel(*continuous)
 
     # 2. Optional sigmoid abrupt jump kernel on time
-    if t_jump_cfg.get("enabled", True):
+    jumps = []
+    for t_jump_cfg in jump_configs:
         step_kern = SigmoidStepKernel(
             step_time=float(t_jump_cfg.get("initial_step_time_days", 10.0)),
             steepness=float(t_jump_cfg.get("initial_steepness", 2.0)),
             learn_step_time=bool(t_jump_cfg.get("learn_step_time", True)),
             active_dims=[0],
         )
-        k_time = k_time_cont + gpytorch.kernels.ScaleKernel(step_kern)
-    else:
-        k_time = k_time_cont
+        jumps.append(gpytorch.kernels.ScaleKernel(step_kern))
+    k_time = gpytorch.kernels.AdditiveKernel(*continuous, *jumps)
 
     # 3. Categorical die kernel
     if str(die_cfg.get("type", "index")).lower() == "index":

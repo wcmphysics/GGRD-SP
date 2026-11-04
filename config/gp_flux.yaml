@@ -5,17 +5,17 @@ gp_flux:
   target_column: "total_flux_single_die"
   kernel:
     time_continuous:
-      type: "rbf"
-      initial_lengthscale: 5.0
+      - type: "rbf"
+        initial_lengthscale: 5.0
     time_jump:
-      enabled: true
-      initial_step_time_days: 10.0
-      initial_steepness: 2.0
-      learn_step_time: true
+      - initial_step_time_days: 10.0
+        initial_steepness: 2.0
+        learn_step_time: true
     die:
       type: "index"
       num_dies: 9
       rank: 2
+    # product excludes jumps; product_with_jump and additive include them.
     composition: "product_with_jump"
   training:
     num_iterations: 150
