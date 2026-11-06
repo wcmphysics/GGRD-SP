@@ -305,6 +305,7 @@ def get_default_denoise_config() -> dict[str, Any]:
         "denoise_comparison": {},
         "gp": get_default_gp_denoise_config(),
         "region_configs": {},
+        "quantification": None,
     }
 
 
