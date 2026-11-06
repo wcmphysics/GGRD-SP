@@ -5,6 +5,7 @@ and dynamic element vocabulary extraction.
 """
 
 from __future__ import annotations
+import copy
 
 import os
 from pathlib import Path
@@ -294,6 +295,11 @@ def _inject_spatial_temporal_settings(
         _set_if_none(splitting, "source_tool", source_tool)
         _set_if_none(splitting, "target_tool", target_tool)
 
+    gp_flux = resolved.setdefault("gp_flux", {})
+    if isinstance(gp_flux, dict):
+        _set_if_none(gp_flux, "source_tool", source_tool)
+        _set_if_none(gp_flux, "target_tool", target_tool)
+
 
 def _inject_preprocessing_and_denoise_settings(
     resolved: dict[str, Any],
@@ -358,6 +364,7 @@ def _inject_model_and_training_settings(
         _set_if_none(dataset, "target_tool", target_tool)
         _set_if_none(dataset, "use_sliding_window", use_sliding_window)
         _set_if_none(dataset, "regions", regions)
+        _set_if_none(dataset, "unified_model", unified_model)
 
     # Inject FiLM generator defaults and region counts.
     film = resolved.setdefault("film", {})
@@ -458,6 +465,7 @@ def _inject_evaluation_settings(
         rsf_tbl = quant.get("rsf_table")
         if rsf_tbl and isinstance(denoise_cfg, dict):
             denoise_cfg.setdefault("rsf_table", rsf_tbl)
+            denoise_cfg.setdefault("quantification", copy.deepcopy(quant))
         if isinstance(metrics_rep, dict):
             _merge_subdict_defaults(metrics_rep, "quantification_config", quant)
 
@@ -511,7 +519,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     dict[str, Any]
         Resolved configuration dictionary with fully populated stage configs.
     """
-    resolved = dict(config)
+    resolved = copy.deepcopy(config)
     merge_stage_configs(resolved)
     merge_dedicated_model_config(resolved)
 
@@ -547,6 +555,7 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         regions,
     )
     _inject_evaluation_settings(resolved, global_cfg)
+    _resolve_materials_and_vocab(resolved)
 
     return resolved
 

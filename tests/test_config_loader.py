@@ -149,7 +149,7 @@ class TestConfigLoader(unittest.TestCase):
             resolved["quantification"],
         )
 
-        raw["metrics_report"]["quantification_config"]["tol"] = 0.03
+        raw.setdefault("metrics_report", {})["quantification_config"] = {"tol": 0.03}
         resolved = resolve_pipeline_config(raw)
         self.assertEqual(
             resolved["metrics_report"]["quantification_config"]["tol"], 0.03

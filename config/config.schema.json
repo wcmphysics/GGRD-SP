@@ -387,13 +387,13 @@
       "description": "Dataset assembly and sliding window patch slicing options.",
       "properties": {
         "window_size_ev": {
-          "default": 3.0,
+          "default": 6.0,
           "exclusiveMinimum": 0.0,
           "title": "Window Size Ev",
           "type": "number"
         },
         "sliding_stride_ev": {
-          "default": 1.0,
+          "default": 2.0,
           "exclusiveMinimum": 0.0,
           "title": "Sliding Stride Ev",
           "type": "number"
@@ -602,8 +602,8 @@
         },
         "cutoff_ratio": {
           "default": 0.25,
+          "exclusiveMaximum": 1.0,
           "exclusiveMinimum": 0.0,
-          "maximum": 1.0,
           "title": "Cutoff Ratio",
           "type": "number"
         },
@@ -704,8 +704,7 @@
           "default": "soft",
           "enum": [
             "soft",
-            "hard",
-            "garrote"
+            "hard"
           ],
           "title": "Threshold Mode",
           "type": "string"
@@ -714,7 +713,6 @@
           "default": "universal",
           "enum": [
             "universal",
-            "sure",
             "bayes"
           ],
           "title": "Threshold Rule",
@@ -1207,7 +1205,7 @@
       "description": "Physical spectral flux and intensity normalization options.",
       "properties": {
         "normalization_mode": {
-          "default": "by_regional_max_intensity_of_source",
+          "default": "by_total_flux_single_die",
           "enum": [
             "by_total_flux_single_die",
             "by_regional_max_intensity",
@@ -1233,7 +1231,7 @@
       "description": "Source-to-target temporal bipartite matching parameters.",
       "properties": {
         "time_threshold_hours": {
-          "default": 8.0,
+          "default": 12.0,
           "exclusiveMinimum": 0.0,
           "title": "Time Threshold Hours",
           "type": "number"

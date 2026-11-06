@@ -47,3 +47,4 @@ film:
   encode_elements: true
   energy_scale_ev: 1000.0
   hidden_dim: 32
+  relative_learning_rate: 0.1

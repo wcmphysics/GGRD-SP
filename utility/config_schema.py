@@ -78,7 +78,7 @@ class DataGenerationConfig(BaseModel):
 class PairingConfig(BaseModel):
     """Source-to-target temporal bipartite matching parameters."""
 
-    time_threshold_hours: float = Field(8.0, gt=0.0)
+    time_threshold_hours: float = Field(12.0, gt=0.0)
     method: Literal["optimal", "greedy"] = "optimal"
     source_tool: str | None = None
     target_tool: str | None = None
@@ -95,7 +95,7 @@ class NormalizationConfig(BaseModel):
         "by_regional_max_intensity_of_source",
         "by_mean_intensity_single_die",
         "no_normalization",
-    ] = "by_regional_max_intensity_of_source"
+    ] = "by_total_flux_single_die"
     eps: float = Field(1e-6, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
@@ -204,8 +204,8 @@ class GPFluxConfig(BaseModel):
 class DatasetConfig(BaseModel):
     """Dataset assembly and sliding window patch slicing options."""
 
-    window_size_ev: float = Field(3.0, gt=0.0)
-    sliding_stride_ev: float = Field(1.0, gt=0.0)
+    window_size_ev: float = Field(6.0, gt=0.0)
+    sliding_stride_ev: float = Field(2.0, gt=0.0)
     region_configs: dict[str, Any] = Field(default_factory=dict)
     source_tool: str | None = None
     target_tool: str | None = None
@@ -279,8 +279,8 @@ class DenoiseWaveletConfig(BaseModel):
     transform_type: Literal["stationary", "discrete"] = "stationary"
     wavelet_name: str = "sym4"
     decomposition_level: int = Field(2, ge=1)
-    threshold_mode: Literal["soft", "hard", "garrote"] = "soft"
-    threshold_rule: Literal["universal", "sure", "bayes"] = "universal"
+    threshold_mode: Literal["soft", "hard"] = "soft"
+    threshold_rule: Literal["universal", "bayes"] = "universal"
     threshold_scale: float = Field(1.0, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
@@ -289,7 +289,7 @@ class DenoiseFourierConfig(BaseModel):
     """Frequency-domain filtering hyperparameters."""
 
     filter_type: Literal["dct", "butterworth"] = "dct"
-    cutoff_ratio: float = Field(0.25, gt=0.0, le=1.0)
+    cutoff_ratio: float = Field(0.25, gt=0.0, lt=1.0)
     filter_order: int = Field(4, ge=1)
     rolloff_type: str = "butterworth"
     padding_mode: str = "even"
@@ -655,7 +655,6 @@ __all__ = [
     "PredictionConfig",
     "QuantificationConfig",
     "ShirleyGenerationConfig",
-    "ShortcutFiLMConfig",
     "SplittingConfig",
     "TrainingSectionConfig",
     "VisualizationConfig",
