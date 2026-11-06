@@ -121,16 +121,7 @@ class SpectrumPatchDataset(Dataset):
                 patch_indices.append((idx, s, s + window_size))
 
             scale_ref = float(np.max(np.abs(y_np)))
-            eps = max(1e-12, 1e-7 * float(scale_ref))
-            if scale_ref <= eps:
-                warnings.warn(
-                    f"Denominator scale <= eps ({eps:.4e}) encountered in "
-                    "patch dataset; scale is tiny/near-zero and dynamic "
-                    "eps was used.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            max_val = max(scale_ref, eps)
+            max_val = max(scale_ref, 1e-12)
             max_vals_list.extend([max_val] * n_win)
 
             if "meta" in item:
