@@ -29,7 +29,7 @@ def _prepare_canvas(
     """Return figure and axes, creating new ones if ax is None."""
     if ax is not None:
         return (
-            ax.get_figure() if hasattr(ax, "get_figure") else ax[0].get_figure(),
+            ax.get_figure() if hasattr(ax, "get_figure") else np.asarray(ax).flat[0].figure,
             ax,
         )
     return plt.subplots(nrows, ncols, figsize=figsize, **kwargs)

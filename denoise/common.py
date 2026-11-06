@@ -117,7 +117,7 @@ def summarize_denoised_spectrum(
     else:
         signal_strength = float(np.std(denoised_signal))
 
-    snr = float(signal_strength / safe_sigma) if noise_sigma > 0 else np.inf
+    snr = float(signal_strength / safe_sigma)
     confidence_curve = np.full_like(
         denoised_signal, confidence_z * noise_sigma, dtype=np.float64
     )
