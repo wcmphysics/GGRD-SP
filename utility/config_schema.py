@@ -369,6 +369,7 @@ class DenoiseConfig(BaseModel):
     denoise_comparison: DenoiseComparisonConfig | None = None
     gp: DenoiseGPConfig = Field(default_factory=DenoiseGPConfig)
     region_configs: dict[str, Any] = Field(default_factory=dict)
+    quantification: dict[str, Any] | None = None
     rsf_table: dict[str, float] | None = None
     model_config = ConfigDict(extra="allow")
 

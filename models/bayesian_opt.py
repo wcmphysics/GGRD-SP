@@ -192,9 +192,21 @@ def run_ax_search(
             objectives={"val_loss": ObjectiveProperties(minimize=True)},
         )
 
-    # Keep architecture parameters (e.g. kernel_sizes for InceptionTime) in base_train_cfg if not searched
-    active_search_keys = set(search_params.keys())
-    base_train_cfg = {k: v for k, v in cfg.items() if k not in active_search_keys and k not in {'parameters', 'num_trials', 'epochs_per_trial', 'experiment_name', 'use_bayesian_opt'}}
+    # Keep architecture parameters in base_train_cfg if not searched.
+    active_search_keys = {
+        p["name"] for p in search_params if isinstance(p, dict) and "name" in p
+    }
+    excluded_keys = {
+        *active_search_keys,
+        "parameters",
+        "num_trials",
+        "epochs_per_trial",
+        "experiment_name",
+        "use_bayesian_opt",
+    }
+    base_train_cfg = {
+        k: v for k, v in cfg.items() if k not in excluded_keys
+    }
     trials_data: list[dict[str, Any]] = []
     for trial_idx in range(num_trials):
         if seed is not None:

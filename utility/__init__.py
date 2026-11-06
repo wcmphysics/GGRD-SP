@@ -1,7 +1,7 @@
-from utility.bundle import SpectralDataBundle
 """Utility module for GGRD-SP spectral processing and synthetic data.
 """
 
+from utility.bundle import SpectralDataBundle
 from utility.config_loader import (
     MODEL_CONFIG_MAP,
     NO_SLIDING_WINDOW_MODEL_TYPES,
