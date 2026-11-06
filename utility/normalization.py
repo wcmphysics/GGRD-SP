@@ -130,7 +130,7 @@ def normalize_spectral_data(
         scales_record[idx] = scales.ravel()
 
     elif norm_mode == "by_regional_max_intensity":
-        raw_scales = np.max(np.abs(ary_intensity[idx]), axis=1)
+        raw_scales = np.max(ary_intensity[idx], axis=1)
         scales = _clamp_scales(raw_scales, eps, norm_mode)
         ary_norm[idx] /= scales
         scales_record[idx] = scales.ravel()
@@ -150,7 +150,7 @@ def normalize_spectral_data(
         if not paired.empty:
             src_idx = paired["spectrum_index"].to_numpy(dtype=int)
             tgt_idx = paired["target_spectrum_index"].to_numpy(dtype=int)
-            raw_scales = np.max(np.abs(ary_intensity[src_idx]), axis=1)
+            raw_scales = np.max(ary_intensity[src_idx], axis=1)
             scales = _clamp_scales(raw_scales, eps, norm_mode)
             ary_norm[src_idx] /= scales
             ary_norm[tgt_idx] /= scales

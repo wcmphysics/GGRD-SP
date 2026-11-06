@@ -237,7 +237,7 @@ def calculate_prediction_metrics(
                 max_true = eps
             else:
                 max_true = raw_max_true
-            max_pred = float(np.max(np.abs(y_pred)))
+            max_pred = float(np.max(y_pred))
 
             mse_val = float(
                 np.mean((diff / max_true) ** 2)

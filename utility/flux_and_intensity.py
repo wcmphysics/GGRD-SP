@@ -536,6 +536,6 @@ def compute_die_total_flux(
         .sum()
     )
     return {
-        (str(m), int(d)): max(float(val), 1e-4)
+        (str(m), int(d)): float(val)
         for (m, d), val in grouped.items()
     }

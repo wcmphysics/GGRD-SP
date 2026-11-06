@@ -1,3 +1,4 @@
+from utility.bundle import SpectralDataBundle
 """Utility module for GGRD-SP spectral processing and synthetic data.
 """
 
@@ -56,6 +57,7 @@ from utility.quantification import (
 
 __all__ = [
     # Config loading
+    "SpectralDataBundle",
     "PipelineConfig",
     "load_yaml",
     "load_config",
