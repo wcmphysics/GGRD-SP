@@ -155,14 +155,17 @@ def merge_dedicated_model_config(
         raw_config, "bayesian_opt", model_raw.get("bayesian_opt")
     )
     # Merge film defaults from config.yaml if available, then apply model overrides.
-    config_yaml_candidates = [
-        Path(config_dir) / "config.yaml" if config_dir else None,
-        Path("config") / "config.yaml",
-    ]
-    base_yaml_path = next((p for p in config_yaml_candidates if p and p.is_file()), None)
-    if base_yaml_path is not None:
-        base_cfg = load_yaml(base_yaml_path)
-        _merge_subdict_defaults(raw_config, "film", base_cfg.get("film"))
+    if not raw_config.get("film"):
+        config_yaml_candidates = [
+            Path(config_dir) / "config.yaml" if config_dir else None,
+            Path("config") / "config.yaml",
+        ]
+        base_yaml_path = next(
+            (p for p in config_yaml_candidates if p and p.is_file()), None
+        )
+        if base_yaml_path is not None:
+            base_cfg = load_yaml(base_yaml_path)
+            _merge_subdict_defaults(raw_config, "film", base_cfg.get("film"))
     _merge_subdict_defaults(raw_config, "film", model_raw.get("film"))
 
 

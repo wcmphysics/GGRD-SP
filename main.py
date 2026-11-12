@@ -27,7 +27,7 @@ import torch
 import denoise
 import models
 import utility
-from utility.bundle import SpectralDataBundle
+from utility import SpectralDataBundle
 import visualization
 
 

@@ -22,6 +22,94 @@ _CONTAINER_KEYS = {
 }
 
 
+def _extract_cfg_value(
+    primary: dict[str, Any],
+    fallback: dict[str, Any],
+    keys: tuple[str, ...],
+    default: float,
+) -> float:
+    """Extract first matching float value from primary or fallback dictionary."""
+    for k in keys:
+        val = primary.get(k)
+        if val is not None:
+            return float(val)
+        val = fallback.get(k)
+        if val is not None:
+            return float(val)
+    return default
+
+
+def _resolve_sliding_window_config(
+    global_config: dict[str, Any],
+    region_override: dict[str, Any],
+    region: str,
+) -> dict[str, Any]:
+    """Resolve sliding window configuration for a single region or unified layout."""
+    dataset_cfg = (
+        global_config.get("dataset")
+        if isinstance(global_config.get("dataset"), dict)
+        else {}
+    )
+    if region == "all":
+        w_keys = ("unified_window_size_ev", "window_size_ev")
+        s_keys = ("unified_window_stride_ev", "sliding_stride_ev")
+    else:
+        w_keys = ("window_size_ev",)
+        s_keys = ("sliding_stride_ev",)
+    default_window_size_ev = _extract_cfg_value(global_config, dataset_cfg, w_keys, 6.0)
+    default_sliding_stride_ev = _extract_cfg_value(global_config, dataset_cfg, s_keys, 2.0)
+
+    window_size_points = region_override.get(
+        "window_size",
+        global_config.get("window_size") or dataset_cfg.get("window_size"),
+    )
+    stride_points = region_override.get(
+        "stride",
+        global_config.get("stride") or dataset_cfg.get("stride"),
+    )
+    return {
+        "window_size_ev": region_override.get(
+            "window_size_ev", default_window_size_ev
+        ),
+        "sliding_stride_ev": region_override.get(
+            "sliding_stride_ev", default_sliding_stride_ev
+        ),
+        "window_size": window_size_points,
+        "stride": stride_points,
+    }
+
+
+def _resolve_train_and_bo_configs(
+    global_config: dict[str, Any],
+    region_override: dict[str, Any],
+    bayesian_opt_config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve training and Bayesian optimization configurations for a region."""
+    top_level_train_defaults = {
+        k: v for k, v in global_config.items() if k not in _CONTAINER_KEYS
+    }
+    flat_region_overrides = {
+        k: v for k, v in region_override.items() if k not in _CONTAINER_KEYS
+    }
+    resolved_train_config = {
+        **top_level_train_defaults,
+        **dict(global_config.get("train_config") or {}),
+        **dict(region_override.get("train_config") or {}),
+        **flat_region_overrides,
+    }
+
+    base_bo_cfg = (
+        bayesian_opt_config
+        if bayesian_opt_config is not None
+        else (global_config.get("bayesian_opt_config") or {})
+    )
+    resolved_bo_config = {
+        **dict(base_bo_cfg),
+        **dict(region_override.get("bayesian_opt_config") or {}),
+    }
+    return resolved_train_config, resolved_bo_config
+
+
 def _resolve_region_config(
     global_config: dict[str, Any],
     region: str,
@@ -46,62 +134,26 @@ def _resolve_region_config(
         3-tuple of (sliding_window_config, resolved_train_config,
         resolved_bo_config).
     """
-    region_configs = global_config.get("region_configs") or {}
+    dataset_cfg = (
+        global_config.get("dataset")
+        if isinstance(global_config.get("dataset"), dict)
+        else {}
+    )
+    reg_cfgs = global_config.get("region_configs")
+    if not isinstance(reg_cfgs, dict):
+        reg_cfgs = dataset_cfg.get("region_configs", {})
     region_override = (
-        dict(region_configs.get(region, {}))
-        if isinstance(region_configs, dict) and region in region_configs
+        dict(reg_cfgs.get(region, {}))
+        if isinstance(reg_cfgs, dict) and region in reg_cfgs
         else {}
     )
 
-    if region == "all":
-        default_window_size_ev = global_config.get(
-            "unified_window_size_ev", global_config.get("window_size_ev", 6.0)
-        )
-        default_sliding_stride_ev = global_config.get(
-            "unified_window_stride_ev", global_config.get("sliding_stride_ev", 2.0)
-        )
-    else:
-        default_window_size_ev = global_config.get("window_size_ev", 6.0)
-        default_sliding_stride_ev = global_config.get("sliding_stride_ev", 2.0)
-
-    window_size_points = region_override.get(
-        "window_size", global_config.get("window_size")
+    sliding_window_config = _resolve_sliding_window_config(
+        global_config, region_override, region
     )
-    stride_points = region_override.get("stride", global_config.get("stride"))
-    sliding_window_config = {
-        "window_size_ev": region_override.get(
-            "window_size_ev", default_window_size_ev
-        ),
-        "sliding_stride_ev": region_override.get(
-            "sliding_stride_ev", default_sliding_stride_ev
-        ),
-        "window_size": window_size_points,
-        "stride": stride_points,
-    }
-
-    top_level_train_defaults = {
-        k: v for k, v in global_config.items() if k not in _CONTAINER_KEYS
-    }
-    flat_region_overrides = {
-        k: v for k, v in region_override.items() if k not in _CONTAINER_KEYS
-    }
-    resolved_train_config = {
-        **top_level_train_defaults,
-        **dict(global_config.get("train_config") or {}),
-        **dict(region_override.get("train_config") or {}),
-        **flat_region_overrides,
-    }
-
-    base_bo_cfg = (
-        bayesian_opt_config
-        if bayesian_opt_config is not None
-        else (global_config.get("bayesian_opt_config") or {})
+    resolved_train_config, resolved_bo_config = _resolve_train_and_bo_configs(
+        global_config, region_override, bayesian_opt_config
     )
-    resolved_bo_config = {
-        **dict(base_bo_cfg),
-        **dict(region_override.get("bayesian_opt_config") or {}),
-    }
-
     return sliding_window_config, resolved_train_config, resolved_bo_config
 
 
