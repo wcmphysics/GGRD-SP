@@ -456,8 +456,10 @@ def create_regional_datasets(
             f"{source_tool=}, {target_tool=}."
         )
 
-    if bool(cfg.get("unified", False)) or bool(
-        cfg.get("unified_dataset", False)
+    if (
+        bool(cfg.get("unified_model", False))
+        or bool(cfg.get("unified", False))
+        or bool(cfg.get("unified_dataset", False))
     ):
         return {
             "all": create_unified_dataset(

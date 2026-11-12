@@ -1,138 +1,119 @@
-# yaml-language-server: $schema=config.schema.json
-# Pipeline configuration for GGRD-SP
-
-global:
-  material: "NMG"
-  # Model architecture: resnet, resnet_scaled_short, unet, residual_unet, deeplabv3, inception_time, tcn, fpn
-  model_type: "resnet"
-  use_sliding_window: false
-  use_film: false
-  apply_denoise: false
-  unified_model: true
-  source_tool: "J4"
-  target_tool: "J5"
-  example_region: "Ti2p"
-  sample_measurement_id: "NMG_M_J4_00000"
-
-pairing:
-  time_threshold_hours: 12.0
-  method: "optimal"
-
-normalization:
-  normalization_mode: "by_total_flux_single_die"
-  eps: 0.000001
-
-splitting:
-  method: "random"
-  train_ratio: 0.5
-  val_ratio: 0.2
-  test_ratio: 0.3
-  seed: null
-
+bayesian_opt: {}
+cost:
+  l2_weight: 1.0e-06
+  normalized_by_target_max: true
+  w_gradient: 0.0
+  w_mse: 1.0
+  w_shape: 0.0
 dataset:
-  window_size_ev: 6.0
+  region_configs:
+    Al2p:
+      sliding_stride_ev: 2.0
+      window_size_ev: 6.0
   sliding_stride_ev: 2.0
   unified_window_size_ev: 6.0
   unified_window_stride_ev: 2.0
-  region_configs:
-    Al2p:
-      window_size_ev: 6.0
-      sliding_stride_ev: 2.0
-
-cost:
-  w_mse: 1.0
-  w_shape: 0.0
-  w_gradient: 0.0
-  l2_weight: 0.000001
-  normalized_by_target_max: true
-
-noise_analysis:
-  method: "gp"
-  splits: null
-  dies: [0]
-  batch_size: 64
-  unpaired_split: "train"
-  kernel:
-    type: "matern52"
-    initial_lengthscale_ev: 1.0
-  noise_model: "homoscedastic"
-  confidence_type: "observation"
-  training:
-    num_iterations: 50
-    learning_rate: 0.2
-
-noise_plot:
-  plots:
-    - "noise_vs_time"
-    - "snr_by_region"
-    - "noise_heatmap"
-    - "example_spectrum"
-
-# Note: Model-dedicated configurations (training, bayesian_opt, film) are managed in
-# dedicated config files under config/ (e.g., config/resnet.yaml, config/inception_time.yaml).
-# Specific keys can be overridden here if needed.
+  window_size_ev: 6.0
 film:
   encode_die: true
-  encode_tool: true
-  encode_flux: true
-  encode_time: true
+  encode_elements: true
   encode_energy: true
+  encode_flux: true
   encode_region: true
   encode_relative_intensity: true
-  encode_elements: true
+  encode_time: true
+  encode_tool: true
   energy_scale_ev: 1000.0
   hidden_dim: 32
   relative_learning_rate: 0.1
-
-bayesian_opt: {}
-
-training:
-  train_config: {}
-  region_configs: {}
-
+global:
+  apply_denoise: false
+  example_region: Ti2p
+  material: NMG
+  model_type: resnet
+  sample_measurement_id: NMG_M_J4_00000
+  source_tool: J4
+  target_tool: J5
+  unified_model: true
+  use_film: false
+  use_sliding_window: false
+metrics_report:
+  metrics:
+  - peak_error_percentage
+  - chebyshev_error_peak_normalized_percentage
+  splits:
+  - train
+  - test
+noise_analysis:
+  batch_size: 64
+  confidence_type: observation
+  dies:
+  - 0
+  kernel:
+    initial_lengthscale_ev: 1.0
+    type: matern52
+  method: gp
+  noise_model: homoscedastic
+  splits: null
+  training:
+    learning_rate: 0.2
+    num_iterations: 50
+  unpaired_split: train
+noise_plot:
+  plots:
+  - noise_vs_time
+  - snr_by_region
+  - noise_heatmap
+  - example_spectrum
+normalization:
+  eps: 1.0e-06
+  normalization_mode: by_total_flux_single_die
+pairing:
+  method: optimal
+  time_threshold_hours: 12.0
 prediction:
   clamp_non_negative: true
-
-metrics_report:
-  splits:
-    - "train"
-    - "test"
-  metrics:
-    - "peak_error_percentage"
-    - "chebyshev_error_peak_normalized_percentage"
-
 quantification:
-  rsf_table:
-    C1s: 1.000
-    Al2p: 0.537
-    Ti2p: 7.910
-    O1s: 2.930
-    Cl2p: 2.285
-    N1s: 1.800
-    Si2p: 0.817
-  default_endpoint_strategy: "minima"
   default_endpoint_average_ev: 1.0
+  default_endpoint_strategy: minima
   max_iter: 50
-  tol: 0.00001
-
+  rsf_table:
+    Al2p: 0.537
+    C1s: 1.0
+    Cl2p: 2.285
+    N1s: 1.8
+    O1s: 2.93
+    Si2p: 0.817
+    Ti2p: 7.91
+  tol: 1.0e-05
+splitting:
+  method: random
+  seed: null
+  test_ratio: 0.3
+  train_ratio: 0.5
+  val_ratio: 0.2
+training:
+  region_configs: {}
+  train_config:
+    epochs: 100
 visualization:
-  show_plots: true
   plots:
-    gp_die_flux_timeline: true
-    gp_die_flux_kernel_contributions: true
-    pairing_timeline: false
-    flux_and_averaged_intensity: false
-    max_intensity: false
-    normalized_max_intensity: false
-    tool_comparison: false
-    shirley_background: false
-    spectral_noise_analysis: false
-    gp_hyperparameter_convergence: false
-    training_history: true
-    prediction_comparison: true
-    regional_spectrum_distribution: false
     atomic_percentage_distributions: false
     atomic_percentage_mae: true
-    sliding_window_slices: true
-    denoise_spectrum_comparison: false
     denoise_atomic_percentage_mae: false
+    denoise_spectrum_comparison: false
+    flux_and_averaged_intensity: false
+    gp_die_flux_kernel_contributions: true
+    gp_die_flux_timeline: true
+    gp_hyperparameter_convergence: false
+    max_intensity: false
+    normalized_max_intensity: false
+    pairing_timeline: false
+    prediction_comparison: true
+    regional_spectrum_distribution: false
+    shirley_background: false
+    sliding_window_slices: true
+    spectral_noise_analysis: false
+    tool_comparison: false
+    training_history: true
+  show_plots: true
