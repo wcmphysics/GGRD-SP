@@ -29,7 +29,7 @@ from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
 )
-from utility.preprocessing import preprocess
+from utility.preprocessing import DatasetMetadata, PreprocessOutput, preprocess
 from utility.reporting import format_split_comparison_table
 from utility.shirley import (
     calculate_shirley_background,
@@ -81,6 +81,8 @@ __all__ = [
     "pair_source_target_spectra",
     "get_default_pairing_config",
     "split_measurement_sessions",
+    "DatasetMetadata",
+    "PreprocessOutput",
     "preprocess",
     "format_split_comparison_table",
     # Quantification

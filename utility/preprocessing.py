@@ -6,6 +6,7 @@ feature standardization, and canonical categorical tool/region index mapping.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from typing import Any
 import numpy as np
@@ -15,6 +16,54 @@ from utility.flux_and_intensity import (
     calculate_flux_and_intensity,
     standardize_metadata_features,
 )
+
+
+@dataclass
+class DatasetMetadata:
+    """Typed container for categorical dimensions and index mappings."""
+
+    num_dies: int
+    num_tools: int
+    num_regions: int
+    num_elements: int
+    die_index_mapping: dict[int, int]
+    tool_index_mapping: dict[str, int]
+    region_index_mapping: dict[str, int]
+    element_index_mapping: dict[str, int]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert metadata mappings to dictionary for FiLM/model configuration."""
+        return {
+            "num_dies": self.num_dies,
+            "num_tools": self.num_tools,
+            "num_regions": self.num_regions,
+            "num_elements": self.num_elements,
+            "die_index_mapping": self.die_index_mapping,
+            "tool_index_mapping": self.tool_index_mapping,
+            "region_index_mapping": self.region_index_mapping,
+            "element_index_mapping": self.element_index_mapping,
+        }
+
+
+class PreprocessOutput(tuple):
+    """3-tuple of (df_meta, tool_index_mapping, region_index_mapping) with dataset_metadata."""
+
+    dataset_metadata: DatasetMetadata
+    metadata: DatasetMetadata
+
+    def __new__(
+        cls,
+        df_meta: pd.DataFrame,
+        tool_index_mapping: dict[str, int],
+        region_index_mapping: dict[str, int],
+        dataset_metadata: DatasetMetadata,
+    ) -> PreprocessOutput:
+        obj = super().__new__(
+            cls, (df_meta, tool_index_mapping, region_index_mapping)
+        )
+        obj.dataset_metadata = dataset_metadata
+        obj.metadata = dataset_metadata
+        return obj
 
 
 def _parse_element_from_region(region_name: str) -> str:
@@ -34,12 +83,110 @@ def _make_one_hot(idx: int | None, length: int) -> list[float] | None:
     return vec
 
 
+def _compute_die_mappings(df_res: pd.DataFrame) -> tuple[dict[int, int], int]:
+    """Establish fixed global die index mapping and one-hot vectors."""
+    unique_dies = sorted(df_res["die"].dropna().unique())
+    die_index_mapping = {die_val: idx for idx, die_val in enumerate(unique_dies)}
+    num_dies = len(die_index_mapping)
+    df_res["die_index"] = df_res["die"].map(die_index_mapping)
+    df_res["die_one_hot"] = [
+        _make_one_hot(int(x) if pd.notna(x) else None, num_dies)
+        for x in df_res["die_index"]
+    ]
+    return die_index_mapping, num_dies
+
+
+def _compute_tool_mappings(df_res: pd.DataFrame) -> tuple[dict[str, int], int]:
+    """Establish fixed global tool index mapping from tool and target_tool."""
+    tools_set = set(df_res["tool"].dropna().astype(str).unique())
+    if "target_tool" in df_res.columns:
+        tools_set.update(df_res["target_tool"].dropna().astype(str).unique())
+    unique_tools = sorted(tools_set)
+    tool_index_mapping = {
+        tool_name: idx for idx, tool_name in enumerate(unique_tools)
+    }
+    num_tools = len(tool_index_mapping)
+    df_res["source_tool_index"] = df_res["tool"].map(tool_index_mapping)
+    df_res["source_tool_one_hot"] = [
+        _make_one_hot(int(x) if pd.notna(x) else None, num_tools)
+        for x in df_res["source_tool_index"]
+    ]
+    if "target_tool" in df_res.columns:
+        df_res["target_tool_index"] = df_res["target_tool"].map(tool_index_mapping)
+        df_res["target_tool_one_hot"] = [
+            _make_one_hot(int(x) if pd.notna(x) else None, num_tools)
+            for x in df_res["target_tool_index"]
+        ]
+    return tool_index_mapping, num_tools
+
+
+def _compute_region_mappings(
+    df_res: pd.DataFrame,
+) -> tuple[dict[str, int], int, list[str]]:
+    """Establish fixed global region index mapping and one-hot vectors."""
+    unique_regions = sorted(df_res["region"].dropna().astype(str).unique())
+    region_index_mapping = {
+        region_name: idx for idx, region_name in enumerate(unique_regions)
+    }
+    num_regions = len(region_index_mapping)
+    df_res["region_index"] = df_res["region"].map(region_index_mapping)
+    df_res["region_one_hot"] = [
+        _make_one_hot(int(x) if pd.notna(x) else None, num_regions)
+        for x in df_res["region_index"]
+    ]
+    return region_index_mapping, num_regions, unique_regions
+
+
+def _compute_element_mappings(
+    df_res: pd.DataFrame, unique_regions: list[str]
+) -> tuple[dict[str, int], int]:
+    """Establish fixed global element mapping and measurement-level element_multi_hot."""
+    unique_elements = sorted({
+        _parse_element_from_region(r) for r in unique_regions
+    })
+    element_index_mapping = {
+        elem_name: idx for idx, elem_name in enumerate(unique_elements)
+    }
+    num_elements = len(element_index_mapping)
+
+    meas_elements: dict[Any, list[float]] = {}
+    for meas_id, group in df_res.groupby("measurement_id"):
+        m_elems = {
+            _parse_element_from_region(r)
+            for r in group["region"].dropna().unique()
+        }
+        vec = [1.0 if elem in m_elems else 0.0 for elem in unique_elements]
+        meas_elements[meas_id] = vec
+    df_res["element_multi_hot"] = df_res["measurement_id"].map(meas_elements)
+    return element_index_mapping, num_elements
+
+
+def _standardize_if_split_present(
+    df_res: pd.DataFrame, cfg: dict[str, Any]
+) -> pd.DataFrame:
+    """Standardize continuous metadata features if split column has valid values."""
+    if "split" not in df_res.columns or not df_res["split"].notna().any():
+        return df_res
+    fit_split = str(
+        cfg.get("fit_split")
+        or (
+            cfg.get("preprocessing", {}).get("fit_split")
+            if isinstance(cfg.get("preprocessing"), dict)
+            else None
+        )
+        or "train"
+    )
+    return standardize_metadata_features(
+        df_res, config={"fit_split": fit_split}
+    )
+
+
 def preprocess(
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray,
     df_meta: pd.DataFrame,
     config: dict[str, Any] | None = None,
-) -> tuple[pd.DataFrame, dict[str, int], dict[str, int]]:
+) -> PreprocessOutput:
     """Preprocess spectral metadata and conditioning features.
 
     Calculates physical regional and die-level flux/intensity metrics,
@@ -90,99 +237,37 @@ def preprocess(
         config={"standardize_die_flux": False},
     )
 
-    # 2. Establish fixed global die index mapping and one-hot vectors
-    unique_dies = sorted(df_res["die"].dropna().unique())
-    die_index_mapping = {die_val: idx for idx, die_val in enumerate(unique_dies)}
-    num_dies = len(die_index_mapping)
-    df_res["die_index"] = df_res["die"].map(die_index_mapping)
-    df_res["die_one_hot"] = [
-        _make_one_hot(int(x) if pd.notna(x) else None, num_dies)
-        for x in df_res["die_index"]
-    ]
+    # 2. Establish fixed global categorical index mappings and vectors
+    die_index_mapping, num_dies = _compute_die_mappings(df_res)
+    tool_index_mapping, num_tools = _compute_tool_mappings(df_res)
+    region_index_mapping, num_regions, unique_regions = _compute_region_mappings(
+        df_res
+    )
+    element_index_mapping, num_elements = _compute_element_mappings(
+        df_res, unique_regions
+    )
 
-    # 3. Establish fixed global tool index mapping from df_meta['tool']
-    tools_set = set(df_res["tool"].dropna().astype(str).unique())
-    if "target_tool" in df_res.columns:
-        tools_set.update(df_res["target_tool"].dropna().astype(str).unique())
-    unique_tools = sorted(tools_set)
-    tool_index_mapping = {
-        tool_name: idx for idx, tool_name in enumerate(unique_tools)
-    }
-    num_tools = len(tool_index_mapping)
-    df_res["source_tool_index"] = df_res["tool"].map(tool_index_mapping)
-    df_res["source_tool_one_hot"] = [
-        _make_one_hot(int(x) if pd.notna(x) else None, num_tools)
-        for x in df_res["source_tool_index"]
-    ]
+    # 3. Standardize continuous metadata features if split is present
+    df_res = _standardize_if_split_present(df_res, cfg)
 
-    if "target_tool" in df_res.columns:
-        df_res["target_tool_index"] = df_res["target_tool"].map(tool_index_mapping)
-        df_res["target_tool_one_hot"] = [
-            _make_one_hot(int(x) if pd.notna(x) else None, num_tools)
-            for x in df_res["target_tool_index"]
-        ]
+    # 4. Construct typed dataset metadata
+    dataset_metadata = DatasetMetadata(
+        num_dies=num_dies,
+        num_tools=num_tools,
+        num_regions=num_regions,
+        num_elements=num_elements,
+        die_index_mapping=die_index_mapping,
+        tool_index_mapping=tool_index_mapping,
+        region_index_mapping=region_index_mapping,
+        element_index_mapping=element_index_mapping,
+    )
 
-    # 4. Establish fixed global region index mapping and one-hot vectors
-    unique_regions = sorted(df_res["region"].dropna().astype(str).unique())
-    region_index_mapping = {
-        region_name: idx for idx, region_name in enumerate(unique_regions)
-    }
-    num_regions = len(region_index_mapping)
-    df_res["region_index"] = df_res["region"].map(region_index_mapping)
-    df_res["region_one_hot"] = [
-        _make_one_hot(int(x) if pd.notna(x) else None, num_regions)
-        for x in df_res["region_index"]
-    ]
-
-    # 5. Establish fixed global element mapping and measurement-level
-    # element_multi_hot
-    unique_elements = sorted({
-        _parse_element_from_region(r) for r in unique_regions
-    })
-    element_index_mapping = {
-        elem_name: idx for idx, elem_name in enumerate(unique_elements)
-    }
-    num_elements = len(element_index_mapping)
-
-    # Map measurement_id to its element multi-hot vector
-    meas_elements: dict[Any, list[float]] = {}
-    for meas_id, group in df_res.groupby("measurement_id"):
-        m_elems = {
-            _parse_element_from_region(r)
-            for r in group["region"].dropna().unique()
-        }
-        vec = [1.0 if elem in m_elems else 0.0 for elem in unique_elements]
-        meas_elements[meas_id] = vec
-    df_res["element_multi_hot"] = df_res["measurement_id"].map(meas_elements)
-
-    # 6. Standardize continuous metadata features if split is present
-    if "split" in df_res.columns and df_res["split"].notna().any():
-        fit_split = str(
-            cfg.get("fit_split")
-            or (
-                cfg.get("preprocessing", {}).get("fit_split")
-                if isinstance(cfg.get("preprocessing"), dict)
-                else None
-            )
-            or "train"
-        )
-        df_res = standardize_metadata_features(
-            df_res, config={"fit_split": fit_split}
-        )
-
-    # 7. Inject resolved mappings and dynamic dimensions into configs
-    film_updates = {
-        "num_dies": num_dies,
-        "num_tools": num_tools,
-        "num_regions": num_regions,
-        "num_elements": num_elements,
-        "region_index_mapping": region_index_mapping,
-        "element_index_mapping": element_index_mapping,
-        "tool_index_mapping": tool_index_mapping,
-        "die_index_mapping": die_index_mapping,
-    }
+    # 5. Backward compatibility: update configs if provided
+    film_updates = dataset_metadata.to_dict()
     for sec_key in ("training", "prediction", "film"):
         if sec_key in cfg and isinstance(cfg[sec_key], dict):
             cfg[sec_key].update(film_updates)
 
-    return df_res, tool_index_mapping, region_index_mapping
+    return PreprocessOutput(
+        df_res, tool_index_mapping, region_index_mapping, dataset_metadata
+    )

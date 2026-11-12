@@ -20,8 +20,10 @@ from models.dataset import (
 from models.deeplabv3 import DeepLabV3
 from models.factory import (
     MODEL_CLASS_MAP,
+    MODEL_REGISTRY,
     NO_SLIDING_WINDOW_MODEL_TYPES,
     instantiate_model,
+    register_model,
 )
 from models.film import FiLMGenerator, prepare_film_condition_tensor
 from models.fpn import FPN1D, FPNConvBlock1D
@@ -85,6 +87,9 @@ __all__ = [
     "SafeReflectionPad1d",
     "SafeBatchNorm1d",
     "FiLMGenerator",
+    "MODEL_CLASS_MAP",
+    "MODEL_REGISTRY",
+    "register_model",
     "instantiate_model",
     "NO_SLIDING_WINDOW_MODEL_TYPES",
     # Cost

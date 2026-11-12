@@ -183,49 +183,64 @@ def _extract_energy_bounds_tensor(
     return None
 
 
+def _has_matching_scalar_batch(d: dict[str, Any], n: int) -> bool:
+    """Check if any scalar metadata entry has batch length n."""
+    scalar_keys = (
+        "time_standardized",
+        "total_flux_single_die_standardized",
+        "relative_intensity_single_region",
+    )
+    return any(
+        isinstance(d.get(k), (list, tuple, np.ndarray, torch.Tensor))
+        and len(d.get(k)) == n  # type: ignore[arg-type]
+        for k in scalar_keys
+    )
+
+
+def _has_matching_vector_batch(d: dict[str, Any], n: int) -> bool:
+    """Check if any vector metadata entry has batch length n."""
+    vector_keys = (
+        "die_one_hot",
+        "source_tool_one_hot",
+        "target_tool_one_hot",
+        "region_one_hot",
+        "element_multi_hot",
+    )
+    for k in vector_keys:
+        val = d.get(k)
+        if isinstance(val, (list, tuple)) and len(val) == n and len(val) > 0:
+            if isinstance(val[0], (list, tuple, np.ndarray, torch.Tensor)):
+                return True
+        if isinstance(val, (np.ndarray, torch.Tensor)) and val.ndim >= 2:
+            return True
+    return False
+
+
+def _is_multi_sample_batch(d: dict[str, Any], default_num_samples: int) -> bool:
+    """Check if dictionary values match the multi-sample batch length."""
+    return _has_matching_scalar_batch(d, default_num_samples) or _has_matching_vector_batch(
+        d, default_num_samples
+    )
+
+
+def _is_single_value_entry(v: Any) -> bool:
+    """Check if a single dictionary value corresponds to an unbatched scalar or vector."""
+    if v is None:
+        return True
+    if np.isscalar(v) and (pd.isna(v) or isinstance(v, (int, float, str, np.number))):
+        return True
+    if isinstance(v, (list, tuple)) and len(v) > 0 and not isinstance(
+        v[0], (list, tuple, np.ndarray, torch.Tensor)
+    ):
+        return True
+    return isinstance(v, (np.ndarray, torch.Tensor)) and v.ndim == 1
+
+
 def _is_single_sample_record(d: dict[str, Any], default_num_samples: int) -> bool:
     """Check if dictionary represents a single sample record rather than column batches."""
     if default_num_samples > 1:
-        scalar_keys = (
-            "time_standardized",
-            "total_flux_single_die_standardized",
-            "relative_intensity_single_region",
-        )
-        for k in scalar_keys:
-            if k in d:
-                val = d[k]
-                if isinstance(val, (list, tuple, np.ndarray, torch.Tensor)):
-                    if len(val) == default_num_samples:
-                        return False
-        vector_keys = (
-            "die_one_hot",
-            "source_tool_one_hot",
-            "target_tool_one_hot",
-            "region_one_hot",
-            "element_multi_hot",
-        )
-        for k in vector_keys:
-            if k in d:
-                val = d[k]
-                if isinstance(val, (list, tuple)) and len(val) == default_num_samples:
-                    if len(val) > 0 and isinstance(val[0], (list, tuple, np.ndarray, torch.Tensor)):
-                        return False
-                if isinstance(val, (np.ndarray, torch.Tensor)) and val.ndim >= 2:
-                    return False
-        return False
-
-    for v in d.values():
-        if v is None:
-            return True
-        if np.isscalar(v) and (pd.isna(v) or isinstance(v, (int, float, str, np.number))):
-            return True
-        if isinstance(v, (list, tuple)) and len(v) > 0 and not isinstance(
-            v[0], (list, tuple, np.ndarray, torch.Tensor)
-        ):
-            return True
-        if isinstance(v, (np.ndarray, torch.Tensor)) and v.ndim == 1:
-            return True
-    return False
+        return not _is_multi_sample_batch(d, default_num_samples)
+    return any(_is_single_value_entry(v) for v in d.values())
 
 
 def _resolve_sample_count(
@@ -418,6 +433,33 @@ class FiLMGenerator(nn.Module):
             nn.init.zeros_(proj.weight)
             nn.init.zeros_(proj.bias)
 
+    def _collect_conditioning_features(
+        self, cond_dev: dict[str, torch.Tensor]
+    ) -> list[torch.Tensor]:
+        """Collect and validate active conditioning feature tensors."""
+        encodings = (
+            (self.encode_die, ("die_one_hot",)),
+            (self.encode_tool, ("source_tool_one_hot", "target_tool_one_hot")),
+            (self.encode_region, ("region_one_hot",)),
+            (self.encode_elements, ("element_multi_hot",)),
+            (self.encode_flux, ("total_flux_single_die_standardized",)),
+            (self.encode_time, ("time_standardized",)),
+            (self.encode_relative_intensity, ("relative_intensity_single_region",)),
+            (self.encode_energy, ("energy_bounds",)),
+        )
+        feat_list: list[torch.Tensor] = []
+        for is_active, keys in encodings:
+            if not is_active:
+                continue
+            for k in keys:
+                val = cond_dev.get(k)
+                if val is None:
+                    raise KeyError(
+                        f"FiLMGenerator expects '{k}' in conditioning dictionary."
+                    )
+                feat_list.append(val)
+        return feat_list
+
     def forward(
         self, cond: dict[str, torch.Tensor]
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
@@ -431,79 +473,7 @@ class FiLMGenerator(nn.Module):
             )
             for k, v in cond.items()
         }
-        feat_list: list[torch.Tensor] = []
-        if self.encode_die:
-            if "die_one_hot" not in cond_dev:
-                raise KeyError(
-                    "FiLMGenerator expects 'die_one_hot' in conditioning dictionary "
-                    "when encode_die=True."
-                )
-            feat_list.append(cond_dev["die_one_hot"])
-
-        if self.encode_tool:
-            if (
-                "source_tool_one_hot" not in cond_dev
-                or "target_tool_one_hot" not in cond_dev
-            ):
-                raise KeyError(
-                    "FiLMGenerator expects 'source_tool_one_hot' and 'target_tool_one_hot' in "
-                    "conditioning dictionary when encode_tool=True."
-                )
-            feat_list.append(cond_dev["source_tool_one_hot"])
-            feat_list.append(cond_dev["target_tool_one_hot"])
-
-        if self.encode_region:
-            if "region_one_hot" not in cond_dev:
-                raise KeyError(
-                    "FiLMGenerator expects 'region_one_hot' in conditioning dictionary "
-                    "when encode_region=True."
-                )
-            feat_list.append(cond_dev["region_one_hot"])
-
-        if self.encode_elements:
-            if "element_multi_hot" not in cond_dev:
-                raise KeyError(
-                    "FiLMGenerator expects 'element_multi_hot' in conditioning dictionary "
-                    "when encode_elements=True."
-                )
-            feat_list.append(cond_dev["element_multi_hot"])
-
-        if self.encode_flux:
-            flux_t = cond_dev.get("total_flux_single_die_standardized")
-            if flux_t is None:
-                raise KeyError(
-                    "FiLMGenerator expects 'total_flux_single_die_standardized' in "
-                    "conditioning dictionary when encode_flux=True."
-                )
-            feat_list.append(flux_t)
-
-        if self.encode_time:
-            time_t = cond_dev.get("time_standardized")
-            if time_t is None:
-                raise KeyError(
-                    "FiLMGenerator expects 'time_standardized' in conditioning "
-                    "dictionary when encode_time=True."
-                )
-            feat_list.append(time_t)
-
-        if self.encode_relative_intensity:
-            rel_t = cond_dev.get("relative_intensity_single_region")
-            if rel_t is None:
-                raise KeyError(
-                    "FiLMGenerator expects 'relative_intensity_single_region' in "
-                    "conditioning dictionary when encode_relative_intensity=True."
-                )
-            feat_list.append(rel_t)
-
-        if self.encode_energy:
-            energy_t = cond_dev.get("energy_bounds")
-            if energy_t is None:
-                raise KeyError(
-                    "FiLMGenerator expects 'energy_bounds' in conditioning "
-                    "dictionary when encode_energy=True."
-                )
-            feat_list.append(energy_t)
-
+        feat_list = self._collect_conditioning_features(cond_dev)
         h = self.mlp(torch.cat(feat_list, dim=-1))
         return [
             (1.0 + gamma_proj(h), beta_proj(h))

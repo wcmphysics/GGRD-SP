@@ -36,6 +36,161 @@ def _normalize_die_str(die_val: Any) -> str:
     return s
 
 
+def _build_original_index_lookup(
+    df_meta_orig: pd.DataFrame,
+) -> tuple[
+    dict[tuple[str, str, str], int],
+    set[int],
+    dict[int, tuple[str | None, int | None]],
+    dict[tuple[str, str, str], tuple[str | None, int | None]],
+]:
+    """Index original metadata for O(1) coordinate and target lookup."""
+    meas_die_reg_to_spec: dict[tuple[str, str, str], int] = {}
+    valid_orig_indices: set[int] = set()
+    src_idx_to_tgt: dict[int, tuple[str | None, int | None]] = {}
+    meas_die_reg_to_tgt: dict[
+        tuple[str, str, str], tuple[str | None, int | None]
+    ] = {}
+
+    for row in df_meta_orig.itertuples():
+        m_id = str(row.measurement_id)
+        die_key = _normalize_die_str(row.die)
+        reg = str(row.region)
+        s_idx = int(row.spectrum_index)
+        valid_orig_indices.add(s_idx)
+        key = (m_id, die_key, reg)
+        meas_die_reg_to_spec[key] = s_idx
+
+        tgt_m = getattr(row, "target_measurement_id", None)
+        tgt_s = getattr(row, "target_spectrum_index", None)
+        tgt_m_str = str(tgt_m) if pd.notna(tgt_m) else None
+        tgt_s_int = int(tgt_s) if pd.notna(tgt_s) else None
+        if tgt_m_str is not None or tgt_s_int is not None:
+            src_idx_to_tgt[s_idx] = (tgt_m_str, tgt_s_int)
+            meas_die_reg_to_tgt[key] = (tgt_m_str, tgt_s_int)
+
+    return (
+        meas_die_reg_to_spec,
+        valid_orig_indices,
+        src_idx_to_tgt,
+        meas_die_reg_to_tgt,
+    )
+
+
+def _resolve_source_index(
+    pred_row: Any,
+    die_key: str,
+    reg: str,
+    meas_die_reg_to_spec: dict[tuple[str, str, str], int],
+    valid_orig_indices: set[int],
+) -> int | None:
+    """Resolve original source spectrum index for a prediction record."""
+    if hasattr(pred_row, "source_spectrum_index") and pd.notna(
+        pred_row.source_spectrum_index
+    ):
+        cand_src = int(pred_row.source_spectrum_index)
+        if cand_src in valid_orig_indices:
+            return cand_src
+
+    s_meas = str(
+        getattr(
+            pred_row,
+            "source_measurement_id",
+            getattr(pred_row, "measurement_id", ""),
+        )
+    )
+    return meas_die_reg_to_spec.get((s_meas, die_key, reg))
+
+
+def _resolve_target_index(
+    pred_row: Any,
+    src_idx: int,
+    die_key: str,
+    reg: str,
+    src_idx_to_tgt: dict[int, tuple[str | None, int | None]],
+    meas_die_reg_to_tgt: dict[tuple[str, str, str], tuple[str | None, int | None]],
+    meas_die_reg_to_spec: dict[tuple[str, str, str], int],
+    valid_orig_indices: set[int],
+) -> int | None:
+    """Resolve target spectrum index corresponding to a predicted row."""
+    if hasattr(pred_row, "target_spectrum_index") and pd.notna(
+        pred_row.target_spectrum_index
+    ):
+        cand_tgt = int(pred_row.target_spectrum_index)
+        if cand_tgt in valid_orig_indices:
+            return cand_tgt
+
+    tgt_m_str, tgt_s_int = src_idx_to_tgt.get(src_idx, (None, None))
+    if tgt_m_str is None and tgt_s_int is None:
+        s_meas = str(
+            getattr(
+                pred_row,
+                "source_measurement_id",
+                getattr(pred_row, "measurement_id", ""),
+            )
+        )
+        tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
+            (s_meas, die_key, reg), (None, None)
+        )
+
+    if tgt_s_int is not None and tgt_s_int in valid_orig_indices:
+        return tgt_s_int
+    if tgt_m_str is not None:
+        return meas_die_reg_to_spec.get((tgt_m_str, die_key, reg))
+    return None
+
+
+def _build_die_filter_set(die_filter: Any) -> set[str] | None:
+    """Normalize user-specified die filter into a string set."""
+    if die_filter is None:
+        return None
+    if isinstance(die_filter, (str, int, float)):
+        return {_normalize_die_str(die_filter)}
+    return {_normalize_die_str(d) for d in die_filter}
+
+
+def _match_single_prediction_row(
+    pred_row: Any,
+    regions_set: set[str] | None,
+    dies_set: set[str] | None,
+    lookups: tuple[
+        dict[tuple[str, str, str], int],
+        set[int],
+        dict[int, tuple[str | None, int | None]],
+        dict[tuple[str, str, str], tuple[str | None, int | None]],
+    ],
+) -> tuple[str, tuple[int, int, int]] | None:
+    """Match a single prediction record to its source and target spectrum indices."""
+    reg = str(pred_row.region)
+    if regions_set is not None and reg not in regions_set:
+        return None
+    die_key = _normalize_die_str(pred_row.die)
+    if dies_set is not None and die_key not in dies_set:
+        return None
+
+    meas_die_reg_to_spec, valid_orig_indices, src_idx_to_tgt, meas_die_reg_to_tgt = lookups
+    src_idx = _resolve_source_index(
+        pred_row, die_key, reg, meas_die_reg_to_spec, valid_orig_indices
+    )
+    if src_idx is None:
+        return None
+
+    tgt_idx = _resolve_target_index(
+        pred_row,
+        src_idx,
+        die_key,
+        reg,
+        src_idx_to_tgt,
+        meas_die_reg_to_tgt,
+        meas_die_reg_to_spec,
+        valid_orig_indices,
+    )
+    if tgt_idx is None or tgt_idx not in valid_orig_indices:
+        return None
+
+    return reg, (src_idx, tgt_idx, int(pred_row.spectrum_index))
+
+
 def match_prediction_source_target_indices(
     df_meta_orig: pd.DataFrame,
     df_meta_pred: pd.DataFrame,
@@ -65,101 +220,15 @@ def match_prediction_source_target_indices(
         (source_spectrum_index, target_spectrum_index, pred_spectrum_index).
     """
     regions_set = set(regions_filter) if regions_filter is not None else None
-    dies_set: set[str] | None = None
-    if die_filter is not None:
-        dies_set = (
-            {_normalize_die_str(die_filter)}
-            if isinstance(die_filter, (str, int, float))
-            else {_normalize_die_str(d) for d in die_filter}
-        )
+    dies_set = _build_die_filter_set(die_filter)
+    lookups = _build_original_index_lookup(df_meta_orig)
 
-    # Index original metadata for fast O(1) coordinate and target lookup
-    meas_die_reg_to_spec: dict[tuple[str, str, str], int] = {}
-    valid_orig_indices: set[int] = set()
-    src_idx_to_tgt: dict[int, tuple[str | None, int | None]] = {}
-    meas_die_reg_to_tgt: dict[
-        tuple[str, str, str], tuple[str | None, int | None]
-    ] = {}
-
-    for row in df_meta_orig.itertuples():
-        m_id = str(row.measurement_id)
-        die_key = _normalize_die_str(row.die)
-        reg = str(row.region)
-        s_idx = int(row.spectrum_index)
-        valid_orig_indices.add(s_idx)
-        key = (m_id, die_key, reg)
-        meas_die_reg_to_spec[key] = s_idx
-
-        tgt_m = getattr(row, "target_measurement_id", None)
-        tgt_s = getattr(row, "target_spectrum_index", None)
-        tgt_m_str = str(tgt_m) if pd.notna(tgt_m) else None
-        tgt_s_int = int(tgt_s) if pd.notna(tgt_s) else None
-        if tgt_m_str is not None or tgt_s_int is not None:
-            src_idx_to_tgt[s_idx] = (tgt_m_str, tgt_s_int)
-            meas_die_reg_to_tgt[key] = (tgt_m_str, tgt_s_int)
-
-    # Match each predicted spectrum to its corresponding source and target
     matched: dict[str, list[tuple[int, int, int]]] = {}
     for pred_row in df_meta_pred.itertuples():
-        reg = str(pred_row.region)
-        if regions_set is not None and reg not in regions_set:
-            continue
-        die_key = _normalize_die_str(pred_row.die)
-        if dies_set is not None and die_key not in dies_set:
-            continue
-
-        pred_idx = int(pred_row.spectrum_index)
-        src_idx: int | None = None
-        if hasattr(pred_row, "source_spectrum_index") and pd.notna(
-            pred_row.source_spectrum_index
-        ):
-            cand_src = int(pred_row.source_spectrum_index)
-            if cand_src in valid_orig_indices:
-                src_idx = cand_src
-        if src_idx is None:
-            s_meas = str(
-                getattr(
-                    pred_row,
-                    "source_measurement_id",
-                    getattr(pred_row, "measurement_id", ""),
-                )
-            )
-            src_idx = meas_die_reg_to_spec.get((s_meas, die_key, reg))
-
-        if src_idx is None:
-            continue
-
-        tgt_idx: int | None = None
-        if hasattr(pred_row, "target_spectrum_index") and pd.notna(
-            pred_row.target_spectrum_index
-        ):
-            cand_tgt = int(pred_row.target_spectrum_index)
-            if cand_tgt in valid_orig_indices:
-                tgt_idx = cand_tgt
-
-        if tgt_idx is None:
-            tgt_m_str, tgt_s_int = src_idx_to_tgt.get(src_idx, (None, None))
-            if tgt_m_str is None and tgt_s_int is None:
-                s_meas = str(
-                    getattr(
-                        pred_row,
-                        "source_measurement_id",
-                        getattr(pred_row, "measurement_id", ""),
-                    )
-                )
-                tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
-                    (s_meas, die_key, reg), (None, None)
-                )
-
-            if tgt_s_int is not None and tgt_s_int in valid_orig_indices:
-                tgt_idx = tgt_s_int
-            elif tgt_m_str is not None:
-                tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_key, reg))
-
-        if tgt_idx is None or tgt_idx not in valid_orig_indices:
-            continue
-
-        matched.setdefault(reg, []).append((src_idx, tgt_idx, pred_idx))
+        res = _match_single_prediction_row(pred_row, regions_set, dies_set, lookups)
+        if res is not None:
+            reg, triplet = res
+            matched.setdefault(reg, []).append(triplet)
 
     return matched
 

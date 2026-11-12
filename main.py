@@ -27,6 +27,7 @@ import torch
 import denoise
 import models
 import utility
+from utility.bundle import SpectralDataBundle
 import visualization
 
 
@@ -52,21 +53,22 @@ def main() -> None:
     # STAGE 1: SPECTRUM DATA READING OR GENERATION
     # =========================================================================
     print("=== Stage 1: Data Generation ===")
-    ary_intensity, ary_energy, df_meta = utility.generate_pseudo_measurements(
-        config["data_generation"]
-    )
+    bundle = SpectralDataBundle(
+        *utility.generate_pseudo_measurements(config["data_generation"])
+    ).validate()
     print(
-        f"Generated raw spectra: {ary_intensity.shape[0]} rows, "
-        f"{ary_intensity.shape[1]} points"
+        f"Generated raw spectra: {bundle.ary_intensity.shape[0]} rows, "
+        f"{bundle.ary_intensity.shape[1]} points"
     )
 
     # =========================================================================
     # STAGE 2: PAIRING SOURCE AND TARGET SPECTRA
     # =========================================================================
     print("\n=== Stage 2: 1-to-1 Tool Pairing ===")
-    df_meta = utility.pair_source_target_spectra(df_meta, config["pairing"])
+    df_meta = utility.pair_source_target_spectra(bundle.df_meta, config["pairing"])
+    bundle = SpectralDataBundle(bundle.ary_intensity, bundle.ary_energy, df_meta).validate()
     source_tool = str(config["pairing"]["source_tool"])
-    df_source_tool = df_meta[df_meta["tool"] == source_tool]
+    df_source_tool = bundle.df_meta[bundle.df_meta["tool"] == source_tool]
     print(
         f"Paired sessions: {df_source_tool['target_measurement_id'].dropna().nunique()}"
         f"/{df_source_tool['measurement_id'].nunique()}"
@@ -77,8 +79,9 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 3: Train-Val-Test Session Splitting ===")
     df_meta, _, session_splits = utility.split_measurement_sessions(
-        df_meta, config["splitting"]
+        bundle.df_meta, config["splitting"]
     )
+    bundle = SpectralDataBundle(bundle.ary_intensity, bundle.ary_energy, df_meta).validate()
     print(
         f"Session splits: train={len(session_splits['train'])}, "
         f"val={len(session_splits['val'])}, test={len(session_splits['test'])}"
@@ -90,25 +93,27 @@ def main() -> None:
     print("\n=== Stage 4: Noise Analysis & Regional De-noising ===")
     ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
         denoise.perform_spectral_noise_analysis(
-            ary_intensity, ary_energy, df_meta, config["noise_analysis"]
+            bundle.ary_intensity, bundle.ary_energy, bundle.df_meta, config["noise_analysis"]
         )
     )
+    bundle = SpectralDataBundle(bundle.ary_intensity, bundle.ary_energy, df_meta).validate()
     print(
         f"Analysed {ary_spec_analysis_signal.shape[0]} regional spectra; "
-        f"mean noise sigma={df_meta['gp_noise_sigma'].mean():.4g}, "
-        f"mean SNR={df_meta['gp_snr'].mean():.4g}"
+        f"mean noise sigma={bundle.df_meta['gp_noise_sigma'].mean():.4g}, "
+        f"mean SNR={bundle.df_meta['gp_snr'].mean():.4g}"
     )
 
     ary_intensity, ary_intensity_non_denoised, ary_intensity_denoised = (
         denoise.denoise_regional_spectra(
-            ary_intensity, ary_energy, df_meta, config["denoise"]
+            bundle.ary_intensity, bundle.ary_energy, bundle.df_meta, config["denoise"]
         )
     )
+    bundle = SpectralDataBundle(ary_intensity, bundle.ary_energy, bundle.df_meta).validate()
     df_denoise_atomic_samples, df_denoise_atomic_summary = (
         denoise.compare_denoised_atomic_percentages(
-            ary_energy,
+            bundle.ary_energy,
             (ary_intensity_non_denoised, ary_intensity_denoised),
-            df_meta,
+            bundle.df_meta,
             config["denoise"],
         )
     )
@@ -127,9 +132,14 @@ def main() -> None:
     # STAGE 5: PRE-PROCESSING
     # =========================================================================
     print("\n=== Stage 5: Pre-processing ===")
-    df_meta, _, _ = utility.preprocess(
-        ary_intensity, ary_energy, df_meta, config=config
+    prep_res = utility.preprocess(
+        bundle.ary_intensity, bundle.ary_energy, bundle.df_meta, config=config
     )
+    df_meta = prep_res[0]
+    dataset_metadata = prep_res.dataset_metadata
+    for sec_key in ("training", "prediction", "film"):
+        if sec_key in config and isinstance(config[sec_key], dict):
+            config[sec_key].update(dataset_metadata.to_dict())
 
     print(
         f"Calculated spectral metrics: "
@@ -140,11 +150,12 @@ def main() -> None:
     )
 
     ary_intensity, ary_energy, df_meta = utility.normalize_spectral_data(
-        ary_intensity, ary_energy, df_meta, config["normalization"]
+        bundle.ary_intensity, bundle.ary_energy, df_meta, config["normalization"]
     )
+    bundle = SpectralDataBundle(ary_intensity, ary_energy, df_meta).validate()
     print(
         f"Normalized intensity by {config['normalization']['normalization_mode']}; "
-        f"max={ary_intensity.max():.4f}"
+        f"max={bundle.ary_intensity.max():.4f}"
     )
 
     # =========================================================================
@@ -152,7 +163,7 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 6: Die Flux Prediction ===")
     gp_bundle, df_gp_metrics = models.run_gp_flux_pipeline(
-        df_meta, config["gp_flux"]
+        bundle.df_meta, config["gp_flux"]
     )
     print("\nDie Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
@@ -162,7 +173,7 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 7: Regional Dataset Definition & Patch Augmentation ===")
     regional_datasets = models.create_regional_datasets(
-        df_meta, ary_intensity, ary_energy, config=config["dataset"]
+        bundle.df_meta, bundle.ary_intensity, bundle.ary_energy, config=config["dataset"]
     )
     for region_name, dataset_bundle in regional_datasets.items():
         print(
@@ -196,15 +207,16 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 10: Transformed Spectrum Prediction ===")
     prediction_cfg = {**config["prediction"], "session_splits": session_splits}
-    data_original = (ary_intensity, ary_energy, df_meta)
+    data_original = bundle
     data_predicted = models.predict_spectra(
         models=training_results["models"],
-        data=data_original,
+        data=bundle,
         config=prediction_cfg,
     )
+    bundle_pred = SpectralDataBundle(*data_predicted).validate()
     print(
-        f"Predicted spectra shape: {data_predicted[0].shape} "
-        f"(total: {len(data_predicted[2])})"
+        f"Predicted spectra shape: {bundle_pred.ary_intensity.shape} "
+        f"(total: {len(bundle_pred.df_meta)})"
     )
 
     # =========================================================================
@@ -212,7 +224,7 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 11: Quantitative Model Evaluation ===")
     df_prediction_metrics, _ = utility.calculate_prediction_metrics(
-        data_original, data_predicted, config=config["metrics_report"]
+        bundle, bundle_pred, config=config["metrics_report"]
     )
     print(
         "\nMetrics (Train vs. Test):\n",
@@ -240,7 +252,7 @@ def main() -> None:
         )
     df_atomic_percentage_samples, df_atomic_percentage_summary = (
         utility.calculate_atomic_percentage_split_statistics(
-            data_original, data_predicted, config=config["metrics_report"]
+            bundle, bundle_pred, config=config["metrics_report"]
         )
     )
     print(
@@ -257,11 +269,11 @@ def main() -> None:
         print("\n=== Stage 13: Diagnostic Visualization Dispatching ===")
         print("Generating demonstration plots via dispatcher...")
         pipeline_plot_data = {
-            "df_meta": df_meta,
-            "ary_intensity": ary_intensity,
-            "ary_energy": ary_energy,
-            "data_original": data_original,
-            "data_predicted": data_predicted,
+            "df_meta": bundle.df_meta,
+            "ary_intensity": bundle.ary_intensity,
+            "ary_energy": bundle.ary_energy,
+            "data_original": bundle,
+            "data_predicted": bundle_pred,
             "training_results": training_results,
             "df_atomic_percentage_samples": df_atomic_percentage_samples,
             "gp_bundle": gp_bundle,

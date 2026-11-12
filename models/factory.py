@@ -16,7 +16,7 @@ NO_SLIDING_WINDOW_MODEL_TYPES: frozenset[str] = frozenset(
     {"inception_time", "tcn", "fpn"}
 )
 
-MODEL_CLASS_MAP: dict[str, type[nn.Module]] = {
+MODEL_REGISTRY: dict[str, type[nn.Module]] = {
     "resnet": ResNet1D,
     "resnet_scaled_short": ResNetScaledShort1D,
     "residual_unet": ResidualUNet1D,
@@ -26,12 +26,20 @@ MODEL_CLASS_MAP: dict[str, type[nn.Module]] = {
     "tcn": TCN1D,
     "fpn": FPN1D,
 }
+MODEL_CLASS_MAP = MODEL_REGISTRY
 
 __all__ = [
     "MODEL_CLASS_MAP",
+    "MODEL_REGISTRY",
     "NO_SLIDING_WINDOW_MODEL_TYPES",
     "instantiate_model",
+    "register_model",
 ]
+
+
+def register_model(name: str, model_class: type[nn.Module]) -> None:
+    """Register a new spectral model architecture."""
+    MODEL_REGISTRY[name.lower()] = model_class
 
 
 def instantiate_model(
@@ -59,7 +67,7 @@ def instantiate_model(
     nn.Module
         Instantiated PyTorch neural network module ready for training.
     """
-    model_class = MODEL_CLASS_MAP.get(model_type.lower())
+    model_class = MODEL_REGISTRY.get(model_type.lower())
     if model_class is None:
         raise ValueError(
             f"Unknown model_type '{model_type}'. Choose 'resnet', "

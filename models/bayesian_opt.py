@@ -279,6 +279,56 @@ def run_ax_search(
     }
 
 
+_MODEL_ARCH_SPECS: dict[str, list[tuple[str, str, list[int]]]] = {
+    "inception": [
+        ("inception_channel", "inception_channels", [8, 16, 32]),
+        ("bottleneck_channels", "bottleneck_channels", [8, 16, 32]),
+        ("num_blocks", "num_blocks", [2, 3, 4]),
+    ],
+    "tcn": [
+        ("kernel_size", "kernel_sizes", [3, 5, 7]),
+        ("tcn_channel", "tcn_channels", [16, 32, 64]),
+    ],
+    "fpn": [
+        ("kernel_size", "kernel_sizes", [3, 5]),
+        ("fpn_base_channel", "fpn_base_channels", [8, 16, 32]),
+        ("fpn_pyramid_channel", "fpn_pyramid_channels", [16, 32, 64]),
+        ("depth", "depths", [2, 3]),
+    ],
+    "deeplab": [
+        ("kernel_size", "kernel_sizes", [3, 5]),
+        ("deeplabv3_backbone_channel", "deeplabv3_backbone_channels", [16, 32, 64]),
+        ("deeplabv3_aspp_channel", "deeplabv3_aspp_channels", [16, 32, 64]),
+    ],
+    "residual_unet": [
+        ("residual_unet_channel", "residual_unet_channels", [16, 32]),
+        ("depth", "depths", [2, 3]),
+        ("kernel_size", "kernel_sizes", [3, 5]),
+    ],
+    "unet": [
+        ("unet_channel", "unet_channels", [16, 32]),
+        ("depth", "depths", [2, 3]),
+        ("kernel_size", "kernel_sizes", [3, 5]),
+    ],
+    "resnet": [
+        ("kernel_size", "kernel_sizes", [3, 5, 7]),
+        ("resnet_channel", "resnet_channels", [16, 32, 64]),
+    ],
+}
+
+
+def _resolve_model_arch_specs(
+    model_type: str,
+) -> list[tuple[str, str, list[int]]]:
+    """Resolve architecture search specifications for a model family."""
+    if "residual" in model_type and "unet" in model_type:
+        return _MODEL_ARCH_SPECS["residual_unet"]
+    for key, specs in _MODEL_ARCH_SPECS.items():
+        if key in model_type:
+            return specs
+    return _MODEL_ARCH_SPECS["resnet"]
+
+
 def _build_architecture_parameters(
     model_type: str,
     cfg: dict[str, Any],
@@ -310,47 +360,7 @@ def _build_architecture_parameters(
             _choice(ch_key[:-1], cfg[ch_key], min_val=1)
 
     # Configure architecture specifications per model family.
-    if "inception" in model_type:
-        arch_specs = [
-            ("inception_channel", "inception_channels", [8, 16, 32]),
-            ("bottleneck_channels", "bottleneck_channels", [8, 16, 32]),
-            ("num_blocks", "num_blocks", [2, 3, 4]),
-        ]
-    elif "tcn" in model_type:
-        arch_specs = [
-            ("kernel_size", "kernel_sizes", [3, 5, 7]),
-            ("tcn_channel", "tcn_channels", [16, 32, 64]),
-        ]
-    elif "fpn" in model_type:
-        arch_specs = [
-            ("kernel_size", "kernel_sizes", [3, 5]),
-            ("fpn_base_channel", "fpn_base_channels", [8, 16, 32]),
-            ("fpn_pyramid_channel", "fpn_pyramid_channels", [16, 32, 64]),
-            ("depth", "depths", [2, 3]),
-        ]
-    elif "deeplab" in model_type:
-        arch_specs = [
-            ("kernel_size", "kernel_sizes", [3, 5]),
-            ("deeplabv3_backbone_channel", "deeplabv3_backbone_channels", [16, 32, 64]),
-            ("deeplabv3_aspp_channel", "deeplabv3_aspp_channels", [16, 32, 64]),
-        ]
-    elif "residual" in model_type and "unet" in model_type:
-        arch_specs = [
-            ("residual_unet_channel", "residual_unet_channels", [16, 32]),
-            ("depth", "depths", [2, 3]),
-            ("kernel_size", "kernel_sizes", [3, 5]),
-        ]
-    elif "unet" in model_type:
-        arch_specs = [
-            ("unet_channel", "unet_channels", [16, 32]),
-            ("depth", "depths", [2, 3]),
-            ("kernel_size", "kernel_sizes", [3, 5]),
-        ]
-    else:
-        arch_specs = [
-            ("kernel_size", "kernel_sizes", [3, 5, 7]),
-            ("resnet_channel", "resnet_channels", [16, 32, 64]),
-        ]
+    arch_specs = _resolve_model_arch_specs(model_type)
 
     # Resolve candidate architecture choices into parameter specs.
     resolved_arch: dict[str, list[int]] = {}
