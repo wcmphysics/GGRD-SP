@@ -28,8 +28,6 @@ import denoise
 import models
 import utility
 import visualization
-from denoise.denoise_comparison import plot_denoise_comparison
-from visualization.plot_gp_flux_components import plot_gp_flux_kernel_contributions
 
 
 def main() -> None:
@@ -90,11 +88,6 @@ def main() -> None:
     # STAGE 4: NOISE ANALYSIS AND DE-NOISING
     # =========================================================================
     print("\n=== Stage 4: Noise Analysis & Regional De-noising ===")
-    if (config["denoise"]["denoise_comparison"] or {}).get("enabled", False):
-        plot_denoise_comparison(
-            (ary_intensity, ary_energy, df_meta),
-            config["denoise"]["denoise_comparison"],
-        )
     ary_spec_analysis_signal, ary_spec_analysis_noise, df_meta = (
         denoise.perform_spectral_noise_analysis(
             ary_intensity, ary_energy, df_meta, config["noise_analysis"]
@@ -163,16 +156,6 @@ def main() -> None:
     )
     print("\nDie Flux Error Performance Summary:")
     print(df_gp_metrics.to_string(index=False))
-    if show_plots and config["visualization"]["show_plots"]:
-        flux_plots = config["visualization"]["plots"]
-        if flux_plots.get("gp_die_flux_timeline", False):
-            visualization.plot_gp_die_flux_timeline(gp_bundle, config["gp_flux"])
-        if flux_plots.get("gp_die_flux_kernel_contributions", False):
-            plot_gp_flux_kernel_contributions(gp_bundle, config["gp_flux"])
-        if flux_plots.get("gp_die_flux_timeline", False) or flux_plots.get(
-            "gp_die_flux_kernel_contributions", False
-        ):
-            plt.show()
 
     # =========================================================================
     # STAGE 7: DATASET AND DATALOADER DEFINITION (With Augmentation)
@@ -299,6 +282,9 @@ def main() -> None:
             "show_plots": show_plots,
             "session_splits": session_splits,
             "gp_flux_config": config.get("gp_flux"),
+            "denoise_comparison_config": config.get("denoise", {}).get(
+                "denoise_comparison"
+            ),
         }
         visualization.dispatch_visualizations(
             pipeline_plot_data, config=dispatch_cfg

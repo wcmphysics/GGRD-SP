@@ -20,7 +20,6 @@ from denoise.gp import (
 from denoise.orchestration import (
     compare_denoised_atomic_percentages,
     denoise_regional_spectra,
-    denoise_single_spectrum,
     get_default_denoise_config,
     get_default_noise_analysis_config,
     perform_spectral_noise_analysis,
@@ -63,7 +62,6 @@ __all__ = [
     "get_default_noise_analysis_config",
     "perform_spectral_noise_analysis",
     "get_default_denoise_config",
-    "denoise_single_spectrum",
     "denoise_regional_spectra",
     "compare_denoised_atomic_percentages",
 ]

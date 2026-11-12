@@ -34,15 +34,4 @@ bayesian_opt:
   tcn_channels: [16, 32, 64]
   kernel_sizes: [3, 5, 7]
 
-film:
-  encode_die: true
-  encode_tool: true
-  encode_flux: true
-  encode_time: true
-  encode_energy: true
-  encode_region: true
-  encode_relative_intensity: true
-  encode_elements: true
-  energy_scale_ev: 1000.0
-  hidden_dim: 32
-  relative_learning_rate: 0.1
+film: {}

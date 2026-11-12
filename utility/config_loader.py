@@ -154,6 +154,15 @@ def merge_dedicated_model_config(
     _merge_subdict_defaults(
         raw_config, "bayesian_opt", model_raw.get("bayesian_opt")
     )
+    # Merge film defaults from config.yaml if available, then apply model overrides.
+    config_yaml_candidates = [
+        Path(config_dir) / "config.yaml" if config_dir else None,
+        Path("config") / "config.yaml",
+    ]
+    base_yaml_path = next((p for p in config_yaml_candidates if p and p.is_file()), None)
+    if base_yaml_path is not None:
+        base_cfg = load_yaml(base_yaml_path)
+        _merge_subdict_defaults(raw_config, "film", base_cfg.get("film"))
     _merge_subdict_defaults(raw_config, "film", model_raw.get("film"))
 
 
@@ -276,63 +285,59 @@ def _set_if_none(d: dict[str, Any], key: str, value: Any) -> None:
         d[key] = value
 
 
-def _inject_spatial_temporal_settings(
-    resolved: dict[str, Any],
-    global_cfg: dict[str, Any],
-    source_tool: str,
-    target_tool: str,
-    material: str,
+DECLARATIVE_GLOBAL_INJECTIONS: list[tuple[str, str, str]] = [
+    ("pairing", "source_tool", "source_tool"),
+    ("pairing", "target_tool", "target_tool"),
+    ("pairing", "material", "material"),
+    ("splitting", "source_tool", "source_tool"),
+    ("splitting", "target_tool", "target_tool"),
+    ("gp_flux", "source_tool", "source_tool"),
+    ("gp_flux", "target_tool", "target_tool"),
+    ("denoise", "source_tool", "source_tool"),
+    ("denoise", "target_tool", "target_tool"),
+    ("denoise", "material", "material"),
+    ("denoise", "apply_denoise", "apply_denoise"),
+    ("dataset", "source_tool", "source_tool"),
+    ("dataset", "target_tool", "target_tool"),
+    ("dataset", "use_sliding_window", "use_sliding_window"),
+    ("dataset", "regions", "regions"),
+    ("dataset", "unified_model", "unified_model"),
+    ("prediction", "source_tool", "source_tool"),
+    ("prediction", "target_tool", "target_tool"),
+    ("quantification", "material", "material"),
+    ("visualization", "source_tool", "source_tool"),
+    ("visualization", "target_tool", "target_tool"),
+    ("visualization", "example_region", "example_region"),
+    ("visualization", "sample_measurement_id", "sample_measurement_id"),
+    ("visualization", "use_sliding_window", "use_sliding_window"),
+]
+
+
+def _inject_declarative_defaults(
+    resolved: dict[str, Any], context: dict[str, Any]
 ) -> None:
-    """Inject global pairing and splitting configuration defaults."""
-    pairing = resolved.setdefault("pairing", {})
-    if isinstance(pairing, dict):
-        _set_if_none(pairing, "source_tool", source_tool)
-        _set_if_none(pairing, "target_tool", target_tool)
-        _set_if_none(pairing, "material", material)
-
-    splitting = resolved.setdefault("splitting", {})
-    if isinstance(splitting, dict):
-        _set_if_none(splitting, "source_tool", source_tool)
-        _set_if_none(splitting, "target_tool", target_tool)
-
-    gp_flux = resolved.setdefault("gp_flux", {})
-    if isinstance(gp_flux, dict):
-        _set_if_none(gp_flux, "source_tool", source_tool)
-        _set_if_none(gp_flux, "target_tool", target_tool)
+    """Inject global-to-stage defaults using the declarative mapping table."""
+    for stage, target_key, ctx_key in DECLARATIVE_GLOBAL_INJECTIONS:
+        if ctx_key in context:
+            stage_sec = resolved.setdefault(stage, {})
+            if isinstance(stage_sec, dict):
+                _set_if_none(stage_sec, target_key, context[ctx_key])
 
 
 def _inject_preprocessing_and_denoise_settings(
     resolved: dict[str, Any],
-    global_cfg: dict[str, Any],
     example_region: str,
     sample_meas_id: str,
 ) -> None:
-    """Inject noise analysis, denoise, and noise plotting defaults."""
-    source_tool = str(global_cfg.get("source_tool", "J4"))
-    target_tool = str(global_cfg.get("target_tool", "J5"))
-    apply_denoise = bool(global_cfg.get("apply_denoise", False))
-    data_gen = resolved.get("data_generation", {})
-    material = str(
-        global_cfg.get("material", data_gen.get("material", "NMG"))
-        if isinstance(data_gen, dict)
-        else global_cfg.get("material", "NMG")
-    )
-
-    # Propagate noise analysis and regional defaults.
+    """Inject noise analysis and noise plotting defaults."""
     noise_analysis = resolved.setdefault("noise_analysis", {})
     if isinstance(noise_analysis, dict):
         _set_if_none(noise_analysis, "regions", [example_region])
 
-    # Inject default tools and targeted elements into denoise stage.
     denoise_cfg = resolved.setdefault("denoise", {})
     if isinstance(denoise_cfg, dict):
-        _set_if_none(denoise_cfg, "apply_denoise", apply_denoise)
-        _set_if_none(denoise_cfg, "source_tool", source_tool)
-        _set_if_none(denoise_cfg, "target_tool", target_tool)
-        _set_if_none(denoise_cfg, "material", material)
         _set_if_none(denoise_cfg, "regions", ["Cl2p", "Ti2p"])
 
-    # Configure noise plot sample measurement and region references.
     noise_plot = resolved.setdefault("noise_plot", {})
     if isinstance(noise_plot, dict):
         noise_plot.setdefault(
@@ -346,33 +351,17 @@ def _inject_preprocessing_and_denoise_settings(
 
 def _inject_model_and_training_settings(
     resolved: dict[str, Any],
-    global_cfg: dict[str, Any],
     model_type: str,
     unified_model: bool,
     regions: list[str],
+    use_film: bool,
 ) -> None:
-    """Inject dataset, FiLM, Bayesian optimization, and training defaults."""
-    source_tool = str(global_cfg.get("source_tool", "J4"))
-    target_tool = str(global_cfg.get("target_tool", "J5"))
-    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
-    use_film = bool(global_cfg.get("use_film", False))
-
-    # Propagate dataset tools, sliding window, and regions settings.
-    dataset = resolved.setdefault("dataset", {})
-    if isinstance(dataset, dict):
-        _set_if_none(dataset, "source_tool", source_tool)
-        _set_if_none(dataset, "target_tool", target_tool)
-        _set_if_none(dataset, "use_sliding_window", use_sliding_window)
-        _set_if_none(dataset, "regions", regions)
-        _set_if_none(dataset, "unified_model", unified_model)
-
-    # Inject FiLM generator defaults and region counts.
+    """Inject FiLM, Bayesian optimization, and training defaults."""
     film = resolved.setdefault("film", {})
     if isinstance(film, dict):
         film.setdefault("use_film", use_film)
         film.setdefault("num_regions", len(regions))
 
-    # Convert Bayesian optimization hyperparameter bounds to tuples.
     bo = resolved.setdefault("bayesian_opt", {})
     if isinstance(bo, dict):
         lr_b = bo.get("learning_rate_bounds")
@@ -396,33 +385,14 @@ def _inject_model_and_training_settings(
 
     prediction = resolved.setdefault("prediction", {})
     if isinstance(prediction, dict):
-        prediction.setdefault("source_tool", source_tool)
-        prediction.setdefault("target_tool", target_tool)
         prediction.setdefault("film_config", film)
 
 
 def _inject_evaluation_settings(
     resolved: dict[str, Any],
-    global_cfg: dict[str, Any],
+    material: str,
 ) -> None:
-    """Inject metrics, quantification, and visualization configuration
-    defaults.
-    """
-    source_tool = str(global_cfg.get("source_tool", "J4"))
-    target_tool = str(global_cfg.get("target_tool", "J5"))
-    example_region = str(global_cfg.get("example_region", "Ti2p"))
-    sample_meas_id = str(
-        global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
-    )
-    use_sliding_window = bool(global_cfg.get("use_sliding_window", False))
-    data_gen = resolved.get("data_generation", {})
-    material = str(
-        global_cfg.get("material", data_gen.get("material", "NMG"))
-        if isinstance(data_gen, dict)
-        else global_cfg.get("material", "NMG")
-    )
-
-    # Configure metrics report and target normalization flags.
+    """Inject metrics, quantification, and visualization configuration defaults."""
     cost = resolved.get("cost", {})
     norm_by_max = (
         cost.get("normalized_by_target_max", True)
@@ -446,18 +416,11 @@ def _inject_evaluation_settings(
             existing_metrics = [mse_metric, *existing_metrics]
         metrics_rep["metrics"] = existing_metrics
 
-    # Propagate visualization global tools, sample IDs, and sliding window.
     noise_plot = resolved.setdefault("noise_plot", {})
     vis = resolved.setdefault("visualization", {})
     if isinstance(vis, dict):
-        vis.setdefault("source_tool", source_tool)
-        vis.setdefault("target_tool", target_tool)
-        vis.setdefault("example_region", example_region)
-        vis.setdefault("sample_measurement_id", sample_meas_id)
-        vis.setdefault("use_sliding_window", use_sliding_window)
         vis.setdefault("noise_plot_config", noise_plot)
 
-    # Propagate material RSF tables into quantification and downstream stages.
     quant = resolved.setdefault("quantification", {})
     denoise_cfg = resolved.get("denoise", {})
     if isinstance(quant, dict):
@@ -502,7 +465,10 @@ def _resolve_material_and_regions(
     return material, regions
 
 
-def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
+def resolve_pipeline_config(
+    config: dict[str, Any],
+    config_dir: str | Path | None = None,
+) -> dict[str, Any]:
     """Resolve and inject cross-section configuration defaults.
 
     Extracts materials and element vocabulary and propagates global defaults
@@ -513,6 +479,8 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
     ----------
     config : dict[str, Any]
         Raw configuration dictionary loaded from YAML.
+    config_dir : str | Path | None, optional
+        Directory containing configuration files.
 
     Returns
     -------
@@ -520,8 +488,9 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
         Resolved configuration dictionary with fully populated stage configs.
     """
     resolved = copy.deepcopy(config)
-    merge_stage_configs(resolved)
-    merge_dedicated_model_config(resolved)
+    if not resolved.pop("_stage_configs_merged", False):
+        merge_stage_configs(resolved, config_dir)
+        merge_dedicated_model_config(resolved, config_dir)
 
     global_cfg = resolved.get("global", {})
     source_tool = str(global_cfg.get("source_tool", "J4"))
@@ -538,23 +507,34 @@ def resolve_pipeline_config(config: dict[str, Any]) -> dict[str, Any]:
             "Please set 'global.use_sliding_window: false'."
         )
 
-    _inject_spatial_temporal_settings(
-        resolved, global_cfg, source_tool, target_tool, material
-    )
+    context = {
+        "source_tool": source_tool,
+        "target_tool": target_tool,
+        "material": material,
+        "regions": regions,
+        "model_type": model_type,
+        "use_sliding_window": use_sliding_window,
+        "unified_model": bool(global_cfg.get("unified_model", True)),
+        "apply_denoise": bool(global_cfg.get("apply_denoise", False)),
+        "example_region": str(global_cfg.get("example_region", "Ti2p")),
+        "sample_measurement_id": str(
+            global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
+        ),
+    }
+    _inject_declarative_defaults(resolved, context)
     _inject_preprocessing_and_denoise_settings(
         resolved,
-        global_cfg,
-        str(global_cfg.get("example_region", "Ti2p")),
-        str(global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")),
+        context["example_region"],
+        context["sample_measurement_id"],
     )
     _inject_model_and_training_settings(
         resolved,
-        global_cfg,
         model_type,
-        bool(global_cfg.get("unified_model", True)),
+        context["unified_model"],
         regions,
+        bool(global_cfg.get("use_film", False)),
     )
-    _inject_evaluation_settings(resolved, global_cfg)
+    _inject_evaluation_settings(resolved, material)
     _resolve_materials_and_vocab(resolved)
 
     return resolved
@@ -585,9 +565,10 @@ def load_config(
     config_dir = Path(file_path).parent
     merge_stage_configs(raw, config_dir)
     merge_dedicated_model_config(raw, config_dir)
+    raw["_stage_configs_merged"] = True
     if validate:
         from utility.config_schema import PipelineConfig
 
         validated = PipelineConfig.model_validate(raw)
         raw = validated.to_dict()
-    return resolve_pipeline_config(raw)
+    return resolve_pipeline_config(raw, config_dir=config_dir)

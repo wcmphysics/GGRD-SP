@@ -429,42 +429,6 @@ def _resolve_region_denoise_spec(
     return method, resolvers[method](base_method_cfg)
 
 
-def denoise_single_spectrum(
-    energy: np.ndarray,
-    intensity: np.ndarray,
-    config: dict[str, Any] | None = None,
-    meta: dict[str, Any] | None = None,
-) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float]]:
-    """Denoise one 1D regional spectrum using the configured method.
-
-    Parameters
-    ----------
-    energy : np.ndarray
-        1D array of binding energies in eV.
-    intensity : np.ndarray
-        1D array of measured intensities.
-    config : dict[str, Any] | None, optional
-        Denoising configuration dictionary.
-    meta : dict[str, Any] | None, optional
-        Optional metadata dictionary for error reporting.
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray, tuple[float, float, float]]
-        Tuple of (denoised_signal, confidence_curve, summary_tuple).
-    """
-    cfg = _resolve_denoise_config(config)
-    region = str((meta or {}).get("region", ""))
-    method, method_cfg = _resolve_region_denoise_spec(region, cfg)
-    dispatch = {
-        "savgol": denoise_spectrum_savgol,
-        "wavelet": denoise_spectrum_wavelet,
-        "fourier": denoise_spectrum_fourier,
-        "gp": denoise_spectrum_gp,
-    }
-    return dispatch[method](energy, intensity, method_cfg, meta=meta)
-
-
 def denoise_regional_spectra(
     ary_intensity: np.ndarray,
     ary_energy: np.ndarray,
@@ -629,7 +593,10 @@ def compare_denoised_atomic_percentages(
         ary_energy, ary_non_denoised, df_filtered, config=quant_cfg
     )
     df_den_die, _ = calculate_atomic_percentages(
-        ary_energy, ary_denoised, df_filtered, config=quant_cfg
+        ary_energy,
+        ary_denoised,
+        df_filtered,
+        config=dict(quant_cfg, warn_normalization=False),
     )
 
     session_info = (

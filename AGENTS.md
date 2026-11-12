@@ -93,8 +93,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
   - Full spectra are rebuilt by averaging the overlapping patch predictions.
   - Validation cost and early stopping use the **reconstructed full spectrum**.
   - Window and stride can be tuned by Bayesian optimization.
-  - When using the unified layout, sliding window size is forced to be fixed over all regions for ease of maintenance (it's not necessary as CNN layers are indifferent to sequence size in general).
-  - [Need to check] FiLM encoding like region for unifeid layout all fall back to first region? 
+  - When using the unified layout, sliding window size is fixed across all regions (configured via `dataset.unified_window_size_ev` and `dataset.unified_window_stride_ev`). In regional layout, each region uses its own window configuration. 
 
 ### 8. Cost function
 - The total cost is a weighted mean over regions (equal weights by default).
@@ -199,7 +198,7 @@ Plots should go here and controlled by the dispatcher with one boolean toggle pe
 - New features go in dedicated modules under `models/`, `denoise/`, `utility/`, or `visualization/`. Expose them as functions or classes that `main.py` can import. Don't edit `main.py` or other modules unless asked.
 - Keep coupling between modules low. Prefix internal helpers with `_`.
 - When merging or splitting modules, don't leave facade modules or re-exports behind for backward compatibility.
-- **Parameter packaging:** a public function with ≥ 5 parameters takes a config `dict` instead. `_`-prefixed helpers are exempt.
+- **Parameter packaging:** a public function with > 6 parameters takes a config `dict` instead. `_`-prefixed helpers are exempt.
 
 ### 6. Configuration
 - **Single source of truth:** these shared settings are defined once under `global:` in `config/config.yaml` and passed to the stages via `resolve_pipeline_config`:

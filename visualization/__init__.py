@@ -10,6 +10,9 @@ from visualization.plot_evaluation import (
     plot_prediction_comparison,
     plot_regional_spectrum_distribution,
 )
+from visualization.plot_denoise_comparison import plot_denoise_comparison
+from visualization.plot_fourier_comparison import plot_fourier_comparison
+from visualization.plot_gp_flux_components import plot_gp_flux_kernel_contributions
 from visualization.plot_noise_analysis import (
     plot_denoise_atomic_percentage_mae,
     plot_denoise_spectrum_comparison,
@@ -39,6 +42,9 @@ __all__ = [
     "DEFAULT_PLOT_TOGGLES",
     "dispatch_visualizations",
     "plot_denoise_atomic_percentage_mae",
+    "plot_denoise_comparison",
+    "plot_fourier_comparison",
+    "plot_gp_flux_kernel_contributions",
     "plot_denoise_spectrum_comparison",
     "plot_gp_hyperparameter_convergence",
     "plot_spectral_noise_analysis",

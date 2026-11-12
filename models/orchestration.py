@@ -53,16 +53,27 @@ def _resolve_region_config(
         else {}
     )
 
+    if region == "all":
+        default_window_size_ev = global_config.get(
+            "unified_window_size_ev", global_config.get("window_size_ev", 6.0)
+        )
+        default_sliding_stride_ev = global_config.get(
+            "unified_window_stride_ev", global_config.get("sliding_stride_ev", 2.0)
+        )
+    else:
+        default_window_size_ev = global_config.get("window_size_ev", 6.0)
+        default_sliding_stride_ev = global_config.get("sliding_stride_ev", 2.0)
+
     window_size_points = region_override.get(
         "window_size", global_config.get("window_size")
     )
     stride_points = region_override.get("stride", global_config.get("stride"))
     sliding_window_config = {
         "window_size_ev": region_override.get(
-            "window_size_ev", global_config.get("window_size_ev", 6.0)
+            "window_size_ev", default_window_size_ev
         ),
         "sliding_stride_ev": region_override.get(
-            "sliding_stride_ev", global_config.get("sliding_stride_ev", 2.0)
+            "sliding_stride_ev", default_sliding_stride_ev
         ),
         "window_size": window_size_points,
         "stride": stride_points,

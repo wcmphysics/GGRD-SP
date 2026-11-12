@@ -603,8 +603,12 @@ def create_unified_dataset(
         ).astype(int)
 
     sw_cfg = {
-        "window_size_ev": cfg.get("window_size_ev", 6.0),
-        "sliding_stride_ev": cfg.get("sliding_stride_ev", 2.0),
+        "window_size_ev": cfg.get(
+            "unified_window_size_ev", cfg.get("window_size_ev", 6.0)
+        ),
+        "sliding_stride_ev": cfg.get(
+            "unified_window_stride_ev", cfg.get("sliding_stride_ev", 2.0)
+        ),
         "window_size": cfg.get("window_size"),
         "stride": cfg.get("stride"),
     }

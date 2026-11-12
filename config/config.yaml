@@ -32,6 +32,8 @@ splitting:
 dataset:
   window_size_ev: 6.0
   sliding_stride_ev: 2.0
+  unified_window_size_ev: 6.0
+  unified_window_stride_ev: 2.0
   region_configs:
     Al2p:
       window_size_ev: 6.0
@@ -69,7 +71,18 @@ noise_plot:
 # Note: Model-dedicated configurations (training, bayesian_opt, film) are managed in
 # dedicated config files under config/ (e.g., config/resnet.yaml, config/inception_time.yaml).
 # Specific keys can be overridden here if needed.
-film: {}
+film:
+  encode_die: true
+  encode_tool: true
+  encode_flux: true
+  encode_time: true
+  encode_energy: true
+  encode_region: true
+  encode_relative_intensity: true
+  encode_elements: true
+  energy_scale_ev: 1000.0
+  hidden_dim: 32
+  relative_learning_rate: 0.1
 
 bayesian_opt: {}
 

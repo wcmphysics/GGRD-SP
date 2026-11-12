@@ -6,13 +6,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pywt
 
-from denoise.fourier_comparison import plot_fourier_comparison
 from denoise.savgol import denoise_spectrum_savgol
 from denoise.wavelet import (
     _compute_level_threshold,
     _estimate_mad_noise_sigma,
     denoise_spectrum_wavelet,
 )
+from visualization.plot_fourier_comparison import plot_fourier_comparison
 
 
 def _select_spectrum(data: tuple, selector: dict) -> tuple:

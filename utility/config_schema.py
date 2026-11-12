@@ -206,6 +206,8 @@ class DatasetConfig(BaseModel):
 
     window_size_ev: float = Field(6.0, gt=0.0)
     sliding_stride_ev: float = Field(2.0, gt=0.0)
+    unified_window_size_ev: float = Field(6.0, gt=0.0)
+    unified_window_stride_ev: float = Field(2.0, gt=0.0)
     region_configs: dict[str, Any] = Field(default_factory=dict)
     source_tool: str | None = None
     target_tool: str | None = None

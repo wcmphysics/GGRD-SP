@@ -398,6 +398,18 @@
           "title": "Sliding Stride Ev",
           "type": "number"
         },
+        "unified_window_size_ev": {
+          "default": 6.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Unified Window Size Ev",
+          "type": "number"
+        },
+        "unified_window_stride_ev": {
+          "default": 2.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Unified Window Stride Ev",
+          "type": "number"
+        },
         "region_configs": {
           "additionalProperties": true,
           "title": "Region Configs",

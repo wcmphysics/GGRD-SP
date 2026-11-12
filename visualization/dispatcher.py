@@ -9,10 +9,13 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from models.gp_flux import predict_gp_die_flux
 from visualization.plot_evaluation import (
     plot_prediction_comparison,
     plot_regional_spectrum_distribution,
 )
+from visualization.plot_denoise_comparison import plot_denoise_comparison
+from visualization.plot_gp_flux_components import plot_gp_flux_kernel_contributions
 from visualization.plot_noise_analysis import (
     plot_denoise_atomic_percentage_mae,
     plot_denoise_spectrum_comparison,
@@ -53,6 +56,9 @@ DEFAULT_PLOT_TOGGLES: dict[str, bool] = {
     "sliding_window_slices": True,
     "denoise_spectrum_comparison": True,
     "denoise_atomic_percentage_mae": True,
+    "gp_die_flux_timeline": False,
+    "gp_die_flux_kernel_contributions": False,
+    "denoise_comparison": False,
 }
 
 
@@ -136,6 +142,27 @@ def _dispatch_timeline_plots(
             },
         )
         rendered.append("normalized_max_intensity")
+
+    # Plot GP die flux timeline and kernel contributions
+    gp_bundle = pipeline_data.get("gp_bundle") or pipeline_data.get(
+        "gp_die_flux_bundle"
+    )
+    gp_flux_cfg = cfg.get("gp_flux_config") or cfg.get("gp_flux") or {}
+    gp_plots = gp_flux_cfg.get("plots", {})
+    should_plot_flux_timeline = plot_toggles.get(
+        "gp_die_flux_timeline", gp_plots.get("gp_die_flux_timeline", False)
+    )
+    if should_plot_flux_timeline and gp_bundle:
+        predict_gp_die_flux(gp_bundle, gp_flux_cfg)
+        rendered.append("gp_die_flux_timeline")
+
+    should_plot_kernel = plot_toggles.get(
+        "gp_die_flux_kernel_contributions",
+        gp_plots.get("gp_die_flux_kernel_contributions", False),
+    )
+    if should_plot_kernel and gp_bundle:
+        plot_gp_flux_kernel_contributions(gp_bundle, gp_flux_cfg)
+        rendered.append("gp_die_flux_kernel_contributions")
 
 
 def _dispatch_noise_and_spectral_plots(
@@ -271,6 +298,26 @@ def _dispatch_noise_and_spectral_plots(
     ):
         plot_denoise_atomic_percentage_mae(df_denoise_at)
         rendered.append("denoise_atomic_percentage_mae")
+
+    # Plot standalone comparison of denoising methods (Savgol, Wavelet, Fourier)
+    denoise_comp_cfg = cfg.get("denoise_comparison_config") or cfg.get(
+        "denoise_comparison"
+    )
+    should_plot_denoise_comp = plot_toggles.get(
+        "denoise_comparison",
+        bool((denoise_comp_cfg or {}).get("enabled", False)),
+    )
+    if (
+        should_plot_denoise_comp
+        and denoise_comp_cfg
+        and ary_intensity is not None
+        and ary_energy is not None
+        and df_meta is not None
+    ):
+        plot_denoise_comparison(
+            (ary_intensity, ary_energy, df_meta), denoise_comp_cfg
+        )
+        rendered.append("denoise_comparison")
 
 
 def _dispatch_evaluation_and_quant_plots(

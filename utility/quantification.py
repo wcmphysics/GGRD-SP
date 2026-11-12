@@ -17,8 +17,6 @@ import pandas as pd
 from utility.reporting import format_split_comparison_table
 from utility.shirley import (
     _calculate_endpoint_intensity,
-    _find_minima_endpoints,
-    _resolve_direct_endpoints,
     calculate_shirley_background,
     determine_shirley_endpoints,
 )
@@ -102,9 +100,8 @@ class _LazyScofieldRSF(dict):
 
     def _ensure_loaded(self) -> None:
         if not self._loaded:
-            loaded_dict = load_rsf_table(self._config_or_path)
-            super().update(loaded_dict)
             self._loaded = True
+            super().update(load_rsf_table(self._config_or_path))
 
     def __getitem__(self, key: Any) -> Any:
         self._ensure_loaded()
@@ -118,10 +115,6 @@ class _LazyScofieldRSF(dict):
         self._ensure_loaded()
         return super().__len__()
 
-    def __contains__(self, key: Any) -> bool:
-        self._ensure_loaded()
-        return super().__contains__(key)
-
     def keys(self) -> Any:
         self._ensure_loaded()
         return super().keys()
@@ -134,13 +127,9 @@ class _LazyScofieldRSF(dict):
         self._ensure_loaded()
         return super().items()
 
-    def get(self, key: Any, default: Any = None) -> Any:
+    def __contains__(self, key: Any) -> bool:
         self._ensure_loaded()
-        return super().get(key, default)
-
-    def copy(self) -> dict:
-        self._ensure_loaded()
-        return super().copy()
+        return super().__contains__(key)
 
     def __repr__(self) -> str:
         self._ensure_loaded()
@@ -157,6 +146,14 @@ class _LazyScofieldRSF(dict):
     def __eq__(self, other: Any) -> bool:
         self._ensure_loaded()
         return super().__eq__(other)
+
+    def copy(self) -> dict:
+        self._ensure_loaded()
+        return super().copy()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._ensure_loaded()
+        return super().get(key, default)
 
 
 # Standard Scofield relative sensitivity factors (RSF) for Al-Ka excitation (lazily loaded)
@@ -285,7 +282,8 @@ def calculate_atomic_percentages(
         norm_series = df_meta["normalization_mode"].dropna()
         if not norm_series.empty:
             norm_mode = str(norm_series.iloc[0])
-    if norm_mode in (
+    warn_norm = bool(cfg.get("warn_normalization", True))
+    if warn_norm and norm_mode in (
         "by_regional_max_intensity_of_source",
         "by_regional_max_intensity",
     ):
@@ -424,7 +422,10 @@ def calculate_atomic_percentage_split_statistics(
         ary_energy_orig, ary_intensity_orig, df_meta_orig, config=quant_cfg
     )
     df_per_die_pred, _ = calculate_atomic_percentages(
-        ary_energy_pred, ary_intensity_pred, df_meta_pred, config=quant_cfg
+        ary_energy_pred,
+        ary_intensity_pred,
+        df_meta_pred,
+        config=dict(quant_cfg, warn_normalization=False),
     )
 
     pred_meta_subset = (
@@ -452,25 +453,6 @@ def calculate_atomic_percentage_split_statistics(
             "percentage statistics."
         )
         return pd.DataFrame(), pd.DataFrame()
-
-    norm_mode = cfg.get("normalization_mode")
-    if norm_mode is None:
-        norm_mode = df_meta_orig.attrs.get("normalization_mode")
-    if norm_mode is None and "normalization_mode" in df_meta_orig.columns:
-        norm_series = df_meta_orig["normalization_mode"].dropna()
-        if not norm_series.empty:
-            norm_mode = str(norm_series.iloc[0])
-    if norm_mode in (
-        "by_regional_max_intensity_of_source",
-        "by_regional_max_intensity",
-    ):
-        warnings.warn(
-            f"Atomic percentage quantification: normalization_mode '{norm_mode}' "
-            "normalizes each regional spectrum independently, which distorts "
-            "relative atomic percentages across elements.",
-            UserWarning,
-            stacklevel=2,
-        )
 
     element_cols = [
         c for c in df_per_die_orig.columns if c.endswith("_atomic_percentage")
