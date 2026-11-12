@@ -176,9 +176,9 @@ class DieFluxExactGPModel(gpytorch.models.ExactGP):
 
 def get_default_gp_flux_config() -> dict[str, Any]:
     """Return default configuration options for GP die flux prediction."""
-    from utility.config_schema import GPFluxConfig
+    from utility.config_schema import GPFluxConfig, resolve_subconfig
 
-    return GPFluxConfig().model_dump()
+    return resolve_subconfig(GPFluxConfig)
 
 
 def build_gp_flux_dataset(
@@ -203,7 +203,9 @@ def build_gp_flux_dataset(
         Dictionary containing tensors, metadata subsets, and normalization
         stats.
     """
-    cfg = {**get_default_gp_flux_config(), **(config or {})}
+    from utility.config_schema import GPFluxConfig, resolve_subconfig
+
+    cfg = resolve_subconfig(GPFluxConfig, config)
     ref_date = pd.to_datetime(cfg.get("reference_date", "2026-01-01"))
     unpaired_split = str(cfg.get("unpaired_split", "train"))
     target_col = str(cfg.get("target_column", "total_flux_single_die"))
@@ -451,7 +453,9 @@ def run_gp_flux_pipeline(
         Dictionary of trained model bundles and the performance metrics
         DataFrame.
     """
-    cfg = {**get_default_gp_flux_config(), **(config or {})}
+    from utility.config_schema import GPFluxConfig, resolve_subconfig
+
+    cfg = resolve_subconfig(GPFluxConfig, config)
 
     src_cfg, tgt_cfg = cfg.get("source_tool"), cfg.get("target_tool")
     if src_cfg and tgt_cfg:

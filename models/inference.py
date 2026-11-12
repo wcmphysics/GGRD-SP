@@ -338,6 +338,14 @@ def assemble_prediction_metadata(
             ),
             "is_predicted": True,
         }
+        if hasattr(r, "target_measurement_id"):
+            tgt_m = getattr(r, "target_measurement_id")
+            if pd.notna(tgt_m):
+                row_dict["target_measurement_id"] = str(tgt_m)
+        if hasattr(r, "target_spectrum_index"):
+            tgt_s = getattr(r, "target_spectrum_index")
+            if pd.notna(tgt_s):
+                row_dict["target_spectrum_index"] = int(tgt_s)
         for col in extra_metric_cols:
             if hasattr(r, col):
                 row_dict[col] = getattr(r, col)

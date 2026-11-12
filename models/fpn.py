@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from models.film import FiLMGenerator
 from models.layers import (
+    BaseSpectralModel1D,
     SafeBatchNorm1d,
     build_conv1d_layer,
     compute_conv1d_l2_reg,
@@ -87,7 +88,7 @@ class FPNConvBlock1D(nn.Module):
         return h
 
 
-class FPN1D(nn.Module):
+class FPN1D(BaseSpectralModel1D):
     """1D Feature Pyramid Network with multi-scale fusion head for XPS."""
 
     def __init__(

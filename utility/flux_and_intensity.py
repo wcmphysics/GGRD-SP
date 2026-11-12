@@ -236,18 +236,23 @@ def calculate_flux_and_intensity(
     return df_res
 
 
-def _standardize_die_flux_in_place(
+def _standardize_feature_per_tool(
     df_res: pd.DataFrame,
+    source_column: str,
+    target_column: str,
+    dedup_subset: list[str],
     fit_split: str,
+    unit_label: str,
+    is_datetime: bool = False,
 ) -> None:
-    """Standardize total_flux_single_die per tool using fit_split dies."""
+    """Standardize a numerical or datetime feature per tool based on fit_split."""
     has_tool = "tool" in df_res.columns
     tools = (
         sorted(df_res["tool"].dropna().unique())
         if has_tool
         else [None]
     )
-    df_res["total_flux_single_die_standardized"] = np.float32(0.0)
+    df_res[target_column] = np.float32(0.0)
 
     for tool_val in tools:
         tool_mask = (
@@ -256,26 +261,58 @@ def _standardize_die_flux_in_place(
             else pd.Series(True, index=df_res.index)
         )
         sub_df = df_res[tool_mask]
-        die_summary = sub_df.drop_duplicates(subset=["measurement_id", "die"])
-        die_fit = die_summary[die_summary["split"] == fit_split]
-        die_flux_vals = die_fit["total_flux_single_die"].to_numpy(dtype=np.float64)
-
-        if len(die_flux_vals) == 0:
+        fit_items = sub_df.drop_duplicates(subset=dedup_subset)
+        fit_items = fit_items[fit_items["split"] == fit_split]
+        if fit_items.empty:
             continue
 
-        flux_mean = float(np.mean(die_flux_vals))
-        flux_std = float(np.std(die_flux_vals))
-        tool_str = f" for tool '{tool_val}'" if tool_val is not None else ""
-        if flux_std == 0.0:
-            warnings.warn(
-                f"Standard deviation of total_flux_single_die across '{fit_split}' "
-                f"dies{tool_str} is 0.0; setting total_flux_single_die_standardized to 0.0."
+        if is_datetime:
+            fit_ts = pd.to_datetime(fit_items[source_column])
+            mean_val = fit_ts.mean()
+            fit_diff = (fit_ts - mean_val).dt.total_seconds().to_numpy(dtype=np.float64)
+            all_diff = (
+                (pd.to_datetime(sub_df[source_column]) - mean_val)
+                .dt.total_seconds()
+                .to_numpy(dtype=np.float64)
             )
-            df_res.loc[tool_mask, "total_flux_single_die_standardized"] = np.float32(0.0)
+            std_val = float(np.std(fit_diff))
+            values_to_scale = all_diff
+            feature_name = "measurement time differences"
         else:
-            df_res.loc[tool_mask, "total_flux_single_die_standardized"] = (
-                (sub_df["total_flux_single_die"] - flux_mean) / flux_std
-            ).astype(np.float32)
+            fit_vals = fit_items[source_column].to_numpy(dtype=np.float64)
+            mean_val = float(np.mean(fit_vals))
+            std_val = float(np.std(fit_vals))
+            values_to_scale = (sub_df[source_column] - mean_val).to_numpy(dtype=np.float64)
+            feature_name = source_column
+
+        tool_str = f" for tool '{tool_val}'" if tool_val is not None else ""
+        if std_val == 0.0:
+            warnings.warn(
+                f"Standard deviation of {feature_name} across '{fit_split}' "
+                f"{unit_label}{tool_str} is 0.0; setting {target_column} to 0.0."
+            )
+            df_res.loc[tool_mask, target_column] = np.float32(0.0)
+        else:
+            df_res.loc[tool_mask, target_column] = pd.Series(
+                (values_to_scale / std_val).astype(np.float32),
+                index=sub_df.index,
+            )
+
+
+def _standardize_die_flux_in_place(
+    df_res: pd.DataFrame,
+    fit_split: str,
+) -> None:
+    """Standardize total_flux_single_die per tool using fit_split dies."""
+    _standardize_feature_per_tool(
+        df_res,
+        source_column="total_flux_single_die",
+        target_column="total_flux_single_die_standardized",
+        dedup_subset=["measurement_id", "die"],
+        fit_split=fit_split,
+        unit_label="dies",
+        is_datetime=False,
+    )
 
 
 def calculate_standardized_time(
@@ -346,52 +383,15 @@ def calculate_standardized_time(
             f"Failed to parse timestamps in df_meta['time']: {err}"
         ) from err
 
-    has_tool = "tool" in df_res.columns
-    tools = (
-        sorted(df_res["tool"].dropna().unique())
-        if has_tool
-        else [None]
+    _standardize_feature_per_tool(
+        df_res,
+        source_column="time",
+        target_column="time_standardized",
+        dedup_subset=["measurement_id"],
+        fit_split=fit_split,
+        unit_label="sessions",
+        is_datetime=True,
     )
-    df_res["time_standardized"] = np.float32(0.0)
-
-    for tool_val in tools:
-        tool_mask = (
-            df_res["tool"] == tool_val
-            if tool_val is not None
-            else pd.Series(True, index=df_res.index)
-        )
-        sub_df = df_res[tool_mask]
-        meas_summary = sub_df.drop_duplicates(subset=["measurement_id"])
-        meas_fit = meas_summary[meas_summary["split"] == fit_split]
-
-        if meas_fit.empty:
-            continue
-
-        meas_ts = pd.to_datetime(meas_fit["time"])
-        mean_ts = meas_ts.mean()
-
-        meas_diff_sec = (
-            (meas_ts - mean_ts).dt.total_seconds().to_numpy(dtype=np.float64)
-        )
-        all_diff_sec = (
-            (pd.to_datetime(sub_df["time"]) - mean_ts)
-            .dt.total_seconds()
-            .to_numpy(dtype=np.float64)
-        )
-        std_sec = float(np.std(meas_diff_sec))
-
-        tool_str = f" for tool '{tool_val}'" if tool_val is not None else ""
-        if std_sec == 0.0:
-            warnings.warn(
-                f"Standard deviation of measurement time differences across '{fit_split}' "
-                f"sessions{tool_str} is 0.0; setting time_standardized to 0.0."
-            )
-            df_res.loc[tool_mask, "time_standardized"] = np.float32(0.0)
-        else:
-            df_res.loc[tool_mask, "time_standardized"] = pd.Series(
-                (all_diff_sec / std_sec).astype(np.float32),
-                index=sub_df.index,
-            )
 
     return df_res
 

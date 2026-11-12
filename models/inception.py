@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from models.film import FiLMGenerator
 from models.layers import (
+    BaseSpectralModel1D,
     SafeBatchNorm1d,
     SafeReflectionPad1d,
     build_conv1d_layer,
@@ -167,7 +168,7 @@ class InceptionResidualBlock1D(nn.Module):
         return self.act(h + self.shortcut(x))
 
 
-class InceptionTime1D(nn.Module):
+class InceptionTime1D(BaseSpectralModel1D):
     """InceptionTime 1D deep network for cross-tool spectral transfer."""
 
     def __init__(

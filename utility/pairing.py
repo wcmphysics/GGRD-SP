@@ -12,6 +12,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from utility.config_schema import PairingConfig, resolve_subconfig
+
 try:
     from scipy.optimize import linear_sum_assignment
 except (ImportError, OSError):
@@ -24,23 +26,9 @@ def get_default_pairing_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Dictionary packaging default pairing options:
-        - 'source_tool': 'J4'
-        - 'target_tool': 'J5'
-        - 'time_threshold_hours': 12.0
-        - 'method': 'optimal' ('optimal' for Hungarian, 'greedy' for nearest)
-        - 'material': 'all' (pairs within each material separately)
-        - 'match_t7_code': True (if True and 't7_code' in metadata, only pair
-          measurements with identical t7_code)
+        Dictionary packaging default pairing options from PairingConfig schema.
     """
-    return {
-        "source_tool": "J4",
-        "target_tool": "J5",
-        "time_threshold_hours": 12.0,
-        "method": "optimal",
-        "material": "all",
-        "match_t7_code": True,
-    }
+    return resolve_subconfig(PairingConfig)
 
 
 def _safe_to_datetime(series: pd.Series) -> pd.Series:
@@ -427,8 +415,7 @@ def _prepare_pairing_setup(
             "or specify a specific material string."
         )
 
-    merged_config = get_default_pairing_config()
-    merged_config.update(config)
+    merged_config = resolve_subconfig(PairingConfig, config)
     _validate_pairing_config(merged_config)
 
     # Validate metadata DataFrame required columns and normalize measurement time.

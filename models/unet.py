@@ -14,6 +14,8 @@ import torch.nn.functional as F
 
 from models.film import FiLMGenerator
 from models.layers import (
+    BaseSpectralModel1D,
+    SafeBatchNorm1d,
     compute_conv1d_l2_reg,
     validate_3d_spectrum_tensor,
     validate_common_model_config,
@@ -50,7 +52,7 @@ class UNetConvBlock1D(nn.Module):
                 nn.Conv1d(ch_in, out_channels, kernel_size=kernel_size, padding=padding)
             )
             if use_batch_norm:
-                layers.append(nn.BatchNorm1d(out_channels))
+                layers.append(SafeBatchNorm1d(out_channels))
             layers.append(_make_act())
             if idx == 0 and dropout > 0.0:
                 layers.append(nn.Dropout(dropout))
@@ -61,7 +63,7 @@ class UNetConvBlock1D(nn.Module):
         return self.block(x)
 
 
-class UNet1D(nn.Module):
+class UNet1D(BaseSpectralModel1D):
     """1D U-Net architecture with multi-scale contracting and expanding paths
     and optional FiLM.
 

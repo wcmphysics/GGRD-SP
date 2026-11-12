@@ -14,7 +14,9 @@ from linear_operator.operators import DiagLinearOperator
 from denoise.common import (
     _SNR_DEFINITIONS,
     _validate_spectrum,
+    run_batch_denoise,
 )
+from utility.config_schema import DenoiseGPConfig, resolve_subconfig
 
 _KERNEL_TYPES: tuple[str, ...] = ("rbf", "matern12", "matern32", "matern52")
 _MATERN_NU: dict[str, float] = {
@@ -95,57 +97,16 @@ def get_default_gp_denoise_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Default GP configuration dictionary.
+        Default GP configuration dictionary from DenoiseGPConfig schema.
     """
-    return {
-        "kernel": {
-            "type": "matern52",
-            "initial_lengthscale_ev": 1.0,
-            "min_lengthscale_ev": None,
-            "min_lengthscale_points": 3.0,
-            "max_lengthscale_ev": None,
-        },
-        "noise_model": "homoscedastic",
-        "poisson_weight_floor": 1e-2,
-        "training": {"num_iterations": 100, "learning_rate": 0.1},
-        "confidence_type": "observation",
-        "confidence_z": 1.96,
-        "snr_definition": "range",
-        "device": "cpu",
-        "show_progress": True,
-        "batch_size": 64,
-        "num_workers": 0,
-        "batch_verify_rtol": None,
-    }
+    return resolve_subconfig(DenoiseGPConfig)
 
 
 def _resolve_gp_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Merge user GP configuration over defaults and validate all keys."""
     if config is not None and config.get("_resolved"):
         return config
-    cfg = get_default_gp_denoise_config()
-    user_cfg = copy.deepcopy(config or {})
-    allowed_keys = set(cfg) | {"splits", "dies", "regions", "unpaired_split", "method"}
-    for key in user_cfg:
-        if key not in allowed_keys:
-            raise ValueError(
-                f"Unknown noise analysis config key '{key}'. "
-                f"Valid keys: {sorted(allowed_keys)}"
-            )
-    for nested in ("kernel", "training"):
-        if not isinstance(user_cfg.get(nested, {}), dict):
-            raise ValueError(
-                f"'{nested}' must be a dict, got {user_cfg[nested]!r}."
-            )
-        extra = set(user_cfg.get(nested, {})) - set(cfg[nested])
-        if extra:
-            raise ValueError(
-                f"Unknown '{nested}' config keys {sorted(extra)}. "
-                f"Valid keys: {sorted(cfg[nested])}"
-            )
-        cfg[nested] = {**cfg[nested], **user_cfg.pop(nested, {})}
-    cfg.update(user_cfg)
-
+    cfg = resolve_subconfig(DenoiseGPConfig, config)
     choices = {
         ("kernel", "type"): _KERNEL_TYPES,
         "noise_model": _NOISE_MODELS,
@@ -158,28 +119,36 @@ def _resolve_gp_config(config: dict[str, Any] | None) -> dict[str, Any]:
             raise ValueError(
                 f"Invalid {key}={val!r}; choose one of {valid}."
             )
-    if cfg["confidence_z"] <= 0:
-        raise ValueError(
-            f"confidence_z must be > 0, got {cfg['confidence_z']}."
-        )
-    if (
-        cfg["training"]["num_iterations"] < 1
-        or cfg["training"]["learning_rate"] <= 0
-    ):
-        raise ValueError(f"Invalid training config: {cfg['training']}.")
-    for key, minimum in (("batch_size", 1), ("num_workers", 0)):
-        val = cfg[key]
-        if isinstance(val, bool) or not isinstance(val, int) or val < minimum:
-            raise ValueError(
-                f"{key} must be an integer >= {minimum}, got {val!r}."
-            )
-    rtol = cfg["batch_verify_rtol"]
+    rtol = cfg.get("batch_verify_rtol")
     if rtol is not None and (not isinstance(rtol, (int, float)) or rtol <= 0):
         raise ValueError(
             f"batch_verify_rtol must be None or > 0, got {rtol!r}."
         )
     cfg["_resolved"] = True
     return cfg
+
+
+def _create_gp_likelihood(
+    cfg: dict[str, Any],
+    scaled_intensity: np.ndarray,
+    device: torch.device,
+    batch_shape: torch.Size = torch.Size(),
+) -> tuple[gpytorch.likelihoods.GaussianLikelihood, np.ndarray]:
+    """Create Gaussian likelihood and compute Poisson or uniform weights."""
+    weights = np.ones_like(scaled_intensity)
+    noise_constraint = gpytorch.constraints.GreaterThan(1e-8)
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(
+        noise_constraint=noise_constraint, batch_shape=batch_shape
+    )
+    if cfg["noise_model"] == "poisson_scaled":
+        weights = np.clip(scaled_intensity, cfg["poisson_weight_floor"], None)
+        likelihood.noise_covar = _ScaledHomoskedasticNoise(
+            torch.tensor(weights, device=device),
+            noise_constraint=noise_constraint,
+            batch_shape=batch_shape,
+        )
+    likelihood.noise = 1e-3
+    return likelihood, weights
 
 
 def _build_kernel(
@@ -254,17 +223,7 @@ def _run_single_spectrum_gp_fit(
     ).unsqueeze(-1)
     scaled_intensity = intensity_arr / intensity_scale
     train_y = torch.tensor(scaled_intensity, device=device)
-    weights = np.ones_like(scaled_intensity)
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(
-        noise_constraint=gpytorch.constraints.GreaterThan(1e-8)
-    )
-    if cfg["noise_model"] == "poisson_scaled":
-        weights = np.clip(scaled_intensity, cfg["poisson_weight_floor"], None)
-        likelihood.noise_covar = _ScaledHomoskedasticNoise(
-            torch.tensor(weights, device=device),
-            noise_constraint=gpytorch.constraints.GreaterThan(1e-8),
-        )
-    likelihood.noise = 1e-3
+    likelihood, weights = _create_gp_likelihood(cfg, scaled_intensity, device)
     covar = _build_kernel(cfg["kernel"], spacing, energy_range)
     model = SpectrumExactGPModel(train_x, train_y, likelihood, covar)
     model.to(device).double()
@@ -516,20 +475,10 @@ def _fit_and_summarize_batch_gp(
     ).unsqueeze(-1)
     scaled = intensities_arr / scales[:, None]
     train_y = torch.tensor(scaled, device=device)
-    weights = np.ones_like(scaled)
     batch_shape = torch.Size([batch_size])
-    noise_constraint = gpytorch.constraints.GreaterThan(1e-8)
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(
-        noise_constraint=noise_constraint, batch_shape=batch_shape
+    likelihood, weights = _create_gp_likelihood(
+        cfg, scaled, device, batch_shape=batch_shape
     )
-    if cfg["noise_model"] == "poisson_scaled":
-        weights = np.clip(scaled, cfg["poisson_weight_floor"], None)
-        likelihood.noise_covar = _ScaledHomoskedasticNoise(
-            torch.tensor(weights, device=device),
-            noise_constraint=noise_constraint,
-            batch_shape=batch_shape,
-        )
-    likelihood.noise = 1e-3
     covar = _build_kernel(
         cfg["kernel"], spacing, energy_range, batch_size=batch_size
     )
@@ -623,14 +572,9 @@ def _analyse_sequential_gp(
     cfg: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Analyse spectra one by one with single-spectrum GP building blocks."""
-    signal = np.empty(energies.shape, dtype=np.float64)
-    noise = np.empty(energies.shape, dtype=np.float64)
-    summary = np.empty((len(metas), 3), dtype=np.float64)
-    for idx, meta in enumerate(metas):
-        signal[idx], noise[idx], summary[idx] = denoise_spectrum_gp(
-            energies[idx], intensities[idx], cfg, meta=meta
-        )
-    return signal, noise, summary
+    return run_batch_denoise(
+        denoise_spectrum_gp, energies, intensities, metas, cfg
+    )
 
 
 def denoise_batch_gp(

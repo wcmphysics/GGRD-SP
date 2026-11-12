@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 
 from models.layers import (
+    BaseSpectralModel1D,
     SafeBatchNorm1d,
     build_conv1d_layer,
     compute_conv1d_l2_reg,
@@ -192,7 +193,7 @@ class ASPP1D(nn.Module):
         return self.project(torch.cat([feat_1x1, *atrous_feats, glob_feat], dim=1))
 
 
-class DeepLabV3(nn.Module):
+class DeepLabV3(BaseSpectralModel1D):
     """1D DeepLabV3 architecture for spectral transformation.
 
     Features:

@@ -24,6 +24,7 @@ import torch.nn as nn
 
 from models.film import FiLMGenerator
 from models.layers import (
+    BaseSpectralModel1D,
     SafeBatchNorm1d,
     SafeReflectionPad1d,
     compute_conv1d_l2_reg,
@@ -139,7 +140,7 @@ class TCNResidualBlock1D(nn.Module):
         return self.act2(h + self.shortcut(x))
 
 
-class TCN1D(nn.Module):
+class TCN1D(BaseSpectralModel1D):
     """Dilated Temporal Convolutional Network 1D with symmetric padding."""
 
     def __init__(

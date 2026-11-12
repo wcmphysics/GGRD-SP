@@ -14,6 +14,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from utility.config_schema import QuantificationConfig, resolve_subconfig
 from utility.reporting import format_split_comparison_table
 from utility.shirley import (
     _calculate_endpoint_intensity,
@@ -178,28 +179,12 @@ def get_default_quantification_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Dictionary packaging quantification parameters:
-        - 'material': 'NMG'
-        - 'measurement_id': None (if None, calculates for all sessions)
-        - 'rsf_table': dict mapping region name to relative sensitivity factor
-        - 'default_endpoint_strategy': 'minima' ('minima', 'edge', or 'direct')
-        - 'default_endpoint_average_ev': 1.0 (average over 1.0 eV window)
-        - 'region_endpoint_config': None (optional per-region overrides)
-        - 'smooth_search': False
-        - 'max_iter': 50
-        - 'tol': 1e-5
+        Dictionary packaging quantification parameters from QuantificationConfig schema.
     """
-    return {
-        "material": "NMG",
-        "measurement_id": None,
-        "rsf_table": dict(DEFAULT_SCOFIELD_RSF),
-        "default_endpoint_strategy": "minima",
-        "default_endpoint_average_ev": 1.0,
-        "region_endpoint_config": None,
-        "smooth_search": False,
-        "max_iter": 50,
-        "tol": 1e-5,
-    }
+    cfg = resolve_subconfig(QuantificationConfig)
+    if not cfg.get("rsf_table"):
+        cfg["rsf_table"] = dict(DEFAULT_SCOFIELD_RSF)
+    return cfg
 
 
 def calculate_atomic_percentages(
@@ -249,7 +234,7 @@ def calculate_atomic_percentages(
     """
     cfg = get_default_quantification_config()
     if config is not None:
-        cfg.update(config)
+        cfg = resolve_subconfig(QuantificationConfig, {**cfg, **config})
 
     target_meas: str | None = cfg.get("measurement_id")
     material: str | None = cfg.get("material")

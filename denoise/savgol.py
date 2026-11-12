@@ -11,8 +11,10 @@ from scipy.signal import savgol_filter
 from denoise.common import (
     _SNR_DEFINITIONS,
     _validate_spectrum,
+    run_batch_denoise,
     summarize_denoised_spectrum,
 )
+from utility.config_schema import DenoiseSavgolConfig, resolve_subconfig
 
 _VALID_BOUNDARY_MODES: tuple[str, ...] = (
     "interp",
@@ -29,82 +31,19 @@ def get_default_savgol_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Default configuration dictionary:
-        - 'window_length': Odd integer window length in points (default 11).
-        - 'window_length_ev': Optional window width in eV (default None).
-        - 'polynomial_order': Degree of local polynomial fit (default 3).
-        - 'boundary_mode': Edge padding mode for savgol_filter
-          (default 'interp').
-        - 'snr_definition': 'range' or 'std' (default 'range').
-        - 'confidence_z': Confidence band multiplier (default 1.96).
+        Default configuration dictionary from DenoiseSavgolConfig schema.
     """
-    return {
-        "window_length": 11,
-        "window_length_ev": None,
-        "polynomial_order": 3,
-        "boundary_mode": "interp",
-        "snr_definition": "range",
-        "confidence_z": 1.96,
-    }
+    return resolve_subconfig(DenoiseSavgolConfig)
 
 
 def _resolve_savgol_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Validate and merge user Savitzky-Golay configuration with defaults."""
     if config is not None and config.get("_resolved"):
         return config
-    cfg = get_default_savgol_config()
-    user_cfg = copy.deepcopy(config or {})
-    for key in user_cfg:
-        if key not in cfg:
-            raise ValueError(
-                f"Unknown Savitzky-Golay config key '{key}'. "
-                f"Valid keys: {sorted(cfg)}"
-            )
-    cfg.update(user_cfg)
-
-    polynomial_order = cfg["polynomial_order"]
-    if (
-        isinstance(polynomial_order, bool)
-        or not isinstance(polynomial_order, int)
-        or polynomial_order < 1
-    ):
+    cfg = resolve_subconfig(DenoiseSavgolConfig, config)
+    if cfg["window_length"] % 2 == 0:
         raise ValueError(
-            f"polynomial_order must be an integer >= 1, "
-            f"got {polynomial_order!r}."
-        )
-    window_length = cfg["window_length"]
-    if (
-        isinstance(window_length, bool)
-        or not isinstance(window_length, int)
-        or window_length < 3
-        or window_length % 2 == 0
-    ):
-        raise ValueError(
-            f"window_length must be an odd integer >= 3, "
-            f"got {window_length!r}."
-        )
-    window_length_ev = cfg["window_length_ev"]
-    if window_length_ev is not None and (
-        isinstance(window_length_ev, bool)
-        or not isinstance(window_length_ev, (int, float))
-        or window_length_ev <= 0
-    ):
-        raise ValueError(
-            f"window_length_ev must be None or > 0, got {window_length_ev!r}."
-        )
-    if cfg["boundary_mode"] not in _VALID_BOUNDARY_MODES:
-        raise ValueError(
-            f"Invalid boundary_mode={cfg['boundary_mode']!r}; "
-            f"choose one of {_VALID_BOUNDARY_MODES}."
-        )
-    if cfg["snr_definition"] not in _SNR_DEFINITIONS:
-        raise ValueError(
-            f"Invalid snr_definition={cfg['snr_definition']!r}; "
-            f"choose one of {_SNR_DEFINITIONS}."
-        )
-    if cfg["confidence_z"] <= 0:
-        raise ValueError(
-            f"confidence_z must be > 0, got {cfg['confidence_z']}."
+            f"window_length must be an odd integer >= 3, got {cfg['window_length']!r}."
         )
     cfg["_resolved"] = True
     return cfg
@@ -214,17 +153,6 @@ def denoise_batch_savgol(
         summary_metrics (B, 3)).
     """
     cfg = _resolve_savgol_config(config)
-    num_spectra, num_points = energies.shape
-    signal_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    confidence_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    summary_metrics = np.empty((num_spectra, 3), dtype=np.float64)
-
-    for idx, meta in enumerate(metas):
-        (
-            signal_curves[idx],
-            confidence_curves[idx],
-            summary_metrics[idx],
-        ) = denoise_spectrum_savgol(
-            energies[idx], intensities[idx], cfg, meta=meta
-        )
-    return signal_curves, confidence_curves, summary_metrics
+    return run_batch_denoise(
+        denoise_spectrum_savgol, energies, intensities, metas, cfg
+    )

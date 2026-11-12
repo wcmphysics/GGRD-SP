@@ -6,6 +6,7 @@ ensuring physical consistency, type safety, and domain constraints.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -80,9 +81,10 @@ class PairingConfig(BaseModel):
 
     time_threshold_hours: float = Field(12.0, gt=0.0)
     method: Literal["optimal", "greedy"] = "optimal"
-    source_tool: str | None = None
-    target_tool: str | None = None
-    material: str | None = None
+    source_tool: str = "J4"
+    target_tool: str = "J5"
+    material: str = "all"
+    match_t7_code: bool = True
     model_config = ConfigDict(extra="allow")
 
 
@@ -232,14 +234,17 @@ class NoiseKernelConfig(BaseModel):
 
     type: str = "matern52"
     initial_lengthscale_ev: float = Field(1.0, gt=0.0)
+    min_lengthscale_ev: float | None = None
+    min_lengthscale_points: float | None = 3.0
+    max_lengthscale_ev: float | None = None
     model_config = ConfigDict(extra="allow")
 
 
 class NoiseTrainingConfig(BaseModel):
     """Training iterations for Gaussian Process noise estimation."""
 
-    num_iterations: int = Field(50, gt=0)
-    learning_rate: float = Field(0.2, gt=0.0)
+    num_iterations: int = Field(100, gt=0)
+    learning_rate: float = Field(0.1, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
 
@@ -264,6 +269,9 @@ class DenoiseSavgolConfig(BaseModel):
     window_length: int = Field(11, gt=2)
     polynomial_order: int = Field(3, ge=1)
     boundary_mode: str = "interp"
+    window_length_ev: float | None = None
+    snr_definition: Literal["range", "std"] = "range"
+    confidence_z: float = Field(1.96, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
     @field_validator("window_length")
@@ -284,6 +292,9 @@ class DenoiseWaveletConfig(BaseModel):
     threshold_mode: Literal["soft", "hard"] = "soft"
     threshold_rule: Literal["universal", "bayes"] = "universal"
     threshold_scale: float = Field(1.0, gt=0.0)
+    boundary_mode: str = "symmetric"
+    snr_definition: Literal["range", "std"] = "range"
+    confidence_z: float = Field(1.96, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
 
@@ -292,9 +303,12 @@ class DenoiseFourierConfig(BaseModel):
 
     filter_type: Literal["dct", "butterworth"] = "dct"
     cutoff_ratio: float = Field(0.25, gt=0.0, lt=1.0)
+    cutoff_ev: float | None = Field(None, gt=0.0)
     filter_order: int = Field(4, ge=1)
     rolloff_type: str = "butterworth"
     padding_mode: str = "even"
+    snr_definition: Literal["range", "std"] = "range"
+    confidence_z: float = Field(1.96, gt=0.0)
     model_config = ConfigDict(extra="allow")
 
 
@@ -354,8 +368,16 @@ class DenoiseGPConfig(BaseModel):
 
     kernel: NoiseKernelConfig = Field(default_factory=NoiseKernelConfig)
     noise_model: str = "homoscedastic"
-    confidence_type: str = "observation"
+    poisson_weight_floor: float = 1e-2
     training: NoiseTrainingConfig = Field(default_factory=NoiseTrainingConfig)
+    confidence_type: str = "observation"
+    confidence_z: float = 1.96
+    snr_definition: str = "range"
+    device: str = "cpu"
+    show_progress: bool = True
+    batch_size: int = Field(64, gt=0)
+    num_workers: int = Field(0, ge=0)
+    batch_verify_rtol: float | None = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -540,9 +562,13 @@ class MetricsReportConfig(BaseModel):
 class QuantificationConfig(BaseModel):
     """Shirley background subtraction and atomic percentage calculation."""
 
-    rsf_table: dict[str, float] = Field(..., min_length=1)
+    material: str = "NMG"
+    measurement_id: str | None = None
+    rsf_table: dict[str, float] | None = None
     default_endpoint_strategy: str = "minima"
     default_endpoint_average_ev: float = Field(1.0, gt=0.0)
+    region_endpoint_config: dict[str, Any] | None = None
+    smooth_search: bool = False
     max_iter: int = Field(50, gt=0)
     tol: float = Field(1e-5, gt=0.0)
     model_config = ConfigDict(extra="allow")
@@ -640,11 +666,56 @@ class PipelineConfig(BaseModel):
         return path
 
 
+def resolve_subconfig(
+    model_class: type[BaseModel],
+    config: dict[str, Any] | BaseModel | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Validate and resolve subconfiguration dictionary against a Pydantic model class.
+
+    Parameters
+    ----------
+    model_class : type[BaseModel]
+        The Pydantic BaseModel class defining the schema and canonical defaults.
+    config : dict[str, Any] | BaseModel | None, optional
+        Optional input configuration dictionary or model instance.
+    **overrides : Any
+        Keyword arguments overriding configuration entries.
+
+    Returns
+    -------
+    dict[str, Any]
+        Fully resolved and validated configuration dictionary.
+    """
+    if isinstance(config, model_class):
+        data = config.model_dump()
+    elif isinstance(config, BaseModel):
+        data = config.model_dump()
+    elif isinstance(config, dict):
+        data = copy.deepcopy(config)
+    else:
+        data = {}
+
+    for k, v in overrides.items():
+        if v is not None:
+            data[k] = v
+
+    instance = model_class.model_validate(data)
+    if hasattr(instance, "to_dict"):
+        return instance.to_dict()
+    return instance.model_dump()
+
+
 __all__ = [
+    "resolve_subconfig",
     "BayesianOptConfig",
     "CostConfig",
     "DataGenerationConfig",
     "DenoiseConfig",
+    "DenoiseFourierConfig",
+    "DenoiseGPConfig",
+    "DenoiseSavgolConfig",
+    "DenoiseWaveletConfig",
     "DatasetConfig",
     "FiLMConfig",
     "GlobalConfig",

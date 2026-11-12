@@ -129,24 +129,32 @@ def match_prediction_source_target_indices(
         if src_idx is None:
             continue
 
-        tgt_m_str, tgt_s_int = src_idx_to_tgt.get(src_idx, (None, None))
-        if tgt_m_str is None and tgt_s_int is None:
-            s_meas = str(
-                getattr(
-                    pred_row,
-                    "source_measurement_id",
-                    getattr(pred_row, "measurement_id", ""),
-                )
-            )
-            tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
-                (s_meas, die_key, reg), (None, None)
-            )
-
         tgt_idx: int | None = None
-        if tgt_s_int is not None and tgt_s_int in valid_orig_indices:
-            tgt_idx = tgt_s_int
-        elif tgt_m_str is not None:
-            tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_key, reg))
+        if hasattr(pred_row, "target_spectrum_index") and pd.notna(
+            pred_row.target_spectrum_index
+        ):
+            cand_tgt = int(pred_row.target_spectrum_index)
+            if cand_tgt in valid_orig_indices:
+                tgt_idx = cand_tgt
+
+        if tgt_idx is None:
+            tgt_m_str, tgt_s_int = src_idx_to_tgt.get(src_idx, (None, None))
+            if tgt_m_str is None and tgt_s_int is None:
+                s_meas = str(
+                    getattr(
+                        pred_row,
+                        "source_measurement_id",
+                        getattr(pred_row, "measurement_id", ""),
+                    )
+                )
+                tgt_m_str, tgt_s_int = meas_die_reg_to_tgt.get(
+                    (s_meas, die_key, reg), (None, None)
+                )
+
+            if tgt_s_int is not None and tgt_s_int in valid_orig_indices:
+                tgt_idx = tgt_s_int
+            elif tgt_m_str is not None:
+                tgt_idx = meas_die_reg_to_spec.get((tgt_m_str, die_key, reg))
 
         if tgt_idx is None or tgt_idx not in valid_orig_indices:
             continue

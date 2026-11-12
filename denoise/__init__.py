@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from denoise.common import summarize_denoised_spectrum
+from denoise.common import run_batch_denoise, summarize_denoised_spectrum
 from denoise.fourier import (
     denoise_batch_fourier,
     denoise_spectrum_fourier,
@@ -37,6 +37,7 @@ from denoise.wavelet import (
 
 __all__ = [
     # Common
+    "run_batch_denoise",
     "summarize_denoised_spectrum",
     # Savitzky-Golay
     "get_default_savgol_config",

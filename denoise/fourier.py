@@ -12,8 +12,10 @@ from scipy.signal import butter, filtfilt
 from denoise.common import (
     _SNR_DEFINITIONS,
     _validate_spectrum,
+    run_batch_denoise,
     summarize_denoised_spectrum,
 )
+from utility.config_schema import DenoiseFourierConfig, resolve_subconfig
 
 _VALID_FILTER_TYPES: tuple[str, ...] = ("dct", "butterworth")
 _VALID_ROLLOFF_TYPES: tuple[str, ...] = (
@@ -30,68 +32,16 @@ def get_default_fourier_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Default configuration dictionary:
-        - 'filter_type': 'dct' (default) or 'butterworth'.
-        - 'cutoff_ratio': Cutoff frequency as fraction of Nyquist in (0, 1)
-          (default 0.25).
-        - 'filter_order': Order of Butterworth roll-off or IIR filter
-          (default 4).
-        - 'rolloff_type': Frequency mask shape for DCT ('butterworth',
-          'gaussian', or 'brickwall'; default 'butterworth').
-        - 'padding_mode': Edge padding mode for filtfilt ('even', 'odd', or
-          'constant'; default 'even').
-        - 'snr_definition': 'range' or 'std' (default 'range').
-        - 'confidence_z': Confidence band multiplier (default 1.96).
+        Default configuration dictionary from DenoiseFourierConfig schema.
     """
-    return {
-        "filter_type": "dct",
-        "cutoff_ratio": 0.25,
-        "filter_order": 4,
-        "rolloff_type": "butterworth",
-        "padding_mode": "even",
-        "snr_definition": "range",
-        "confidence_z": 1.96,
-    }
+    return resolve_subconfig(DenoiseFourierConfig)
 
 
 def _resolve_fourier_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Validate and merge user Fourier/low-pass configuration with defaults."""
     if config is not None and config.get("_resolved"):
         return config
-    cfg = get_default_fourier_config()
-    user_cfg = copy.deepcopy(config or {})
-    for key in user_cfg:
-        if key not in cfg:
-            raise ValueError(
-                f"Unknown Fourier config key '{key}'. "
-                f"Valid keys: {sorted(cfg)}"
-            )
-    cfg.update(user_cfg)
-
-    if cfg["filter_type"] not in _VALID_FILTER_TYPES:
-        raise ValueError(
-            f"Invalid filter_type={cfg['filter_type']!r}; "
-            f"choose one of {_VALID_FILTER_TYPES}."
-        )
-    cutoff_ratio = cfg["cutoff_ratio"]
-    if (
-        isinstance(cutoff_ratio, bool)
-        or not isinstance(cutoff_ratio, (int, float))
-        or not (0.0 < float(cutoff_ratio) < 1.0)
-    ):
-        raise ValueError(
-            f"cutoff_ratio must be a float strictly between 0.0 and 1.0, "
-            f"got {cutoff_ratio!r}."
-        )
-    filter_order = cfg["filter_order"]
-    if (
-        isinstance(filter_order, bool)
-        or not isinstance(filter_order, int)
-        or filter_order < 1
-    ):
-        raise ValueError(
-            f"filter_order must be an integer >= 1, got {filter_order!r}."
-        )
+    cfg = resolve_subconfig(DenoiseFourierConfig, config)
     if cfg["rolloff_type"] not in _VALID_ROLLOFF_TYPES:
         raise ValueError(
             f"Invalid rolloff_type={cfg['rolloff_type']!r}; "
@@ -101,15 +51,6 @@ def _resolve_fourier_config(config: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError(
             f"Invalid padding_mode={cfg['padding_mode']!r}; "
             f"choose one of {_VALID_PADDING_MODES}."
-        )
-    if cfg["snr_definition"] not in _SNR_DEFINITIONS:
-        raise ValueError(
-            f"Invalid snr_definition={cfg['snr_definition']!r}; "
-            f"choose one of {_SNR_DEFINITIONS}."
-        )
-    if cfg["confidence_z"] <= 0:
-        raise ValueError(
-            f"confidence_z must be > 0, got {cfg['confidence_z']}."
         )
     cfg["_resolved"] = True
     return cfg
@@ -245,17 +186,6 @@ def denoise_batch_fourier(
         summary_metrics (B, 3)).
     """
     cfg = _resolve_fourier_config(config)
-    num_spectra, num_points = energies.shape
-    signal_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    confidence_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    summary_metrics = np.empty((num_spectra, 3), dtype=np.float64)
-
-    for idx, meta in enumerate(metas):
-        (
-            signal_curves[idx],
-            confidence_curves[idx],
-            summary_metrics[idx],
-        ) = denoise_spectrum_fourier(
-            energies[idx], intensities[idx], cfg, meta=meta
-        )
-    return signal_curves, confidence_curves, summary_metrics
+    return run_batch_denoise(
+        denoise_spectrum_fourier, energies, intensities, metas, cfg
+    )

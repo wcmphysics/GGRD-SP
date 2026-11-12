@@ -62,6 +62,22 @@ class SafeBatchNorm1d(nn.BatchNorm1d):
         return super().forward(x)
 
 
+class BaseSpectralModel1D(nn.Module):
+    """Base class for 1D sequence-to-sequence spectral neural network models."""
+
+    def validate_input(self, x: torch.Tensor, name: str | None = None) -> None:
+        """Ensure input tensor has shape (batch_size, 1, seq_len)."""
+        validate_3d_spectrum_tensor(x, name=name)
+
+    def get_l2_regularization(self) -> torch.Tensor:
+        """Compute the sum of squared weights for conv layers."""
+        return compute_conv1d_l2_reg(self)
+
+    def compute_conv1d_l2_reg(self) -> torch.Tensor:
+        """Alias for get_l2_regularization."""
+        return compute_conv1d_l2_reg(self)
+
+
 def validate_positive_int(val: Any, name: str, min_val: int = 1) -> int:
     """Validate that a value is an integer (not bool) >= min_val."""
     if isinstance(val, bool) or not isinstance(val, int) or val < min_val:

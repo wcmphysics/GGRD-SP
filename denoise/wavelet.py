@@ -12,8 +12,10 @@ import pywt
 from denoise.common import (
     _SNR_DEFINITIONS,
     _validate_spectrum,
+    run_batch_denoise,
     summarize_denoised_spectrum,
 )
+from utility.config_schema import DenoiseWaveletConfig, resolve_subconfig
 
 _VALID_TRANSFORM_TYPES: tuple[str, ...] = ("stationary", "discrete")
 _VALID_THRESHOLD_MODES: tuple[str, ...] = ("soft", "hard")
@@ -26,95 +28,22 @@ def get_default_wavelet_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Default configuration dictionary:
-        - 'transform_type': 'stationary' (default) or 'discrete'.
-        - 'wavelet_name': Mother wavelet family name (default 'sym4').
-        - 'decomposition_level': Decomposition depth >= 1 (default 2).
-        - 'threshold_mode': 'soft' (default) or 'hard'.
-        - 'threshold_rule': 'universal' (default) or 'bayes'.
-        - 'threshold_scale': Positive multiplier on threshold (default 1.0).
-        - 'boundary_mode': Signal padding mode for discrete transform
-          (default 'symmetric').
-        - 'snr_definition': 'range' or 'std' (default 'range').
-        - 'confidence_z': Confidence band multiplier (default 1.96).
+        Default configuration dictionary from DenoiseWaveletConfig schema.
     """
-    return {
-        "transform_type": "stationary",
-        "wavelet_name": "sym4",
-        "decomposition_level": 2,
-        "threshold_mode": "soft",
-        "threshold_rule": "universal",
-        "threshold_scale": 1.0,
-        "boundary_mode": "symmetric",
-        "snr_definition": "range",
-        "confidence_z": 1.96,
-    }
+    return resolve_subconfig(DenoiseWaveletConfig)
 
 
 def _resolve_wavelet_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Validate and merge user wavelet configuration with defaults."""
     if config is not None and config.get("_resolved"):
         return config
-    cfg = get_default_wavelet_config()
-    user_cfg = copy.deepcopy(config or {})
-    for key in user_cfg:
-        if key not in cfg:
-            raise ValueError(
-                f"Unknown wavelet config key '{key}'. "
-                f"Valid keys: {sorted(cfg)}"
-            )
-    cfg.update(user_cfg)
-
-    if cfg["transform_type"] not in _VALID_TRANSFORM_TYPES:
-        raise ValueError(
-            f"Invalid transform_type={cfg['transform_type']!r}; "
-            f"choose one of {_VALID_TRANSFORM_TYPES}."
-        )
+    cfg = resolve_subconfig(DenoiseWaveletConfig, config)
     try:
         pywt.Wavelet(str(cfg["wavelet_name"]))
     except ValueError as exc:
         raise ValueError(
             f"Invalid wavelet_name={cfg['wavelet_name']!r}: {exc}"
         ) from exc
-
-    decomposition_level = cfg["decomposition_level"]
-    if decomposition_level is not None and (
-        isinstance(decomposition_level, bool)
-        or not isinstance(decomposition_level, int)
-        or decomposition_level < 1
-    ):
-        raise ValueError(
-            f"decomposition_level must be None or an integer >= 1, "
-            f"got {decomposition_level!r}."
-        )
-    if cfg["threshold_mode"] not in _VALID_THRESHOLD_MODES:
-        raise ValueError(
-            f"Invalid threshold_mode={cfg['threshold_mode']!r}; "
-            f"choose one of {_VALID_THRESHOLD_MODES}."
-        )
-    if cfg["threshold_rule"] not in _VALID_THRESHOLD_RULES:
-        raise ValueError(
-            f"Invalid threshold_rule={cfg['threshold_rule']!r}; "
-            f"choose one of {_VALID_THRESHOLD_RULES}."
-        )
-    threshold_scale = cfg["threshold_scale"]
-    if (
-        isinstance(threshold_scale, bool)
-        or not isinstance(threshold_scale, (int, float))
-        or threshold_scale <= 0
-    ):
-        raise ValueError(
-            f"threshold_scale must be > 0, got {threshold_scale!r}."
-        )
-    if cfg["snr_definition"] not in _SNR_DEFINITIONS:
-        raise ValueError(
-            f"Invalid snr_definition={cfg['snr_definition']!r}; "
-            f"choose one of {_SNR_DEFINITIONS}."
-        )
-    if cfg["confidence_z"] <= 0:
-        raise ValueError(
-            f"confidence_z must be > 0, got {cfg['confidence_z']}."
-        )
     cfg["_resolved"] = True
     return cfg
 
@@ -325,17 +254,6 @@ def denoise_batch_wavelet(
         summary_metrics (B, 3)).
     """
     cfg = _resolve_wavelet_config(config)
-    num_spectra, num_points = energies.shape
-    signal_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    confidence_curves = np.empty((num_spectra, num_points), dtype=np.float64)
-    summary_metrics = np.empty((num_spectra, 3), dtype=np.float64)
-
-    for idx, meta in enumerate(metas):
-        (
-            signal_curves[idx],
-            confidence_curves[idx],
-            summary_metrics[idx],
-        ) = denoise_spectrum_wavelet(
-            energies[idx], intensities[idx], cfg, meta=meta
-        )
-    return signal_curves, confidence_curves, summary_metrics
+    return run_batch_denoise(
+        denoise_spectrum_wavelet, energies, intensities, metas, cfg
+    )

@@ -15,6 +15,8 @@ import torch.nn as nn
 
 from models.film import FiLMGenerator
 from models.layers import (
+    BaseSpectralModel1D,
+    SafeBatchNorm1d,
     build_conv1d_layer,
     compute_conv1d_l2_reg,
     validate_3d_spectrum_tensor,
@@ -61,7 +63,7 @@ def _build_hidden_conv_and_norm_layers(
     hidden_convs = nn.ModuleList(hidden_convs)
     
     # batch norm layers if needed, otherwise just identidy layers
-    hidden_bns = [nn.BatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity() for _ in range(num_hidden)]
+    hidden_bns = [SafeBatchNorm1d(resnet_channel) if use_batch_norm else nn.Identity() for _ in range(num_hidden)]
     hidden_bns = nn.ModuleList(hidden_bns)
     
     return hidden_convs, hidden_bns
@@ -90,7 +92,7 @@ def _extract_and_clamp_shortcut_gain(
     )
 
 
-class ResNet1D(nn.Module):
+class ResNet1D(BaseSpectralModel1D):
     """Residual 1D CNN with 3 convolutional layers, mirror padding, identity
     shortcut, and optional FiLM.
 

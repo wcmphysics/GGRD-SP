@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -248,3 +248,50 @@ def _select_denoise_rows(
         selected = selected[selected["region"].isin(regions)]
 
     return selected
+
+
+def run_batch_denoise(
+    single_fn: Callable[
+        [np.ndarray, np.ndarray, dict[str, Any] | None, dict[str, Any] | None],
+        tuple[np.ndarray, np.ndarray, tuple[float, float, float]],
+    ],
+    energies: np.ndarray,
+    intensities: np.ndarray,
+    metas: list[dict[str, Any]],
+    config: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Execute spectrum-level denoising across a batch of spectra.
+
+    Parameters
+    ----------
+    single_fn : Callable
+        Function with signature (energy, intensity, config, meta) ->
+        (signal, confidence, (m1, m2, m3)).
+    energies : np.ndarray
+        2D array of binding energies of shape (B, N_points).
+    intensities : np.ndarray
+        2D array of measured intensities of shape (B, N_points).
+    metas : list[dict[str, Any]]
+        List of metadata dictionaries for each spectrum.
+    config : dict[str, Any] | None, optional
+        Method configuration dictionary.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        3-tuple of (signal_curves (B, N), confidence_curves (B, N),
+        summary_metrics (B, 3)).
+    """
+    num_spectra, num_points = energies.shape
+    signal_curves = np.empty((num_spectra, num_points), dtype=np.float64)
+    confidence_curves = np.empty((num_spectra, num_points), dtype=np.float64)
+    summary_metrics = np.empty((num_spectra, 3), dtype=np.float64)
+
+    for idx, meta in enumerate(metas):
+        (
+            signal_curves[idx],
+            confidence_curves[idx],
+            summary_metrics[idx],
+        ) = single_fn(energies[idx], intensities[idx], config, meta=meta)
+
+    return signal_curves, confidence_curves, summary_metrics
