@@ -580,6 +580,19 @@
           "title": "Region Configs",
           "type": "object"
         },
+        "quantification": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantification"
+        },
         "rsf_table": {
           "anyOf": [
             {
@@ -619,6 +632,19 @@
           "title": "Cutoff Ratio",
           "type": "number"
         },
+        "cutoff_ev": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cutoff Ev"
+        },
         "filter_order": {
           "default": 4,
           "minimum": 1,
@@ -634,6 +660,21 @@
           "default": "even",
           "title": "Padding Mode",
           "type": "string"
+        },
+        "snr_definition": {
+          "default": "range",
+          "enum": [
+            "range",
+            "std"
+          ],
+          "title": "Snr Definition",
+          "type": "string"
+        },
+        "confidence_z": {
+          "default": 1.96,
+          "exclusiveMinimum": 0.0,
+          "title": "Confidence Z",
+          "type": "number"
         }
       },
       "title": "DenoiseFourierConfig",
@@ -651,13 +692,62 @@
           "title": "Noise Model",
           "type": "string"
         },
+        "poisson_weight_floor": {
+          "default": 0.01,
+          "title": "Poisson Weight Floor",
+          "type": "number"
+        },
+        "training": {
+          "$ref": "#/$defs/NoiseTrainingConfig"
+        },
         "confidence_type": {
           "default": "observation",
           "title": "Confidence Type",
           "type": "string"
         },
-        "training": {
-          "$ref": "#/$defs/NoiseTrainingConfig"
+        "confidence_z": {
+          "default": 1.96,
+          "title": "Confidence Z",
+          "type": "number"
+        },
+        "snr_definition": {
+          "default": "range",
+          "title": "Snr Definition",
+          "type": "string"
+        },
+        "device": {
+          "default": "cpu",
+          "title": "Device",
+          "type": "string"
+        },
+        "show_progress": {
+          "default": true,
+          "title": "Show Progress",
+          "type": "boolean"
+        },
+        "batch_size": {
+          "default": 64,
+          "exclusiveMinimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "num_workers": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Num Workers",
+          "type": "integer"
+        },
+        "batch_verify_rtol": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Batch Verify Rtol"
         }
       },
       "title": "DenoiseGPConfig",
@@ -683,6 +773,33 @@
           "default": "interp",
           "title": "Boundary Mode",
           "type": "string"
+        },
+        "window_length_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window Length Ev"
+        },
+        "snr_definition": {
+          "default": "range",
+          "enum": [
+            "range",
+            "std"
+          ],
+          "title": "Snr Definition",
+          "type": "string"
+        },
+        "confidence_z": {
+          "default": 1.96,
+          "exclusiveMinimum": 0.0,
+          "title": "Confidence Z",
+          "type": "number"
         }
       },
       "title": "DenoiseSavgolConfig",
@@ -734,6 +851,26 @@
           "default": 1.0,
           "exclusiveMinimum": 0.0,
           "title": "Threshold Scale",
+          "type": "number"
+        },
+        "boundary_mode": {
+          "default": "symmetric",
+          "title": "Boundary Mode",
+          "type": "string"
+        },
+        "snr_definition": {
+          "default": "range",
+          "enum": [
+            "range",
+            "std"
+          ],
+          "title": "Snr Definition",
+          "type": "string"
+        },
+        "confidence_z": {
+          "default": 1.96,
+          "exclusiveMinimum": 0.0,
+          "title": "Confidence Z",
           "type": "number"
         }
       },
@@ -1172,6 +1309,42 @@
           "exclusiveMinimum": 0.0,
           "title": "Initial Lengthscale Ev",
           "type": "number"
+        },
+        "min_lengthscale_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Lengthscale Ev"
+        },
+        "min_lengthscale_points": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 3.0,
+          "title": "Min Lengthscale Points"
+        },
+        "max_lengthscale_ev": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Lengthscale Ev"
         }
       },
       "title": "NoiseKernelConfig",
@@ -1197,13 +1370,13 @@
       "description": "Training iterations for Gaussian Process noise estimation.",
       "properties": {
         "num_iterations": {
-          "default": 50,
+          "default": 100,
           "exclusiveMinimum": 0,
           "title": "Num Iterations",
           "type": "integer"
         },
         "learning_rate": {
-          "default": 0.2,
+          "default": 0.1,
           "exclusiveMinimum": 0.0,
           "title": "Learning Rate",
           "type": "number"
@@ -1258,40 +1431,24 @@
           "type": "string"
         },
         "source_tool": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Source Tool"
+          "default": "J4",
+          "title": "Source Tool",
+          "type": "string"
         },
         "target_tool": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Target Tool"
+          "default": "J5",
+          "title": "Target Tool",
+          "type": "string"
         },
         "material": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Material"
+          "default": "all",
+          "title": "Material",
+          "type": "string"
+        },
+        "match_t7_code": {
+          "default": true,
+          "title": "Match T7 Code",
+          "type": "boolean"
         }
       },
       "title": "PairingConfig",
@@ -1314,13 +1471,37 @@
       "additionalProperties": true,
       "description": "Shirley background subtraction and atomic percentage calculation.",
       "properties": {
+        "material": {
+          "default": "NMG",
+          "title": "Material",
+          "type": "string"
+        },
+        "measurement_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Measurement Id"
+        },
         "rsf_table": {
-          "additionalProperties": {
-            "type": "number"
-          },
-          "minProperties": 1,
-          "title": "Rsf Table",
-          "type": "object"
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rsf Table"
         },
         "default_endpoint_strategy": {
           "default": "minima",
@@ -1332,6 +1513,24 @@
           "exclusiveMinimum": 0.0,
           "title": "Default Endpoint Average Ev",
           "type": "number"
+        },
+        "region_endpoint_config": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region Endpoint Config"
+        },
+        "smooth_search": {
+          "default": false,
+          "title": "Smooth Search",
+          "type": "boolean"
         },
         "max_iter": {
           "default": 50,
@@ -1346,9 +1545,6 @@
           "type": "number"
         }
       },
-      "required": [
-        "rsf_table"
-      ],
       "title": "QuantificationConfig",
       "type": "object"
     },
@@ -1380,7 +1576,8 @@
           "default": "random",
           "enum": [
             "random",
-            "direct"
+            "direct",
+            "code_name"
           ],
           "title": "Method",
           "type": "string"
@@ -1459,6 +1656,31 @@
           ],
           "default": null,
           "title": "Direct Assignment"
+        },
+        "code_name_assignment": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "propertyNames": {
+                "enum": [
+                  "train",
+                  "val",
+                  "test"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code Name Assignment"
         }
       },
       "title": "SplittingConfig",

@@ -103,7 +103,7 @@ class NormalizationConfig(BaseModel):
 class SplittingConfig(BaseModel):
     """Session-level train-val-test partitioning parameters."""
 
-    method: Literal["random", "direct"] = "random"
+    method: Literal["random", "direct", "code_name"] = "random"
     train_ratio: float = Field(0.5, ge=0.0, le=1.0)
     val_ratio: float = Field(0.2, ge=0.0, le=1.0)
     test_ratio: float = Field(0.3, ge=0.0, le=1.0)
@@ -111,11 +111,63 @@ class SplittingConfig(BaseModel):
     source_tool: str | None = None
     target_tool: str | None = None
     direct_assignment: dict[str, list[str]] | None = None
+    code_name_assignment: dict[Literal["train", "val", "test"], list[str]] | None = None
     model_config = ConfigDict(extra="allow")
+
+    def _collect_code_splits(self) -> dict[str, list[str]]:
+        """Map each configured code name to its assigned splits."""
+        code_to_splits: dict[str, list[str]] = {}
+        for split_name in ("train", "val", "test"):
+            seen: set[str] = set()
+            for raw_code in self.code_name_assignment.get(split_name, []):
+                code = raw_code.strip()
+                if not code:
+                    raise ValueError(
+                        f"code_name_assignment['{split_name}'] contains an empty code name."
+                    )
+                if code in seen:
+                    raise ValueError(
+                        f"Duplicate code name '{code}' in code_name_assignment['{split_name}']."
+                    )
+                seen.add(code)
+                code_to_splits.setdefault(code, []).append(split_name)
+        return code_to_splits
+
+    def _validate_code_name_config(self) -> None:
+        """Validate code_name_assignment and multi-split ratios."""
+        if not self.code_name_assignment:
+            raise ValueError(
+                "method='code_name' requires 'code_name_assignment' mapping."
+            )
+        code_to_splits = self._collect_code_splits()
+        if not code_to_splits:
+            raise ValueError(
+                "method='code_name' requires at least one code name in 'code_name_assignment'."
+            )
+        if not self.code_name_assignment.get("train"):
+            raise ValueError(
+                "method='code_name' requires at least one code name in 'train'."
+            )
+        if not (self.code_name_assignment.get("val") or self.code_name_assignment.get("test")):
+            raise ValueError(
+                "method='code_name' requires at least one code name in 'val' or 'test'."
+            )
+
+        ratio_map = {
+            "train": self.train_ratio,
+            "val": self.val_ratio,
+            "test": self.test_ratio,
+        }
+        for code, splits in code_to_splits.items():
+            if len(splits) > 1 and any(ratio_map[s] <= 0.0 for s in splits):
+                raise ValueError(
+                    f"Code name '{code}' is assigned to multiple splits {splits}, "
+                    f"so each must have a positive ratio; got {ratio_map}."
+                )
 
     @model_validator(mode="after")
     def validate_ratios_sum_to_one(self) -> Self:
-        """Verify partition ratios sum to 1.0 or direct assignment is set."""
+        """Verify partition ratios sum to 1.0 or assignment mapping is set."""
         if self.method == "random":
             total = self.train_ratio + self.val_ratio + self.test_ratio
             if abs(total - 1.0) > 1e-4:
@@ -133,6 +185,8 @@ class SplittingConfig(BaseModel):
             raise ValueError(
                 "method='direct' requires 'direct_assignment' mapping."
             )
+        elif self.method == "code_name":
+            self._validate_code_name_config()
         return self
 
 
