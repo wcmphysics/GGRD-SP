@@ -45,6 +45,7 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
 - Modes:
   - `random`: uses `train_ratio`, `val_ratio`, `test_ratio`, and `seed` to do splitting (default `None`).
   - Direct assignment: a dict `{train, val, test}` → lists of measurement IDs. Each ID must appear in exactly one group, and together the groups must cover all paired measurements.
+  - `code_name`: a dict `{train, val, test}` → lists of leading `_`-delimited `measurement_id` code names. All paired code names must be covered; codes in 1 split get 100% assignment, while codes in 2+ splits are stratified-split using renormalized ratios.
 - Returns `session_splits` and `measurement_mapping` (source measurement ID -> target measurement ID).
 
 ### 4. Noise analysis & de-noising
