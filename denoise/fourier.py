@@ -1,7 +1,5 @@
 """Fourier and zero-phase low-pass filtering (DCT and Butterworth filtfilt)."""
 
-from __future__ import annotations
-
 import copy
 from typing import Any
 

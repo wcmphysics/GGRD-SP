@@ -1,7 +1,5 @@
 """Savitzky-Golay polynomial filtering for regional XPS spectra."""
 
-from __future__ import annotations
-
 import copy
 from typing import Any
 

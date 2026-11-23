@@ -1,7 +1,5 @@
 """Exact Gaussian Process noise decomposition and denoising for regional XPS."""
 
-from __future__ import annotations
-
 import copy
 from typing import Any
 

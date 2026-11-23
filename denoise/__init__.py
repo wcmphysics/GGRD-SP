@@ -1,7 +1,5 @@
 """Spectral noise analysis and denoising package for GGRD-SP."""
 
-from __future__ import annotations
-
 from denoise.common import run_batch_denoise, summarize_denoised_spectrum
 from denoise.fourier import (
     denoise_batch_fourier,

@@ -1,7 +1,5 @@
 """Wavelet shrinkage denoising (Stationary and Discrete Wavelet Transforms)."""
 
-from __future__ import annotations
-
 import copy
 import math
 from typing import Any

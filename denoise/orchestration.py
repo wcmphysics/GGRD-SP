@@ -1,7 +1,5 @@
 """Orchestration for spectral noise analysis, denoising, and quantification."""
 
-from __future__ import annotations
-
 import copy
 import math
 from concurrent.futures import ProcessPoolExecutor, as_completed
