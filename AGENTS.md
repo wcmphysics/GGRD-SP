@@ -18,7 +18,7 @@ GGRD-SP is a sequence-to-sequence machine-learning project for **cross-tool XPS 
 | `docs/` | Documentation |
 
 ## Tech Stack
-Python 3 (CPU-only) · PyTorch · GPyTorch · Ax/BoTorch · Pydantic · NumPy · Pandas · SciPy · scikit-learn · PyWavelets · Matplotlib/Seaborn
+Python 3.12 (CPU-only) · PyTorch · GPyTorch · Ax/BoTorch · Pydantic · NumPy · Pandas · SciPy · scikit-learn · PyWavelets · Matplotlib/Seaborn
 
 ## Core Data Model
 - **Measurement (session)**: one XPS run of one material on one tool at one time. It produces `N_die` full spectra, each from a die (default 9 dies) on a wafer.

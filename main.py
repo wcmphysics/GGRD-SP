@@ -17,8 +17,6 @@ Orchestrates sequential end-to-end XPS spectral transfer stages:
 13. Diagnostic visualization dispatching.
 """
 
-from __future__ import annotations
-
 import sys
 import warnings
 import matplotlib.pyplot as plt
