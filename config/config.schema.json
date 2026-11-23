@@ -1686,6 +1686,37 @@
       "title": "SplittingConfig",
       "type": "object"
     },
+    "StandardizationConfig": {
+      "additionalProperties": true,
+      "description": "Source-tool train-only spectral intensity RMS standardization options.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "eps": {
+          "default": 1e-06,
+          "exclusiveMinimum": 0.0,
+          "title": "Eps",
+          "type": "number"
+        },
+        "source_tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Tool"
+        }
+      },
+      "title": "StandardizationConfig",
+      "type": "object"
+    },
     "ToolOffsetConfig": {
       "additionalProperties": true,
       "description": "Synthetic spectral drift and scale offsets per measurement tool.",
@@ -1948,6 +1979,9 @@
     },
     "normalization": {
       "$ref": "#/$defs/NormalizationConfig"
+    },
+    "standardization": {
+      "$ref": "#/$defs/StandardizationConfig"
     },
     "splitting": {
       "$ref": "#/$defs/SplittingConfig"

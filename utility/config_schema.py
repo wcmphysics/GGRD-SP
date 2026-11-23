@@ -100,6 +100,15 @@ class NormalizationConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class StandardizationConfig(BaseModel):
+    """Source-tool train-only spectral intensity RMS standardization options."""
+
+    enabled: bool = False
+    eps: float = Field(1e-6, gt=0.0)
+    source_tool: str | None = None
+    model_config = ConfigDict(extra="allow")
+
+
 class SplittingConfig(BaseModel):
     """Session-level train-val-test partitioning parameters."""
 
@@ -641,6 +650,7 @@ class PipelineConfig(BaseModel):
     data_generation: DataGenerationConfig = Field(default_factory=DataGenerationConfig)
     pairing: PairingConfig = Field(default_factory=PairingConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
+    standardization: StandardizationConfig = Field(default_factory=StandardizationConfig)
     splitting: SplittingConfig = Field(default_factory=SplittingConfig)
     gp_flux: GPFluxConfig = Field(default_factory=GPFluxConfig)
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
@@ -782,6 +792,7 @@ __all__ = [
     "QuantificationConfig",
     "ShirleyGenerationConfig",
     "SplittingConfig",
+    "StandardizationConfig",
     "TrainingSectionConfig",
     "VisualizationConfig",
 ]

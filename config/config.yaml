@@ -92,6 +92,9 @@ splitting:
   test_ratio: 0.3
   train_ratio: 0.5
   val_ratio: 0.2
+standardization:
+  enabled: false
+  eps: 1.0e-06
 training:
   region_configs: {}
   train_config:

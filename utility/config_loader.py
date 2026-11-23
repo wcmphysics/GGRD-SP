@@ -290,6 +290,7 @@ DECLARATIVE_GLOBAL_INJECTIONS: list[tuple[str, str, str]] = [
     ("pairing", "source_tool", "source_tool"),
     ("pairing", "target_tool", "target_tool"),
     ("pairing", "material", "material"),
+    ("standardization", "source_tool", "source_tool"),
     ("splitting", "source_tool", "source_tool"),
     ("splitting", "target_tool", "target_tool"),
     ("gp_flux", "source_tool", "source_tool"),
