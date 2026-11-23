@@ -114,6 +114,58 @@ class TestConfigSchema(unittest.TestCase):
             SplittingConfig(method="direct")
         self.assertIn("requires 'direct_assignment' mapping", str(ctx.exception))
 
+    def test_code_name_assignment_validation(self) -> None:
+        """Verify SplittingConfig validates code_name_assignment and ratios."""
+        sc = SplittingConfig(
+            method="code_name",
+            train_ratio=0.7,
+            val_ratio=0.3,
+            test_ratio=0.0,
+            code_name_assignment={
+                "train": ["PMGA"],
+                "val": ["PMGA"],
+                "test": ["PMGB"],
+            },
+        )
+        self.assertEqual(sc.method, "code_name")
+        self.assertEqual(sc.code_name_assignment["test"], ["PMGB"])
+
+        with self.assertRaisesRegex(ValidationError, "requires 'code_name_assignment'"):
+            SplittingConfig(method="code_name")
+
+        with self.assertRaisesRegex(ValidationError, "at least one code name"):
+            SplittingConfig(
+                method="code_name",
+                code_name_assignment={"train": [], "val": [], "test": []},
+            )
+
+        with self.assertRaisesRegex(ValidationError, "Duplicate code name"):
+            SplittingConfig(
+                method="code_name",
+                code_name_assignment={"train": ["PMGA", "PMGA"], "test": ["PMGB"]},
+            )
+
+        with self.assertRaisesRegex(ValidationError, "assigned to multiple splits"):
+            SplittingConfig(
+                method="code_name",
+                train_ratio=0.7,
+                val_ratio=0.0,
+                test_ratio=0.3,
+                code_name_assignment={"train": ["PMGA"], "val": ["PMGA"], "test": ["PMGB"]},
+            )
+
+        with self.assertRaisesRegex(ValidationError, "in 'train'"):
+            SplittingConfig(
+                method="code_name",
+                code_name_assignment={"val": ["PMGA"], "test": ["PMGB"]},
+            )
+
+        with self.assertRaisesRegex(ValidationError, "in 'val' or 'test'"):
+            SplittingConfig(
+                method="code_name",
+                code_name_assignment={"train": ["PMGA"]},
+            )
+
     def test_unsupported_random_split_ratios_rejected(self) -> None:
         """Require training data and at least one evaluation partition."""
         for train, val, test in ((1.0, 0.0, 0.0), (0.0, 0.5, 0.5), (0.0, 1.0, 0.0)):
