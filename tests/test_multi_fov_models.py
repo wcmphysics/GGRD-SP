@@ -365,7 +365,7 @@ class TestDedicatedModelConfigFiles(unittest.TestCase):
             try:
                 cfg = load_config(tmp_path, validate=True)
                 tc = cfg["training"]["train_config"]
-                self.assertEqual(tc["epochs"], 50)
+                self.assertEqual(tc["epochs"], 100)
                 self.assertEqual(tc["learning_rate"], 0.001)
                 self.assertEqual(tc["early_stopping_patience"], 20)
             finally:
