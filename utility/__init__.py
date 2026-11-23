@@ -25,6 +25,11 @@ from utility.flux_and_intensity import (
     trapezoid_integral,
 )
 from utility.normalization import normalize_spectral_data
+from utility.standardize import (
+    fit_intensity_standardization,
+    inverse_standardize_spectral_intensity,
+    standardize_spectral_intensity,
+)
 from utility.pairing import (
     get_default_pairing_config,
     pair_source_target_spectra,
@@ -78,6 +83,9 @@ __all__ = [
     "compute_die_total_flux",
     # Normalization & Pairing
     "normalize_spectral_data",
+    "fit_intensity_standardization",
+    "standardize_spectral_intensity",
+    "inverse_standardize_spectral_intensity",
     "pair_source_target_spectra",
     "get_default_pairing_config",
     "split_measurement_sessions",
