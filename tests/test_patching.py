@@ -1,7 +1,5 @@
 """Unit tests for utility/patching.py module."""
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import torch

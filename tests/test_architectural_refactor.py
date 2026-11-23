@@ -2,8 +2,6 @@
 model registry, DatasetMetadata, resolve_subconfig, and configuration resolution.
 """
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import pandas as pd

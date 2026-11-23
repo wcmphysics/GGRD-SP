@@ -1,7 +1,5 @@
 """Unit tests for strict FiLM region-index conditioning."""
 
-from __future__ import annotations
-
 import unittest
 import torch
 

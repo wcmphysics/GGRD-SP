@@ -1,7 +1,5 @@
 """Unit tests for Stage 7 training and BoTorch orchestration."""
 
-from __future__ import annotations
-
 import unittest
 from unittest.mock import patch
 import numpy as np

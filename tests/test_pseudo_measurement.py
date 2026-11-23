@@ -1,7 +1,5 @@
 """Unit tests for utility/pseudo_measurement.py and spectral visualization."""
 
-from __future__ import annotations
-
 import copy
 import unittest
 import numpy as np

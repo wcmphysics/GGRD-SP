@@ -1,7 +1,5 @@
 """Unit tests for the 1D DeepLabV3 neural network architecture and pipeline."""
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import torch

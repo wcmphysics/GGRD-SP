@@ -1,7 +1,5 @@
 """Unit tests for the sliding window model and pipeline in models/."""
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import torch

@@ -1,7 +1,5 @@
 """Unit tests for Feature-wise Linear Modulation (FiLM) in models/film.py."""
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import pandas as pd

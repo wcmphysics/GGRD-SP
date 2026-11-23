@@ -1,7 +1,5 @@
 """Unit tests for 1D ResNet architecture, training, and Ax optimization."""
 
-from __future__ import annotations
-
 import unittest
 import warnings
 

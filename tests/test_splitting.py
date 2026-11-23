@@ -1,7 +1,5 @@
 """Unit tests for Stage 4 measurement session splitting."""
 
-from __future__ import annotations
-
 import unittest
 import pandas as pd
 

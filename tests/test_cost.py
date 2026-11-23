@@ -1,7 +1,5 @@
 """Unit tests for cost function definitions in models/cost.py."""
 
-from __future__ import annotations
-
 import unittest
 import torch
 import torch.nn as nn

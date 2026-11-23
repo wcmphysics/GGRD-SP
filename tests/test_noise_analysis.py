@@ -1,7 +1,5 @@
 """Unit tests for denoise package and noise visualization routines."""
 
-from __future__ import annotations
-
 import os
 import tempfile
 import unittest

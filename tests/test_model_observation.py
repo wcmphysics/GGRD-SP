@@ -1,7 +1,5 @@
 """Unit tests for Model Performance Observation and Visualization."""
 
-from __future__ import annotations
-
 import unittest
 
 import matplotlib

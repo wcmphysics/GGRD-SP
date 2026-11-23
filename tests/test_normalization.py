@@ -1,7 +1,5 @@
 """Unit tests for Stage 2 spectral normalization."""
 
-from __future__ import annotations
-
 import unittest
 import warnings
 import numpy as np

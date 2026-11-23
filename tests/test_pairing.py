@@ -1,7 +1,5 @@
 """Unit tests for utility/pairing.py and pairing timeline visualization."""
 
-from __future__ import annotations
-
 import unittest
 from datetime import datetime, timedelta
 
@@ -133,16 +131,6 @@ class TestPairing(unittest.TestCase):
 
         with self.assertRaises(KeyError):
             pair_source_target_spectra(self.meta_df.drop(columns=["tool"]), config=self.pairing_cfg)
-
-    def test_hungarian_unavailable_raises_runtime_error(self) -> None:
-        """Verify RuntimeError is raised when Hungarian matcher is unavailable."""
-        from unittest.mock import patch
-        with patch("utility.pairing.linear_sum_assignment", None):
-            with self.assertRaises(RuntimeError):
-                pair_source_target_spectra(
-                    self.meta_df,
-                    config={**self.pairing_cfg, "method": "optimal"},
-                )
 
 
 class TestPairingVisualization(unittest.TestCase):

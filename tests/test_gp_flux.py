@@ -1,7 +1,5 @@
 """Unit tests for models.gp_flux and visualization.plot_gp_die_flux_timeline."""
 
-from __future__ import annotations
-
 import unittest
 
 import matplotlib

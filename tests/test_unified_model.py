@@ -1,7 +1,5 @@
 """Unit tests for Stage 7 unified multi-region neural network architecture."""
 
-from __future__ import annotations
-
 import unittest
 import numpy as np
 import pandas as pd

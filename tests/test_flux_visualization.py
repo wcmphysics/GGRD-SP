@@ -1,7 +1,5 @@
 """Unit tests for total flux and averaged intensity timeline visualization."""
 
-from __future__ import annotations
-
 import unittest
 
 import matplotlib
