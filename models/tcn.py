@@ -14,8 +14,6 @@ strictly uses non-causal symmetric reflection padding (via SafeReflectionPad1d),
 preserving peak alignment and sequence length without boundary distortion.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 

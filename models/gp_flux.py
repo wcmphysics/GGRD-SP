@@ -5,8 +5,6 @@ including continuous time kernels, learnable sigmoid abrupt-jump kernels,
 and categorical die index kernels using GPyTorch.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import gpytorch

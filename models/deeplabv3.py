@@ -11,10 +11,9 @@ modeling:
    shift learning.
 """
 
-from __future__ import annotations
-
+from collections.abc import Sequence
 import functools
-from typing import Any, Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn

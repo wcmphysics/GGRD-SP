@@ -1,7 +1,5 @@
 """Model training and Bayesian optimization orchestration module for GGRD-SP."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import torch

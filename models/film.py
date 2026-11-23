@@ -6,8 +6,6 @@ die flux, relative regional intensity, region one-hot, element multi-hot,
 and energy bounds) without target data leakage.
 """
 
-from __future__ import annotations
-
 from typing import Any
 import numpy as np
 import pandas as pd

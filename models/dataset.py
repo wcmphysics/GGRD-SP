@@ -1,8 +1,6 @@
 """Dataset classes and regional dataset builders for spectral transfer."""
 
-from __future__ import annotations
-
-from typing import Any
+from typing import Any, Self
 import warnings
 
 import numpy as np
@@ -186,8 +184,8 @@ class SpectrumPatchDataset(Dataset):
 
     @classmethod
     def concatenate(
-        cls, datasets: list[SpectrumPatchDataset]
-    ) -> SpectrumPatchDataset:
+        cls, datasets: list[Self]
+    ) -> Self:
         """Merge patch datasets that share one window size and stride."""
         if not datasets:
             raise ValueError("Cannot concatenate an empty list of patch datasets.")

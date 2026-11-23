@@ -1,7 +1,5 @@
 """Cost functions for spectral sequence-to-sequence transformation."""
 
-from __future__ import annotations
-
 import math
 from typing import Any
 import warnings

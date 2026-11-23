@@ -4,8 +4,6 @@ Supports both full regional spectrum mode and sliding window patch mode,
 with global residual shortcut for stable inter-tool transfer.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import torch

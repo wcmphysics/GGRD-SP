@@ -1,7 +1,5 @@
 """Neural network model factory for 1D spectral transformation architectures."""
 
-from __future__ import annotations
-
 from typing import Any
 import torch.nn as nn
 

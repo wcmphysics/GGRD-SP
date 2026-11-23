@@ -1,7 +1,5 @@
 """InceptionTime 1D multi-field-of-view neural network for XPS spectra."""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 

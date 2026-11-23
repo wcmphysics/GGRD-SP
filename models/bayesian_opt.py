@@ -1,11 +1,9 @@
 """Bayesian optimization of neural network hyperparameters using Ax."""
 
-from __future__ import annotations
-
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import logging
 import warnings
-from typing import Any, Callable
+from typing import Any
 
 from ax.service.ax_client import AxClient, ObjectiveProperties
 import numpy as np

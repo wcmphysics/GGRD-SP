@@ -1,7 +1,5 @@
 """Neural network models and training pipelines for spectral transfer."""
 
-from __future__ import annotations
-
 from models.bayesian_opt import (
     optimize_model_hyperparameters,
     run_ax_search,
