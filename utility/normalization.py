@@ -1,7 +1,5 @@
 """Spectral normalization utilities for GGRD-SP."""
 
-from __future__ import annotations
-
 from typing import Any
 import warnings
 import numpy as np

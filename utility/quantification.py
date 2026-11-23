@@ -4,8 +4,6 @@ Provides Shirley background subtraction, peak area integration, and atomic
 percentage calculation fulfilling Stage 12 of AGENTS.md.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 import yaml

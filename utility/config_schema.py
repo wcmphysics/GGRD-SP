@@ -4,12 +4,10 @@ Provides strict static and runtime validation of pipeline configurations,
 ensuring physical consistency, type safety, and domain constraints.
 """
 
-from __future__ import annotations
-
 import copy
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import yaml
@@ -31,7 +29,7 @@ class GlobalConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
-    def validate_film_compatibility(self) -> GlobalConfig:
+    def validate_film_compatibility(self) -> Self:
         """Reject FiLM for architectures that do not implement conditioning."""
         if self.model_type.lower() == "deeplabv3" and self.use_film:
             raise ValueError(
@@ -116,7 +114,7 @@ class SplittingConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
-    def validate_ratios_sum_to_one(self) -> SplittingConfig:
+    def validate_ratios_sum_to_one(self) -> Self:
         """Verify partition ratios sum to 1.0 or direct assignment is set."""
         if self.method == "random":
             total = self.train_ratio + self.val_ratio + self.test_ratio
@@ -335,7 +333,7 @@ class ComparisonSavgolConfig(BaseModel):
     polynomial_order: int = Field(ge=1)
 
     @model_validator(mode="after")
-    def validate_window(self) -> ComparisonSavgolConfig:
+    def validate_window(self) -> Self:
         """Require an odd window longer than the polynomial order."""
         if self.window_length % 2 != 1 or self.window_length <= self.polynomial_order:
             raise ValueError("window_length must be odd and greater than polynomial_order")
@@ -619,7 +617,7 @@ class PipelineConfig(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_sliding_window_compatibility(self) -> PipelineConfig:
+    def validate_sliding_window_compatibility(self) -> Self:
         """Reject sliding window mode for multi-field-of-view architectures."""
         model_type = self.global_.model_type.lower()
         if (
@@ -635,7 +633,7 @@ class PipelineConfig(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, file_path: str | Path) -> PipelineConfig:
+    def from_yaml(cls, file_path: str | Path) -> Self:
         """Load and validate pipeline configuration directly from YAML."""
         path = Path(file_path)
         with open(path, "r", encoding="utf-8") as f:

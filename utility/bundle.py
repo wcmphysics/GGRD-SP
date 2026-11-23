@@ -1,8 +1,6 @@
 """Spectral data bundle container and validation."""
 
-from __future__ import annotations
-
-from typing import NamedTuple
+from typing import NamedTuple, Self
 import numpy as np
 import pandas as pd
 
@@ -25,7 +23,7 @@ class SpectralDataBundle(NamedTuple):
     ary_energy: np.ndarray
     df_meta: pd.DataFrame
 
-    def validate(self) -> SpectralDataBundle:
+    def validate(self) -> Self:
         """Validate tensor shapes and index alignment."""
         if self.ary_intensity.ndim != 2:
             raise ValueError(

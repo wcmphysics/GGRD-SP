@@ -5,8 +5,6 @@ target spectra, fulfilling Part 4 of AGENTS.md independently from plotting
 libraries.
 """
 
-from __future__ import annotations
-
 from typing import Any
 import warnings
 

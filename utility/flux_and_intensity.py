@@ -5,8 +5,6 @@ hierarchical flux and mean intensity metrics across regions, dies, and
 measurement sessions.
 """
 
-from __future__ import annotations
-
 from typing import Any
 import warnings
 

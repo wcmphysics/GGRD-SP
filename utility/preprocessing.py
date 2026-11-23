@@ -4,11 +4,9 @@ Consolidates physical flux and intensity integration, train-split continuous
 feature standardization, and canonical categorical tool/region index mapping.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Self
 import numpy as np
 import pandas as pd
 
@@ -57,7 +55,7 @@ class PreprocessOutput(tuple):
         tool_index_mapping: dict[str, int],
         region_index_mapping: dict[str, int],
         dataset_metadata: DatasetMetadata,
-    ) -> PreprocessOutput:
+    ) -> Self:
         obj = super().__new__(
             cls, (df_meta, tool_index_mapping, region_index_mapping)
         )

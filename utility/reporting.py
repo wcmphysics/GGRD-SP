@@ -4,9 +4,8 @@ Provides reusable formatting of per-sample and summary metrics grouped
 by splits (e.g., train vs. test) across regions or chemical elements.
 """
 
-from __future__ import annotations
-
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 import numpy as np
 import pandas as pd
 

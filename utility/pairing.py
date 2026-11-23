@@ -4,20 +4,14 @@ Provides 1-to-1 matching between source tool and target tool measurement
 sessions within a user-defined time threshold, fulfilling Stage 2 of AGENTS.md.
 """
 
-from __future__ import annotations
-
 from typing import Any
 import warnings
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import linear_sum_assignment
 
 from utility.config_schema import PairingConfig, resolve_subconfig
-
-try:
-    from scipy.optimize import linear_sum_assignment
-except (ImportError, OSError):
-    linear_sum_assignment = None
 
 
 def get_default_pairing_config() -> dict[str, Any]:
@@ -161,16 +155,10 @@ def _match_sessions_optimal(
     Raises
     ------
     RuntimeError
-        If linear_sum_assignment is unavailable or Hungarian matching fails.
+        If Hungarian matching fails.
     """
     if cost_matrix.size == 0:
         return {}
-
-    if linear_sum_assignment is None:
-        raise RuntimeError(
-            "scipy.optimize.linear_sum_assignment is unavailable; "
-            "cannot perform optimal Hungarian pairing."
-        )
 
     # Assign prohibitive penalty cost to pairs exceeding threshold
     penalty = 1e9

@@ -4,8 +4,6 @@ Generates synthetic XPS regional spectra and associated metadata according to
 project specifications in AGENTS.md.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from typing import Any
 

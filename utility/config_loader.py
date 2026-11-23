@@ -4,9 +4,7 @@ Provides centralized YAML configuration loading, material element parsing,
 and dynamic element vocabulary extraction.
 """
 
-from __future__ import annotations
 import copy
-
 import os
 from pathlib import Path
 from typing import Any

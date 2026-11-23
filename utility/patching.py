@@ -4,8 +4,6 @@ Provides sequence slicing, window-to-point calculations, and overlap
 reconstruction utilities independent of neural network models.
 """
 
-from __future__ import annotations
-
 import warnings
 from typing import Any
 
