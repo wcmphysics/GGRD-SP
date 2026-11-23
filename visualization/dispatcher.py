@@ -9,7 +9,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from models.gp_flux import predict_gp_die_flux
 from visualization.plot_evaluation import (
     plot_prediction_comparison,
     plot_regional_spectrum_distribution,
@@ -33,6 +32,7 @@ from visualization.plot_spectral import (
 )
 from visualization.plot_timeline import (
     plot_flux_and_averaged_intensity_vs_time,
+    plot_gp_die_flux_timeline,
     plot_max_intensity_vs_time,
     plot_normalized_max_intensity_vs_time,
     plot_pairing_timeline,
@@ -179,7 +179,7 @@ def _render_gp_flux_timelines(
         "gp_die_flux_timeline", gp_plots.get("gp_die_flux_timeline", False)
     )
     if should_plot_flux_timeline and gp_bundle:
-        predict_gp_die_flux(gp_bundle, gp_flux_cfg)
+        plot_gp_die_flux_timeline(gp_bundle, gp_flux_cfg)
         rendered.append("gp_die_flux_timeline")
 
     should_plot_kernel = plot_toggles.get(

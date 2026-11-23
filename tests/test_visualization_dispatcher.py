@@ -145,6 +145,26 @@ class TestVisualizationDispatcher(unittest.TestCase):
         mock_denoise_spec.assert_called_once()
         mock_denoise_at.assert_called_once()
 
+    @patch("visualization.dispatcher.plot_gp_die_flux_timeline")
+    def test_gp_die_flux_timeline_dispatched(
+        self,
+        mock_gp_timeline: unittest.mock.MagicMock,
+    ) -> None:
+        """Verify gp_die_flux_timeline dispatches plot_gp_die_flux_timeline."""
+        gp_bundle = {"models": {}, "datasets": {}}
+        gp_flux_cfg = {"plots": {"gp_die_flux_timeline": True}}
+        data = {**self.pipeline_data, "gp_bundle": gp_bundle}
+        cfg = {
+            "show_plots": True,
+            "gp_flux_config": gp_flux_cfg,
+            "plots": {
+                k: k == "gp_die_flux_timeline"
+                for k in DEFAULT_PLOT_TOGGLES
+            },
+        }
+        rendered = dispatch_visualizations(data, config=cfg)
+        self.assertIn("gp_die_flux_timeline", rendered)
+        mock_gp_timeline.assert_called_once_with(gp_bundle, gp_flux_cfg)
 
 
 if __name__ == "__main__":
