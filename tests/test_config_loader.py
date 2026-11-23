@@ -51,6 +51,7 @@ class TestConfigLoader(unittest.TestCase):
             "data_generation",
             "pairing",
             "normalization",
+            "standardization",
             "splitting",
             "gp_flux",
             "dataset",
@@ -69,6 +70,10 @@ class TestConfigLoader(unittest.TestCase):
 
         # Verify resolve_pipeline_config resolution inside load_config
         self.assertEqual(cfg["pairing"]["source_tool"], cfg["global"]["source_tool"])
+        self.assertEqual(
+            cfg["standardization"]["source_tool"], cfg["global"]["source_tool"]
+        )
+        self.assertFalse(cfg["standardization"]["enabled"])
         self.assertIs(cfg["training"]["film_config"], cfg["film"])
         self.assertIs(cfg["prediction"]["film_config"], cfg["film"])
 

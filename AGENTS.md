@@ -75,6 +75,8 @@ Build `ary_intensity`, `ary_energy`, and `df_meta` as defined above.
   | `by_mean_intensity_single_die` | `mean_intensity_single_die` of its die/measurement |
   | `no_normalization` | none (unscaled) |
 
+- **Intensity RMS standardization** (`standardization.enabled`, default `false`, in `utility/standardize.py`): optional scale-only (no shift) standardization applied after normalization (`raw -> preprocess -> normalize -> standardize`). Fits a single scalar RMS strictly on `split == "train"` and `tool == source_tool` (clamped at `eps` with a `UserWarning`), divides both source and target spectra in `train`/`val`/`test` by RMS (leaving `split == "none"` untouched), and records `intensity_standardization_rms` in `df_meta` (`1.0` when disabled or unpaired). Stage 10 inverts the scaling on predictions using the recorded factor so Stages 11–13 run on the un-standardized normalized scale.
+
 ### 6. Die-flux GP modeling
 - Exact GP (GPyTorch) of die flux over time, capturing drift, aging, and maintenance jumps.
 - The kernel combines three parts:

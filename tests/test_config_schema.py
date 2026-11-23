@@ -15,6 +15,7 @@ from utility.config_schema import (
     GlobalConfig,
     PipelineConfig,
     SplittingConfig,
+    StandardizationConfig,
     TrainConfig,
 )
 
@@ -203,6 +204,25 @@ class TestConfigSchema(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             PipelineConfig.model_validate(raw_data)
         self.assertIn("Input should be", str(ctx.exception))
+
+    def test_standardization_config_validation(self) -> None:
+        """Verify StandardizationConfig defaults and positive eps constraint."""
+        sc = StandardizationConfig()
+        self.assertFalse(sc.enabled)
+        self.assertAlmostEqual(sc.eps, 1e-6)
+        self.assertIsNone(sc.source_tool)
+
+        sc_custom = StandardizationConfig(
+            enabled=True, eps=1e-5, source_tool="J4"
+        )
+        self.assertTrue(sc_custom.enabled)
+        self.assertAlmostEqual(sc_custom.eps, 1e-5)
+        self.assertEqual(sc_custom.source_tool, "J4")
+
+        with self.assertRaises(ValidationError):
+            StandardizationConfig(eps=0.0)
+        with self.assertRaises(ValidationError):
+            StandardizationConfig(eps=-1e-6)
 
     def test_negative_values_rejected(self) -> None:
         """Verify positive/non-negative constraints on numeric parameters."""
