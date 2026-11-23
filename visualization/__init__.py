@@ -1,7 +1,5 @@
 """Visualization module for GGRD-SP spectral analysis and model diagnostics."""
 
-from __future__ import annotations
-
 from visualization.dispatcher import (
     DEFAULT_PLOT_TOGGLES,
     dispatch_visualizations,

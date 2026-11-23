@@ -1,8 +1,6 @@
 """Quantification visualization for Shirley backgrounds
 and atomic percentages."""
 
-from __future__ import annotations
-
 from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np

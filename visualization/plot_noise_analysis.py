@@ -1,7 +1,5 @@
 """Plots for spectral noise analysis and denoising comparisons."""
 
-from __future__ import annotations
-
 import os
 from typing import Any
 

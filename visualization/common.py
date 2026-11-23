@@ -1,7 +1,5 @@
 """Common plotting infrastructure, canvas management, and style utilities."""
 
-from __future__ import annotations
-
 import colorsys
 from typing import Any
 import matplotlib.colors as mcolors

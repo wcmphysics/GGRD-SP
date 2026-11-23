@@ -1,7 +1,5 @@
 """Spectral plotting module for regional spectra, tool overlays, and patches."""
 
-from __future__ import annotations
-
 from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np

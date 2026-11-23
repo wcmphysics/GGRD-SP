@@ -1,7 +1,5 @@
 """Posterior mean contributions of the die-flux GP covariance kernels."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import gpytorch
