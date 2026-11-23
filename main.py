@@ -150,11 +150,32 @@ def main() -> None:
     ary_intensity, ary_energy, df_meta = utility.normalize_spectral_data(
         bundle.ary_intensity, bundle.ary_energy, df_meta, config["normalization"]
     )
-    bundle = SpectralDataBundle(ary_intensity, ary_energy, df_meta).validate()
+    ary_intensity_norm = ary_intensity
+    ary_intensity_model, ary_energy, df_meta = (
+        utility.standardize_spectral_intensity(
+            ary_intensity_norm, ary_energy, df_meta, config["standardization"]
+        )
+    )
+    bundle = SpectralDataBundle(
+        ary_intensity_norm, ary_energy, df_meta
+    ).validate()
+    bundle_model = SpectralDataBundle(
+        ary_intensity_model, ary_energy, df_meta.copy()
+    ).validate()
     print(
         f"Normalized intensity by {config['normalization']['normalization_mode']}; "
         f"max={bundle.ary_intensity.max():.4f}"
     )
+    if config["standardization"]["enabled"]:
+        std_rms = float(
+            df_meta.loc[
+                df_meta["split"] == "train", "intensity_standardization_rms"
+            ].iloc[0]
+        )
+        print(
+            f"Standardized model intensity by source-train RMS={std_rms:.6g}; "
+            f"max={bundle_model.ary_intensity.max():.4f}"
+        )
 
     # =========================================================================
     # STAGE 6: DIE FLUX PREDICTION
@@ -171,7 +192,10 @@ def main() -> None:
     # =========================================================================
     print("\n=== Stage 7: Regional Dataset Definition & Patch Augmentation ===")
     regional_datasets = models.create_regional_datasets(
-        bundle.df_meta, bundle.ary_intensity, bundle.ary_energy, config=config["dataset"]
+        bundle_model.df_meta,
+        bundle_model.ary_intensity,
+        bundle_model.ary_energy,
+        config=config["dataset"],
     )
     for region_name, dataset_bundle in regional_datasets.items():
         print(
@@ -206,12 +230,25 @@ def main() -> None:
     print("\n=== Stage 10: Transformed Spectrum Prediction ===")
     prediction_cfg = {**config["prediction"], "session_splits": session_splits}
     data_original = bundle
-    data_predicted = models.predict_spectra(
+    pred_intensities, pred_energies, df_meta_pred = models.predict_spectra(
         models=training_results["models"],
-        data=bundle,
+        data=bundle_model,
         config=prediction_cfg,
     )
-    bundle_pred = SpectralDataBundle(*data_predicted).validate()
+    if config["standardization"]["enabled"]:
+        pred_intensities, df_meta_pred = (
+            utility.inverse_standardize_spectral_intensity(
+                pred_intensities,
+                df_meta_pred,
+                reference_df_meta=bundle_model.df_meta,
+            )
+        )
+    else:
+        df_meta_pred = df_meta_pred.copy()
+        df_meta_pred["intensity_standardization_rms"] = 1.0
+    bundle_pred = SpectralDataBundle(
+        pred_intensities, pred_energies, df_meta_pred
+    ).validate()
     print(
         f"Predicted spectra shape: {bundle_pred.ary_intensity.shape} "
         f"(total: {len(bundle_pred.df_meta)})"
