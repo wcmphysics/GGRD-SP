@@ -46,6 +46,13 @@ from utility.patching import (
     extract_sliding_windows,
     reconstruct_from_patches,
 )
+from utility.material_profiles import (
+    BUILTIN_MATERIAL_PROFILES,
+    BUILTIN_MATERIAL_STRENGTHS,
+    compute_intrinsic_profile_max,
+    resolve_material_region_profile,
+    resolve_material_region_strength,
+)
 from utility.pseudo_measurement import (
     generate_pseudo_measurements,
     generate_tool_timeline,
@@ -71,6 +78,11 @@ __all__ = [
     "MODEL_CONFIG_MAP",
     "NO_SLIDING_WINDOW_MODEL_TYPES",
     # Data generation
+    "BUILTIN_MATERIAL_PROFILES",
+    "BUILTIN_MATERIAL_STRENGTHS",
+    "compute_intrinsic_profile_max",
+    "resolve_material_region_profile",
+    "resolve_material_region_strength",
     "generate_pseudo_measurements",
     "generate_tool_timeline",
     "get_default_measurement_config",

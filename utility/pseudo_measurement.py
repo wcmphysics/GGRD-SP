@@ -10,66 +10,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
-# Default regional energy boundaries and peak parameters for TiAlC (NMG)
-DEFAULT_REGION_PROFILES: dict[str, dict[str, Any]] = {
-    "Al2p": {
-        "energy_range": (70.0, 78.0),
-        "baseline": 15.0,
-        "peaks": [
-            # Al-C / Al-Ti metallic-covalent bond
-            {"center": 72.8, "amplitude": 120.0, "fwhm": 1.3, "eta": 0.3},
-            # Surface Al oxide
-            {"center": 74.8, "amplitude": 85.0, "fwhm": 1.4, "eta": 0.3},
-        ],
-    },
-    "Ti2p": {
-        "energy_range": (452.0, 467.0),
-        "baseline": 25.0,
-        "peaks": [
-            # Ti-C 2p3/2
-            {"center": 454.8, "amplitude": 260.0, "fwhm": 1.2, "eta": 0.35},
-            # Ti-C 2p1/2 (spin-orbit split ~5.7 eV, 2:1 branching ratio)
-            {"center": 460.5, "amplitude": 130.0, "fwhm": 1.8, "eta": 0.35},
-            # Surface TiO2 2p3/2
-            {"center": 458.5, "amplitude": 70.0, "fwhm": 1.4, "eta": 0.35},
-            # Surface TiO2 2p1/2
-            {"center": 464.2, "amplitude": 35.0, "fwhm": 2.0, "eta": 0.35},
-        ],
-    },
-    "O1s": {
-        "energy_range": (526.0, 536.0),
-        "baseline": 20.0,
-        "peaks": [
-            # Metal-oxygen lattice (Ti-O / Al-O)
-            {"center": 530.2, "amplitude": 180.0, "fwhm": 1.5, "eta": 0.3},
-            # Surface hydroxyl / adsorbed C-O species
-            {"center": 532.0, "amplitude": 95.0, "fwhm": 1.6, "eta": 0.3},
-        ],
-    },
-    "C1s": {
-        "energy_range": (280.0, 292.0),
-        "baseline": 18.0,
-        "peaks": [
-            # Ti-C carbide
-            {"center": 281.8, "amplitude": 150.0, "fwhm": 1.2, "eta": 0.3},
-            # Adventitious carbon C-C
-            {"center": 284.8, "amplitude": 220.0, "fwhm": 1.4, "eta": 0.3},
-            # C-O / C-O-C
-            {"center": 286.5, "amplitude": 45.0, "fwhm": 1.5, "eta": 0.3},
-        ],
-    },
-    "Cl2p": {
-        "energy_range": (196.0, 206.0),
-        "baseline": 12.0,
-        "peaks": [
-            # Cl 2p3/2 residual
-            {"center": 198.5, "amplitude": 60.0, "fwhm": 1.3, "eta": 0.3},
-            # Cl 2p1/2 residual (spin-orbit split ~1.6 eV, 2:1 ratio)
-            {"center": 200.1, "amplitude": 30.0, "fwhm": 1.3, "eta": 0.3},
-        ],
-    },
-}
+from utility.material_profiles import (
+    compute_intrinsic_profile_max,
+    resolve_material_region_profile,
+    resolve_material_region_strength,
+)
 
 
 # Default die-to-die spatial baseline factors for NMG (center > mid > edge)
@@ -217,22 +162,70 @@ def get_default_measurement_config() -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        Configuration options bundling all generation parameters.
+        Configuration options bundling multi-material and recipe parameters.
     """
     return {
-        "material": "NMG",
-        "regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"],
-        "region_relative_strengths": {
-            "Al2p": 5.0,
-            "Ti2p": 7.0,
-            "O1s": 10.0,
-            "C1s": 8.0,
-            "Cl2p": 1.0,
+        "materials": {
+            "TiAlC": {
+                "regions": ["Al2p", "Ti2p", "C1s", "O1s", "Si2p", "Cl2p"],
+            },
+            "TiN": {
+                "regions": ["Ti2p", "N1s", "O1s", "C1s", "Si2p"],
+            },
+            "HfO2": {
+                "regions": ["Hf4f", "O1s", "C1s", "Si2p"],
+            },
+        },
+        "recipes": {
+            "RCP_NMG_A": {
+                "Al2p": (70.0, 78.0),
+                "Ti2p": (452.0, 470.0),
+                "C1s": (280.0, 292.0),
+                "O1s": (526.0, 536.0),
+                "Cl2p": (196.0, 206.0),
+            },
+            "RCP_NMG_B": {
+                "Ti2p": (450.0, 468.0),
+                "O1s": (527.0, 537.0),
+                "Si2p": (97.0, 107.0),
+            },
+            "RCP_PMG_A": {
+                "Ti2p": (452.0, 470.0),
+                "N1s": (394.0, 404.0),
+                "O1s": (526.0, 536.0),
+                "C1s": (280.0, 292.0),
+            },
+            "RCP_PMG_B": {
+                "Ti2p": (451.0, 469.0),
+                "N1s": (395.0, 405.0),
+                "O1s": (527.0, 537.0),
+                "Al2p": (70.0, 78.0),
+                "Si2p": (97.0, 107.0),
+            },
+            "RCP_HK_A": {
+                "Hf4f": (13.0, 23.0),
+                "O1s": (526.0, 536.0),
+                "Si2p": (97.0, 107.0),
+                "Ti2p": (452.0, 470.0),
+            },
+        },
+        "material_recipes": {
+            "TiAlC": {
+                "RCP_NMG_A": {"J4": 6, "J5": 8},
+                "RCP_NMG_B": {"J4": 5, "J5": 6},
+                "RCP_PMG_A": {"J4": 5, "J5": 5},
+            },
+            "TiN": {
+                "RCP_PMG_A": {"J4": 6, "J5": 8},
+                "RCP_PMG_B": {"J4": 5, "J5": 6},
+            },
+            "HfO2": {
+                "RCP_HK_A": {"J4": 6, "J5": 8},
+            },
         },
         "n_die": 9,
         "n_points": 100,
-        "measurements_per_tool": {"J4": 10, "J5": 10},
-        "measurements_per_t7_code": 10,
+        "measurements_per_t7_code": 3,
         "start_time": "2026-01-01 00:00:00",
         "interval_hours_range": (4.0, 24.0),
         "tool_offsets": {
@@ -247,89 +240,178 @@ def get_default_measurement_config() -> dict[str, Any]:
         "maintenance_jump_noise_std": 0.03,
         "decay_floor": 0.2,
         "noise_relative_std": 0.015,
+        "background_relative_strength": 0.5,
         "shirley_background": {"enabled": True, "step_ratio": 0.10},
-        "region_profiles": DEFAULT_REGION_PROFILES,
         "seed": 42,
     }
 
 
-def _validate_config(config: dict[str, Any]) -> None:
-    """Validate configuration dictionary parameters.
-
-    Parameters
-    ----------
-    config : dict[str, Any]
-        Configuration dictionary to validate.
-
-    Raises
-    ------
-    ValueError
-        If required parameters are missing, invalid, or out of range.
-    """
-    n_points = config.get("n_points")
-    if not isinstance(n_points, int) or n_points < 2:
-        raise ValueError(f"n_points must be an integer >= 2, got {n_points}")
-
-    n_die = config.get("n_die")
-    if not isinstance(n_die, int) or n_die <= 0:
-        raise ValueError(f"n_die must be a positive integer, got {n_die}")
-
-    if not config.get("regions"):
-        raise ValueError("regions list cannot be empty")
-
-    if (
-        "region_relative_strengths" not in config
-        or config["region_relative_strengths"] is None
-    ):
+def _validate_identifier(
+    name: Any, kind: str, *, forbid_underscore: bool = False
+) -> None:
+    """Validate identifier string against measurement_id delimiter rules."""
+    if not isinstance(name, str) or not name.strip():
         raise ValueError(
-            "Missing required config: 'region_relative_strengths' must be provided as a dictionary."
+            f"{kind} identifier must be a non-empty string, got {name!r}."
+        )
+    if "-" in name:
+        raise ValueError(
+            f"{kind} identifier {name!r} must not contain '-'; "
+            "'-' is reserved as the measurement_id field delimiter."
+        )
+    if forbid_underscore and "_" in name:
+        raise ValueError(
+            f"{kind} identifier {name!r} must not contain '_'; "
+            "'_' is reserved for predicted tool pairs '{source}_{target}'."
         )
 
-    region_strengths = config["region_relative_strengths"]
-    if not isinstance(region_strengths, dict):
-        raise ValueError(
-            f"'region_relative_strengths' must be a dictionary, got {type(region_strengths).__name__}."
-        )
 
-    regions = config["regions"]
-    missing_regions = set(regions) - set(region_strengths.keys())
-    if missing_regions:
-        raise ValueError(
-            f"The following regions in 'regions' are missing from 'region_relative_strengths': "
-            f"{sorted(missing_regions)}."
-        )
+def _as_dict(val: Any) -> dict[str, Any]:
+    """Convert a dict or Pydantic model to a plain dictionary."""
+    if hasattr(val, "model_dump"):
+        return dict(val.model_dump())
+    if isinstance(val, dict):
+        return val
+    return {}
 
-    for r in regions:
-        val = region_strengths[r]
-        if (
-            not isinstance(val, (int, float))
-            or isinstance(val, bool)
-            or not np.isfinite(val)
-            or val <= 0
-        ):
+
+def _validate_materials_config(materials: Any) -> None:
+    """Validate materials dictionary and per-material region lists."""
+    if not isinstance(materials, dict) or not materials:
+        raise ValueError(
+            "'materials' must be a non-empty dictionary mapping material names "
+            "to material specifications."
+        )
+    for mat_name, raw_spec in materials.items():
+        _validate_identifier(mat_name, "Material")
+        spec = _as_dict(raw_spec)
+        regions = spec.get("regions")
+        if not isinstance(regions, (list, tuple)) or not regions:
             raise ValueError(
-                f"Relative strength for region '{r}' must be a positive finite number, got {val}."
+                f"Material '{mat_name}' must specify a non-empty 'regions' "
+                f"list, got {regions!r}."
+            )
+        _validate_regional_shirley(spec.get("region_profiles"))
+
+
+def _validate_single_recipe_regions(
+    recipe_name: str, region_map: Any
+) -> None:
+    """Validate region mapping and [e_min, e_max] bounds for one recipe."""
+    if not isinstance(region_map, dict) or not region_map:
+        raise ValueError(
+            f"Recipe '{recipe_name}' must probe at least one spectral region."
+        )
+    for region_name, bounds in region_map.items():
+        if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+            raise ValueError(
+                f"Recipe '{recipe_name}' region '{region_name}' energy range "
+                f"must be a 2-element [e_min, e_max], got {bounds!r}."
+            )
+        e_min, e_max = float(bounds[0]), float(bounds[1])
+        if not (np.isfinite(e_min) and np.isfinite(e_max)) or e_min >= e_max:
+            raise ValueError(
+                f"Recipe '{recipe_name}' region '{region_name}' energy range "
+                f"must satisfy finite e_min < e_max, got ({e_min}, {e_max})."
             )
 
-    measurements_per_tool = config.get("measurements_per_tool", {})
-    if not measurements_per_tool or all(
-        v <= 0 for v in measurements_per_tool.values()
+
+def _validate_recipes_config(recipes: Any) -> None:
+    """Validate recipes dictionary and per-region [e_min, e_max] bounds."""
+    if not isinstance(recipes, dict) or not recipes:
+        raise ValueError(
+            "'recipes' must be a non-empty dictionary mapping recipe names "
+            "to regional energy ranges."
+        )
+    for recipe_name, region_map in recipes.items():
+        _validate_identifier(recipe_name, "Recipe")
+        _validate_single_recipe_regions(recipe_name, region_map)
+
+
+def _validate_group_tool_counts(
+    mat_name: str, rcp_name: str, tool_counts: Any
+) -> int:
+    """Validate {tool: count} dictionary for one (material, recipe) group."""
+    if not isinstance(tool_counts, dict) or not tool_counts:
+        raise ValueError(
+            f"material_recipes['{mat_name}']['{rcp_name}'] must be a "
+            "non-empty dict of {tool: count}."
+        )
+    subtotal = 0
+    for tool_name, count in tool_counts.items():
+        _validate_identifier(tool_name, "Tool", forbid_underscore=True)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(
+                f"Measurement count for ({mat_name!r}, {rcp_name!r}, "
+                f"{tool_name!r}) must be a non-negative integer, got {count!r}."
+            )
+        subtotal += count
+    return subtotal
+
+
+def _validate_material_recipes_config(
+    material_recipes: Any,
+    materials: dict[str, Any],
+    recipes: dict[str, Any],
+) -> None:
+    """Validate material -> recipe -> {tool: count} schedule."""
+    if not isinstance(material_recipes, dict) or not material_recipes:
+        raise ValueError(
+            "'material_recipes' must be a non-empty dictionary mapping "
+            "material -> recipe -> {tool: count}."
+        )
+    total_count = 0
+    for mat_name, rcp_map in material_recipes.items():
+        if mat_name not in materials:
+            raise ValueError(
+                f"material_recipes references unknown material '{mat_name}'. "
+                f"Defined materials: {sorted(materials.keys())}."
+            )
+        if not isinstance(rcp_map, dict) or not rcp_map:
+            raise ValueError(
+                f"material_recipes['{mat_name}'] must map at least one recipe "
+                "to tool measurement counts."
+            )
+        for rcp_name, tool_counts in rcp_map.items():
+            if rcp_name not in recipes:
+                raise ValueError(
+                    f"material_recipes['{mat_name}'] references unknown recipe "
+                    f"'{rcp_name}'. Defined recipes: {sorted(recipes.keys())}."
+                )
+            total_count += _validate_group_tool_counts(
+                mat_name, rcp_name, tool_counts
+            )
+    if total_count <= 0:
+        raise ValueError(
+            "material_recipes must specify at least one (material, recipe, "
+            "tool) group with measurement count > 0."
+        )
+
+
+def _validate_positive_int(val: Any, name: str, min_val: int = 1) -> None:
+    """Validate that val is an integer >= min_val (rejecting booleans)."""
+    if isinstance(val, bool) or not isinstance(val, int) or val < min_val:
+        raise ValueError(f"{name} must be an integer >= {min_val}, got {val}")
+
+
+def _validate_numeric_config(config: dict[str, Any]) -> None:
+    """Validate scalar counts, background strength, and time interval range."""
+    _validate_positive_int(config.get("n_points"), "n_points", min_val=2)
+    _validate_positive_int(config.get("n_die"), "n_die", min_val=1)
+    _validate_positive_int(
+        config.get("measurements_per_t7_code", 10), "measurements_per_t7_code"
+    )
+
+    bg_strength = config.get("background_relative_strength", 0.5)
+    if (
+        isinstance(bg_strength, bool)
+        or not isinstance(bg_strength, (int, float))
+        or not np.isfinite(bg_strength)
+        or float(bg_strength) <= 0.0
     ):
         raise ValueError(
-            "measurements_per_tool must specify at least one tool with count > 0"
-        )
-
-    if any(v < 0 for v in measurements_per_tool.values()):
-        raise ValueError(
-            f"measurements_per_tool counts cannot be negative: "
-            f"{measurements_per_tool}"
-        )
-
-    meas_per_t7 = config.get("measurements_per_t7_code", 10)
-    if not isinstance(meas_per_t7, int) or meas_per_t7 <= 0:
-        raise ValueError(
-            f"measurements_per_t7_code must be a positive integer, "
-            f"got {meas_per_t7}"
+            "background_relative_strength must be a positive finite number, "
+            f"got {bg_strength!r}."
         )
 
     interval_range = config.get("interval_hours_range", (4.0, 24.0))
@@ -344,6 +426,19 @@ def _validate_config(config: dict[str, Any]) -> None:
             f"got {interval_range}"
         )
 
+
+def _validate_config(config: dict[str, Any]) -> None:
+    """Validate configuration dictionary parameters."""
+    _validate_numeric_config(config)
+    _validate_materials_config(config.get("materials"))
+    _validate_recipes_config(config.get("recipes"))
+    _validate_material_recipes_config(
+        config.get("material_recipes"),
+        config["materials"],
+        config["recipes"],
+    )
+    for tool_name in (config.get("tool_offsets") or {}):
+        _validate_identifier(tool_name, "Tool", forbid_underscore=True)
     _validate_shirley_config(config)
 
 
@@ -400,8 +495,6 @@ def _validate_shirley_config(config: dict[str, Any]) -> None:
             _validate_step_ratio(
                 shirley_cfg["step_ratio"], "'shirley_background.step_ratio'"
             )
-
-    _validate_regional_shirley(config.get("region_profiles"))
 
 
 def generate_tool_timeline(
@@ -544,106 +637,86 @@ def _synthesize_regional_spectrum(
     return np.clip(intensity, 0.0, None)
 
 
-def generate_pseudo_measurements(
-    config: dict[str, Any] | None = None,
-) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Generate synthetic XPS regional spectra and corresponding metadata.
+def _synthesize_background_spectrum(
+    e_grid: np.ndarray,
+    synth_params: dict[str, Any],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Synthesize flat XPS continuum baseline and noise for absent regions."""
+    baseline_level = float(synth_params["total_scale"])
+    noise_sigma = baseline_level * float(synth_params["noise_relative_std"])
+    intensity = baseline_level + rng.normal(0.0, noise_sigma, size=len(e_grid))
+    return np.clip(intensity, 0.0, None)
 
-    Fulfills Stage 1 of the program structure defined in AGENTS.md.
-    Binding energy arrays for regions with the same name are identical and
-    sorted in ascending order. Tool discrepancies (energy shifts and intensity
-    scales) and die-to-die variations are captured in the intensity arrays.
 
-    Parameters
-    ----------
-    config : dict[str, Any] | None, optional
-        Configuration dictionary. If None, default settings from
-        `get_default_measurement_config()` are used.
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray, pd.DataFrame]
-        - ary_intensity: 2D array of shape (N_total, N_points)
-        - ary_energy: 2D array of shape (N_total, N_points)
-        - df_meta: DataFrame of length N_total describing each spectrum
-    """
-    merged_config = get_default_measurement_config()
-    if config is not None:
-        merged_config.update(config)
-
-    _validate_config(merged_config)
-
-    material: str = merged_config["material"]
-    regions: list[str] = merged_config["regions"]
-    n_die: int = merged_config["n_die"]
-    n_points: int = merged_config["n_points"]
-    meas_per_tool: dict[str, int] = merged_config["measurements_per_tool"]
-    meas_per_t7 = int(merged_config.get("measurements_per_t7_code", 10))
-    tool_offsets: dict[str, dict[str, float]] = merged_config["tool_offsets"]
-    die_variation_std: float = merged_config["die_variation_std"]
-    noise_relative_std: float = merged_config["noise_relative_std"]
-    region_profiles: dict[str, dict[str, Any]] = merged_config["region_profiles"]
-
-    rng = np.random.default_rng(merged_config.get("seed"))
-
-    # Precompute fixed 1D binding energy arrays for each region (ascending)
-    region_energy_grids: dict[str, np.ndarray] = {}
-    for region_name in regions:
-        profile = region_profiles.get(region_name)
-        if profile is None:
-            raise ValueError(
-                f"No profile definition found for region: '{region_name}'"
+def _build_recipe_energy_grids(
+    recipes: dict[str, dict[str, Any]], n_points: int
+) -> dict[tuple[str, str], np.ndarray]:
+    """Precompute ascending 1D binding energy grids per (recipe, region)."""
+    grids: dict[tuple[str, str], np.ndarray] = {}
+    for recipe_name, region_map in recipes.items():
+        for region_name, bounds in region_map.items():
+            e_min, e_max = float(bounds[0]), float(bounds[1])
+            grids[(recipe_name, region_name)] = np.linspace(
+                e_min, e_max, n_points, dtype=np.float64
             )
-        e_min, e_max = profile["energy_range"]
-        if e_min >= e_max:
-            raise ValueError(
-                f"energy_range for region '{region_name}' must have min < max, "
-                f"got ({e_min}, {e_max})"
+    return grids
+
+
+def _build_material_resources(
+    materials: dict[str, Any],
+) -> tuple[
+    dict[str, set[str]],
+    dict[tuple[str, str], dict[str, Any]],
+    dict[tuple[str, str], float],
+    dict[tuple[str, str], float],
+]:
+    """Precompute active regions, peak profiles, strengths, and norm factors."""
+    active_regions: dict[str, set[str]] = {}
+    profiles: dict[tuple[str, str], dict[str, Any]] = {}
+    strengths: dict[tuple[str, str], float] = {}
+    norm_factors: dict[tuple[str, str], float] = {}
+
+    for mat_name, raw_spec in materials.items():
+        spec = _as_dict(raw_spec)
+        reg_list = [str(r) for r in spec["regions"]]
+        active_regions[mat_name] = set(reg_list)
+        custom_profiles = spec.get("region_profiles")
+        custom_strengths = spec.get("relative_strengths")
+        for reg_name in reg_list:
+            profile = resolve_material_region_profile(
+                mat_name, reg_name, custom_profiles=custom_profiles
             )
-        region_energy_grids[region_name] = np.linspace(
-            e_min, e_max, n_points, dtype=np.float64
-        )
-
-    # Precompute relative strength normalization factor for each region
-    region_strengths: dict[str, float] = merged_config["region_relative_strengths"]
-    region_norm_factors: dict[str, float] = {}
-    for region_name in regions:
-        profile = region_profiles[region_name]
-        e_grid = region_energy_grids[region_name]
-        base_intensity = np.zeros_like(e_grid)
-        for peak in profile["peaks"]:
-            base_intensity += pseudo_voigt(
-                energy=e_grid,
-                peak_params={
-                    "center": peak["center"],
-                    "amplitude": peak["amplitude"],
-                    "fwhm": peak["fwhm"],
-                    "eta": peak.get("eta", 0.3),
-                },
+            strength = resolve_material_region_strength(
+                mat_name, reg_name, custom_strengths=custom_strengths
             )
-        base_intensity += profile.get("baseline", 10.0)
-        base_max = float(np.max(base_intensity))
-        if base_max <= 0.0:
-            base_max = 1.0
-        w_r = float(region_strengths[region_name])
-        region_norm_factors[region_name] = w_r / base_max
+            base_max = compute_intrinsic_profile_max(profile)
+            profiles[(mat_name, reg_name)] = profile
+            strengths[(mat_name, reg_name)] = strength
+            norm_factors[(mat_name, reg_name)] = strength / base_max
 
-    # Generate timeline per tool
-    tools = list(meas_per_tool.keys())
-    timelines = generate_tool_timeline(
-        tools=tools,
-        timeline_config={
-            "measurements_per_tool": meas_per_tool,
-            "start_time": merged_config["start_time"],
-            "interval_hours_range": merged_config["interval_hours_range"],
-        },
-        rng=rng,
-    )
+    return active_regions, profiles, strengths, norm_factors
 
-    base_time = _parse_start_time(
-        merged_config.get("start_time", "2026-01-01 00:00:00")
-    )
 
+def _count_total_spectra(
+    material_recipes: dict[str, dict[str, dict[str, int]]],
+    recipes: dict[str, dict[str, Any]],
+    n_die: int,
+) -> int:
+    """Count total regional spectra across all (material, recipe, tool)."""
+    total = 0
+    for rcp_map in material_recipes.values():
+        for rcp_name, tool_counts in rcp_map.items():
+            n_regions = len(recipes[rcp_name])
+            total += sum(tool_counts.values()) * n_die * n_regions
+    return total
+
+
+def _resolve_die_scales_config(
+    merged_config: dict[str, Any], config: dict[str, Any] | None
+) -> tuple[dict[int, float], float]:
+    """Resolve per-die base factors and repeatability standard deviation."""
+    n_die = int(merged_config["n_die"])
     die_base_factors_cfg = merged_config.get("die_base_factors")
     if die_base_factors_cfg is None:
         die_base_factors = (
@@ -658,96 +731,212 @@ def generate_pseudo_measurements(
 
     cfg_in = config or {}
     if "die_repeatability_std" in cfg_in:
-        die_repeatability_std = float(cfg_in["die_repeatability_std"])
+        die_rep_std = float(cfg_in["die_repeatability_std"])
     elif "die_variation_std" in cfg_in:
-        die_repeatability_std = float(cfg_in["die_variation_std"])
+        die_rep_std = float(cfg_in["die_variation_std"])
     else:
-        die_repeatability_std = float(
-            merged_config.get("die_repeatability_std", die_variation_std)
+        die_rep_std = float(
+            merged_config.get(
+                "die_repeatability_std", merged_config["die_variation_std"]
+            )
         )
+    return die_base_factors, die_rep_std
 
-    tool_maint_caches: dict[str, dict[int, float]] = {t: {} for t in tools}
-    n_total = sum(meas_per_tool.values()) * n_die * len(regions)
 
+def _sample_die_scale(
+    die_idx: int,
+    die_base_factors: dict[int, float],
+    die_rep_std: float,
+    rng: np.random.Generator,
+) -> float:
+    """Sample multiplicative illumination scale for a single die."""
+    base_die = float(die_base_factors.get(die_idx, 1.0))
+    if die_rep_std <= 0.0:
+        return base_die
+    die_noise = float(rng.normal(0.0, die_rep_std))
+    return float(np.clip(base_die * (1.0 + die_noise), 0.1, 3.0))
+
+
+def _synthesize_single_region_row(
+    mat_name: str,
+    reg_name: str,
+    e_grid: np.ndarray,
+    is_present: bool,
+    ctx: dict[str, Any],
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, float]:
+    """Synthesize one regional spectrum (peaks or continuum background)."""
+    total_scale = float(ctx["total_scale"])
+    noise_rel_std = float(ctx["noise_rel_std"])
+    if is_present:
+        reg_factor = ctx["mat_norm_factors"][(mat_name, reg_name)]
+        rel_strength = ctx["mat_strengths"][(mat_name, reg_name)]
+        spec = _synthesize_regional_spectrum(
+            e_grid=e_grid,
+            profile=ctx["mat_profiles"][(mat_name, reg_name)],
+            synth_params={
+                "tool_shift": ctx["tool_shift"],
+                "total_scale": total_scale * reg_factor,
+                "noise_relative_std": noise_rel_std,
+                "shirley_background": ctx["shirley_cfg"],
+            },
+            rng=rng,
+        )
+        return spec, float(rel_strength)
+
+    bg_strength = float(ctx["bg_rel_strength"])
+    spec = _synthesize_background_spectrum(
+        e_grid=e_grid,
+        synth_params={
+            "total_scale": total_scale * bg_strength,
+            "noise_relative_std": noise_rel_std,
+        },
+        rng=rng,
+    )
+    return spec, bg_strength
+
+
+def generate_pseudo_measurements(
+    config: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """Generate multi-material, recipe-driven synthetic XPS spectra.
+
+    Fulfills Stage 1 of the program structure defined in AGENTS.md.
+    Binding energy grids are defined per (recipe, region) in ascending order.
+    Regions absent from a material's active region list are synthesized as
+    scaled XPS continuum background plus Gaussian noise.
+
+    Parameters
+    ----------
+    config : dict[str, Any] | None, optional
+        Configuration dictionary. If None, default settings from
+        `get_default_measurement_config()` are used.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, pd.DataFrame]
+        - ary_intensity: 2D array of shape (N_total, N_points)
+        - ary_energy: 2D array of shape (N_total, N_points)
+        - df_meta: DataFrame of length N_total describing each spectrum
+    """
+    # Merge user overrides onto defaults and validate configuration structure.
+    merged_config = get_default_measurement_config()
+    if config is not None:
+        merged_config.update(config)
+    _validate_config(merged_config)
+
+    materials = merged_config["materials"]
+    recipes = merged_config["recipes"]
+    material_recipes = merged_config["material_recipes"]
+    n_die = int(merged_config["n_die"])
+    n_points = int(merged_config["n_points"])
+    meas_per_t7 = int(merged_config.get("measurements_per_t7_code", 10))
+    tool_offsets = merged_config.get("tool_offsets", {})
+
+    rng = np.random.default_rng(merged_config.get("seed"))
+    base_time = _parse_start_time(
+        merged_config.get("start_time", "2026-01-01 00:00:00")
+    )
+    die_base_factors, die_rep_std = _resolve_die_scales_config(
+        merged_config, config
+    )
+
+    # Precompute recipe energy grids and material-specific spectral resources.
+    recipe_grids = _build_recipe_energy_grids(recipes, n_points)
+    active_regions, mat_profiles, mat_strengths, mat_norm_factors = (
+        _build_material_resources(materials)
+    )
+    synth_ctx = {
+        "mat_profiles": mat_profiles,
+        "mat_strengths": mat_strengths,
+        "mat_norm_factors": mat_norm_factors,
+        "noise_rel_std": float(merged_config["noise_relative_std"]),
+        "bg_rel_strength": float(merged_config["background_relative_strength"]),
+        "shirley_cfg": _as_dict(merged_config.get("shirley_background")),
+    }
+
+    n_total = _count_total_spectra(material_recipes, recipes, n_die)
     ary_intensity = np.empty((n_total, n_points), dtype=np.float64)
     ary_energy = np.empty((n_total, n_points), dtype=np.float64)
     meta_records: list[dict[str, Any]] = []
+    tool_maint_caches: dict[str, dict[int, float]] = {}
 
-    raw_shirley = merged_config.get("shirley_background") or {}
-    shirley_cfg = (
-        raw_shirley.model_dump()
-        if hasattr(raw_shirley, "model_dump")
-        else dict(raw_shirley)
-        if isinstance(raw_shirley, dict)
-        else {}
-    )
-
+    # Synthesize spectra per (material, recipe, tool) measurement group.
     spectrum_idx = 0
-
-    for tool in tools:
-        t_offset = tool_offsets.get(tool, {"shift_ev": 0.0, "scale": 1.0})
-        tool_shift = t_offset.get("shift_ev", 0.0)
-        tool_scale = t_offset.get("scale", 1.0)
-
-        for meas_num, meas_time in enumerate(timelines.get(tool, [])):
-            meas_id = f"{material}_M_{tool}_{meas_num:05d}"
-            t7_code = f"T7_{(meas_num // meas_per_t7) + 1:03d}"
-
-            time_scale = calculate_time_decay_factor(
-                meas_time=meas_time,
-                base_time=base_time,
-                config=merged_config,
+    pair_idx = 0
+    for mat_name, rcp_map in material_recipes.items():
+        mat_active = active_regions[mat_name]
+        for rcp_name, tool_counts in rcp_map.items():
+            active_tools = [t for t, c in tool_counts.items() if c > 0]
+            group_start = base_time + timedelta(minutes=15 * pair_idx)
+            timelines = generate_tool_timeline(
+                tools=active_tools,
+                timeline_config={
+                    "measurements_per_tool": tool_counts,
+                    "start_time": group_start,
+                    "interval_hours_range": merged_config["interval_hours_range"],
+                },
                 rng=rng,
-                cycle_cache=tool_maint_caches[tool],
             )
+            pair_idx += 1
+            rcp_regions = list(recipes[rcp_name].keys())
 
-            for die_idx in range(n_die):
-                base_die = float(die_base_factors.get(die_idx, 1.0))
-                if die_repeatability_std > 0.0:
-                    die_noise = float(rng.normal(0.0, die_repeatability_std))
-                    die_scale = float(
-                        np.clip(base_die * (1.0 + die_noise), 0.1, 3.0)
-                    )
-                else:
-                    die_scale = base_die
+            for tool in active_tools:
+                t_off = _as_dict(tool_offsets.get(tool, {}))
+                synth_ctx["tool_shift"] = float(t_off.get("shift_ev", 0.0))
+                tool_scale = float(t_off.get("scale", 1.0))
+                maint_cache = tool_maint_caches.setdefault(tool, {})
 
-                total_scale = float(tool_scale * time_scale * die_scale)
-                for region_name in regions:
-                    e_grid = region_energy_grids[region_name]
-                    reg_factor = region_norm_factors[region_name]
-                    synth_params = {
-                        "tool_shift": tool_shift,
-                        "total_scale": total_scale * reg_factor,
-                        "noise_relative_std": noise_relative_std,
-                        "shirley_background": shirley_cfg,
-                    }
-                    ary_intensity[spectrum_idx] = _synthesize_regional_spectrum(
-                        e_grid=e_grid,
-                        profile=region_profiles[region_name],
-                        synth_params=synth_params,
+                for meas_num, meas_time in enumerate(timelines[tool]):
+                    meas_id = f"{mat_name}-{rcp_name}-M-{tool}-{meas_num:05d}"
+                    t7_code = f"T7_{(meas_num // meas_per_t7) + 1:03d}"
+                    time_scale = calculate_time_decay_factor(
+                        meas_time=meas_time,
+                        base_time=base_time,
+                        config=merged_config,
                         rng=rng,
+                        cycle_cache=maint_cache,
                     )
-                    ary_energy[spectrum_idx] = e_grid
 
-                    meta_records.append(
-                        {
-                            "spectrum_index": spectrum_idx,
-                            "material": material,
-                            "tool": tool,
-                            "measurement_id": meas_id,
-                            "t7_code": t7_code,
-                            "time": pd.Timestamp(meas_time),
-                            "die": die_idx,
-                            "region": region_name,
-                            "n_points": n_points,
-                            "relative_strength": float(region_strengths[region_name]),
-                            "scale_tool": tool_scale,
-                            "scale_time": time_scale,
-                            "scale_die": die_scale,
-                            "scale_total": total_scale,
-                        }
-                    )
-                    spectrum_idx += 1
+                    for die_idx in range(n_die):
+                        die_scale = _sample_die_scale(
+                            die_idx, die_base_factors, die_rep_std, rng
+                        )
+                        total_scale = float(tool_scale * time_scale * die_scale)
+                        synth_ctx["total_scale"] = total_scale
+
+                        for reg_name in rcp_regions:
+                            e_grid = recipe_grids[(rcp_name, reg_name)]
+                            spec, rel_strength = _synthesize_single_region_row(
+                                mat_name,
+                                reg_name,
+                                e_grid,
+                                reg_name in mat_active,
+                                synth_ctx,
+                                rng,
+                            )
+                            ary_intensity[spectrum_idx] = spec
+                            ary_energy[spectrum_idx] = e_grid
+                            meta_records.append(
+                                {
+                                    "spectrum_index": spectrum_idx,
+                                    "material": mat_name,
+                                    "recipe": rcp_name,
+                                    "tool": tool,
+                                    "measurement_id": meas_id,
+                                    "t7_code": t7_code,
+                                    "time": pd.Timestamp(meas_time),
+                                    "die": die_idx,
+                                    "region": reg_name,
+                                    "n_points": n_points,
+                                    "relative_strength": rel_strength,
+                                    "scale_tool": tool_scale,
+                                    "scale_time": time_scale,
+                                    "scale_die": die_scale,
+                                    "scale_total": total_scale,
+                                }
+                            )
+                            spectrum_idx += 1
 
     return ary_intensity, ary_energy, pd.DataFrame(meta_records)
 
