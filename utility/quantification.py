@@ -236,6 +236,7 @@ def calculate_atomic_percentages(
 
     target_meas: str | None = cfg.get("measurement_id")
     material: str | None = cfg.get("material")
+    recipe_filter: str | None = cfg.get("recipe")
 
     rsf_table = cfg.get("rsf_table")
     if not isinstance(rsf_table, dict):
@@ -249,8 +250,18 @@ def calculate_atomic_percentages(
     filtered_df = df_meta.copy()
     if target_meas is not None:
         filtered_df = filtered_df[filtered_df["measurement_id"] == target_meas]
-    if material is not None and "material" in filtered_df.columns:
+    if (
+        material is not None
+        and str(material).lower() != "all"
+        and "material" in filtered_df.columns
+    ):
         filtered_df = filtered_df[filtered_df["material"] == material]
+    if (
+        recipe_filter is not None
+        and str(recipe_filter).lower() != "all"
+        and "recipe" in filtered_df.columns
+    ):
+        filtered_df = filtered_df[filtered_df["recipe"] == recipe_filter]
 
     if filtered_df.empty:
         raise ValueError(
@@ -278,6 +289,9 @@ def calculate_atomic_percentages(
             stacklevel=2,
         )
 
+    has_recipe = (
+        "recipe" in filtered_df.columns and filtered_df["recipe"].notna().any()
+    )
     rows_data: list[dict[str, Any]] = []
     for row in filtered_df.itertuples():
         region = str(row.region)
@@ -300,30 +314,36 @@ def calculate_atomic_percentages(
                 f"RSF for region '{region}' must be positive, got {rsf}"
             )
 
-        rows_data.append({
+        rec: dict[str, Any] = {
             "measurement_id": str(row.measurement_id),
             "material": str(getattr(row, "material", "NMG")),
             "die": int(row.die),
             "region": region,
             "scaled_area": max(0.0, net_area) / rsf,
-        })
+        }
+        if has_recipe:
+            rec["recipe"] = str(getattr(row, "recipe", ""))
+        rows_data.append(rec)
 
+    id_cols = (
+        ["measurement_id", "material", "recipe", "die"]
+        if has_recipe
+        else ["measurement_id", "material", "die"]
+    )
     df_calc = pd.DataFrame(rows_data).drop_duplicates(
-        subset=["measurement_id", "material", "die", "region"], keep="last"
+        subset=id_cols + ["region"], keep="last"
     )
 
     # Normalize scaled areas row-wise to 100% per measurement session and die
-    totals = df_calc.groupby(["measurement_id", "material", "die"])[
-        "scaled_area"
-    ].transform("sum")
+    totals = df_calc.groupby(id_cols)["scaled_area"].transform("sum")
     df_calc["at_pct"] = np.where(
         totals > 0.0, (df_calc["scaled_area"] / totals) * 100.0, 0.0
     ).round(4)
     df_calc["col_name"] = df_calc["region"] + "_atomic_percentage"
 
-    # Pivot regions to wide format preserving regional discovery order
+    # Pivot regions to wide format; unprobed regions stay NaN.
     df_per_die = df_calc.pivot(
-        index=["measurement_id", "material", "die"],
+        index=id_cols,
         columns="col_name",
         values="at_pct",
     ).reset_index()
@@ -333,7 +353,7 @@ def calculate_atomic_percentages(
         for r in filtered_df["region"].unique()
         if f"{r}_atomic_percentage" in df_per_die.columns
     ]
-    df_per_die = df_per_die[["measurement_id", "material", "die"] + region_cols]
+    df_per_die = df_per_die[id_cols + region_cols]
 
     # Summary statistics (mean and std across dies) per measurement session
     summary_records: list[dict[str, Any]] = []
@@ -349,8 +369,16 @@ def calculate_atomic_percentages(
             "material": mat_val,
             "metric": "std",
         }
+        if has_recipe:
+            rcp_val = m_df["recipe"].iloc[0]
+            mean_row["recipe"] = rcp_val
+            std_row["recipe"] = rcp_val
         for col in region_cols:
-            mean_row[col], std_row[col] = _mean_std(m_df[col], decimals=4)
+            valid = m_df[col].dropna()
+            if valid.empty:
+                mean_row[col], std_row[col] = np.nan, np.nan
+            else:
+                mean_row[col], std_row[col] = _mean_std(valid, decimals=4)
         summary_records.extend([mean_row, std_row])
 
     return df_per_die, pd.DataFrame(summary_records)
@@ -395,7 +423,7 @@ def calculate_atomic_percentage_split_statistics(
     cfg = config or {}
     splits_filter = list(cfg.get("splits", ["train", "test"]))
     quant_cfg = dict(cfg.get("quantification_config", {}))
-    quant_cfg.setdefault("material", cfg.get("material", "NMG"))
+    quant_cfg.setdefault("material", cfg.get("material", "all"))
     if "rsf_table" in cfg:
         quant_cfg["rsf_table"] = cfg["rsf_table"]
     elif "rsf_table" not in quant_cfg:
@@ -437,6 +465,7 @@ def calculate_atomic_percentage_split_statistics(
         )
         return pd.DataFrame(), pd.DataFrame()
 
+    has_recipe = "recipe" in df_per_die_orig.columns
     element_cols = [
         c for c in df_per_die_orig.columns if c.endswith("_atomic_percentage")
     ]
@@ -462,14 +491,25 @@ def calculate_atomic_percentage_split_statistics(
             set(sub_p.index).intersection(sub_s.index).intersection(sub_t.index)
         )
         for die in common_dies:
+            mat_val = str(sub_s.loc[die, "material"])
+            rcp_val = str(sub_s.loc[die, "recipe"]) if has_recipe else None
             for c in element_cols:
-                val_s = float(sub_s.loc[die, c])
-                val_t = float(sub_t.loc[die, c])
-                val_p = float(sub_p.loc[die, c])
+                if c not in sub_p.columns:
+                    continue
+                raw_s, raw_t, raw_p = (
+                    sub_s.loc[die, c],
+                    sub_t.loc[die, c],
+                    sub_p.loc[die, c],
+                )
+                # Skip unprobed regions for this (material, recipe) session.
+                if pd.isna(raw_s) or pd.isna(raw_t) or pd.isna(raw_p):
+                    continue
+                val_s, val_t, val_p = float(raw_s), float(raw_t), float(raw_p)
                 diff_val = val_p - val_t
 
-                records.append({
+                rec: dict[str, Any] = {
                     "split": split_val,
+                    "material": mat_val,
                     "element": c[:-len("_atomic_percentage")],
                     "source_measurement_id": s_id,
                     "target_measurement_id": t_id,
@@ -481,7 +521,10 @@ def calculate_atomic_percentage_split_statistics(
                     "diff_atomic_percentage": diff_val,
                     "abs_diff_atomic_percentage": abs(diff_val),
                     "base_abs_diff_atomic_percentage": abs(val_s - val_t),
-                })
+                }
+                if has_recipe:
+                    rec["recipe"] = rcp_val
+                records.append(rec)
 
     df_samples = pd.DataFrame(records)
     if df_samples.empty:
@@ -496,37 +539,60 @@ def calculate_atomic_percentage_split_statistics(
         for c in element_cols
         if c[:-len("_atomic_percentage")] in df_samples["element"].unique()
     ]
+    group_by_mr = has_recipe or df_samples["material"].nunique() > 1
+    mr_pairs = (
+        list(
+            df_samples[["material", "recipe"]]
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        if has_recipe
+        else [(m, None) for m in df_samples["material"].unique()]
+        if group_by_mr
+        else [(None, None)]
+    )
 
     for split in ordered_splits:
         sp_df = df_samples[df_samples["split"] == split]
-        for elem in ordered_elements:
-            el_df = sp_df[sp_df["element"] == elem]
-            if el_df.empty:
-                continue
+        for mat_val, rcp_val in mr_pairs:
+            grp_df = sp_df
+            if mat_val is not None:
+                grp_df = grp_df[grp_df["material"] == mat_val]
+            if rcp_val is not None:
+                grp_df = grp_df[grp_df["recipe"] == rcp_val]
+            for elem in ordered_elements:
+                el_df = grp_df[grp_df["element"] == elem]
+                if el_df.empty:
+                    continue
 
-            src_mean, src_std = _mean_std(el_df["source_atomic_percentage"], decimals=3)
-            tgt_mean, tgt_std = _mean_std(el_df["target_atomic_percentage"], decimals=3)
-            pred_mean, pred_std = _mean_std(el_df["predicted_atomic_percentage"], decimals=3)
-            diff_mean, diff_std = _mean_std(el_df["diff_atomic_percentage"], decimals=3)
-            mae, mae_std = _mean_std(el_df["abs_diff_atomic_percentage"], decimals=3)
-            base_mae = round(float(el_df["base_abs_diff_atomic_percentage"].mean()), 3)
+                src_mean, src_std = _mean_std(el_df["source_atomic_percentage"], decimals=3)
+                tgt_mean, tgt_std = _mean_std(el_df["target_atomic_percentage"], decimals=3)
+                pred_mean, pred_std = _mean_std(el_df["predicted_atomic_percentage"], decimals=3)
+                diff_mean, diff_std = _mean_std(el_df["diff_atomic_percentage"], decimals=3)
+                mae, mae_std = _mean_std(el_df["abs_diff_atomic_percentage"], decimals=3)
+                base_mae = round(float(el_df["base_abs_diff_atomic_percentage"].mean()), 3)
 
-            summary_records.append({
-                "split": split,
-                "element": elem,
-                "n_samples": len(el_df),
-                "source_mean": src_mean,
-                "source_std": src_std,
-                "target_mean": tgt_mean,
-                "target_std": tgt_std,
-                "predicted_mean": pred_mean,
-                "predicted_std": pred_std,
-                "diff_mean": diff_mean,
-                "diff_std": diff_std,
-                "mae": mae,
-                "mae_std": mae_std,
-                "base_mae": base_mae,
-            })
+                s_rec: dict[str, Any] = {"split": split}
+                if mat_val is not None:
+                    s_rec["material"] = mat_val
+                if rcp_val is not None:
+                    s_rec["recipe"] = rcp_val
+                s_rec.update({
+                    "element": elem,
+                    "n_samples": len(el_df),
+                    "source_mean": src_mean,
+                    "source_std": src_std,
+                    "target_mean": tgt_mean,
+                    "target_std": tgt_std,
+                    "predicted_mean": pred_mean,
+                    "predicted_std": pred_std,
+                    "diff_mean": diff_mean,
+                    "diff_std": diff_std,
+                    "mae": mae,
+                    "mae_std": mae_std,
+                    "base_mae": base_mae,
+                })
+                summary_records.append(s_rec)
 
     return df_samples, pd.DataFrame(summary_records)
 
@@ -598,8 +664,28 @@ def format_side_by_side_atomic_percentages(
         },
     ]
 
+    work_df = df_split_summary.copy()
+    has_recipe = "recipe" in work_df.columns
+    has_multi_mat = (
+        "material" in work_df.columns and work_df["material"].nunique() > 1
+    )
+    if has_recipe:
+        work_df["element"] = (
+            work_df["material"].astype(str)
+            + "-"
+            + work_df["recipe"].astype(str)
+            + " | "
+            + work_df["element"].astype(str)
+        )
+    elif has_multi_mat:
+        work_df["element"] = (
+            work_df["material"].astype(str)
+            + " | "
+            + work_df["element"].astype(str)
+        )
+
     return format_split_comparison_table(
-        df_split_summary,
+        work_df,
         group_col="element",
         metric_specs=metric_specs,
         config=cfg,

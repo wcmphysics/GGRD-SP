@@ -209,6 +209,20 @@ def plot_atomic_percentage_distributions(
     )
     cfg = plot_config or {}
     df = _filter_atomic_df(df_at_samples.copy(), cfg, "df_at_samples")
+    use_mr_label = (
+        ("recipe" in df.columns and df["recipe"].dropna().nunique() > 1)
+        or ("material" in df.columns and df["material"].dropna().nunique() > 1)
+    )
+    if use_mr_label:
+        def _fmt_elem(row: pd.Series) -> str:
+            parts = [
+                str(row[c])
+                for c in ("material", "recipe")
+                if c in row.index and pd.notna(row[c]) and str(row[c])
+            ]
+            return f"{'-'.join(parts)}\n{row['element']}" if parts else str(row["element"])
+
+        df["element"] = df.apply(_fmt_elem, axis=1)
     fig, (ax_abs, ax_diff) = _prepare_canvas(
         cfg.get("ax"), cfg.get("figsize", (14, 5.5)), 1, 2
     )

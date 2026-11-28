@@ -667,6 +667,38 @@ def _create_distribution_canvas(
     return fig, axes[:, 0], n_rows
 
 
+def _build_distribution_row_entries(
+    meta_orig: pd.DataFrame,
+    regions: list[str],
+    matched_by_region: dict[str, list[tuple[int, int, int]]],
+) -> list[tuple[str, list[tuple[int, int, int]]]]:
+    """Build ordered (row_label, triplets) entries partitioned by group."""
+    has_multi_groups = (
+        ("recipe" in meta_orig.columns and meta_orig["recipe"].dropna().nunique() > 1)
+        or (
+            "material" in meta_orig.columns
+            and meta_orig["material"].dropna().nunique() > 1
+        )
+    )
+    if not has_multi_groups:
+        return [(reg, matched_by_region[reg]) for reg in regions]
+
+    orig_lookup = {int(r.spectrum_index): r for r in meta_orig.itertuples()}
+    row_entries: list[tuple[str, list[tuple[int, int, int]]]] = []
+    for reg in regions:
+        sub_groups: dict[str, list[tuple[int, int, int]]] = {}
+        for triplet in matched_by_region[reg]:
+            src_row = orig_lookup.get(triplet[0])
+            raw_m = getattr(src_row, "material", None) if src_row else None
+            raw_r = getattr(src_row, "recipe", None) if src_row else None
+            parts = [str(v) for v in (raw_m, raw_r) if pd.notna(v) and str(v)]
+            lbl = f"{'-'.join(parts)} | {reg}" if parts else reg
+            sub_groups.setdefault(lbl, []).append(triplet)
+        for lbl in sorted(sub_groups.keys()):
+            row_entries.append((lbl, sub_groups[lbl]))
+    return row_entries
+
+
 def plot_regional_spectrum_distribution(
     data_original: tuple[np.ndarray, np.ndarray, pd.DataFrame],
     data_predicted: tuple[np.ndarray, np.ndarray, pd.DataFrame],
@@ -729,16 +761,23 @@ def plot_regional_spectrum_distribution(
     regions = _resolve_distribution_regions(
         matched_by_region, cfg.get("regions"), split, die_filter
     )
-    fig, axes_col, n_rows = _create_distribution_canvas(regions, cfg)
+
+    row_entries = _build_distribution_row_entries(
+        meta_orig, regions, matched_by_region
+    )
+
+    fig, axes_col, n_rows = _create_distribution_canvas(
+        [lbl for lbl, _ in row_entries], cfg
+    )
     err_col = str(cfg.get("error_color", "#EFC934"))
     inv_x = bool(cfg.get("invert_x", True))
 
-    for row_idx, reg in enumerate(regions):
+    for row_idx, (row_lbl, triplets) in enumerate(row_entries):
         stats = _compute_regional_distribution_statistics(
-            matched_by_region[reg], ary_i_orig, ary_e_orig, ary_i_pred
+            triplets, ary_i_orig, ary_e_orig, ary_i_pred
         )
         _render_regional_distribution_row(
-            axes_col[row_idx], reg, stats, die_filter, err_col, inv_x
+            axes_col[row_idx], row_lbl, stats, die_filter, err_col, inv_x
         )
 
     _finish_distribution_figure(fig, n_rows, split, err_col, cfg)

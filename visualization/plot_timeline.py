@@ -746,166 +746,165 @@ def plot_flux_and_averaged_intensity_vs_time(
     return fig, (ax_flux, ax_int)
 
 
-def plot_gp_die_flux_timeline(
-    gp_bundle: dict[str, Any],
-    plot_config: dict[str, Any] | None = None,
-) -> tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]:
-    """Plot two-panel GP die flux prediction timeline for a selected die.
+def _group_gp_bundle_keys(
+    datasets: dict[Any, Any], cfg: dict[str, Any]
+) -> dict[tuple[str | None, str | None], list[Any]]:
+    """Group GP bundle dataset keys by (material, recipe) applying filters."""
+    plot_sec = cfg.get("plot") if isinstance(cfg.get("plot"), dict) else {}
+    mat_filter = plot_sec.get("material", cfg.get("material"))
+    rcp_filter = plot_sec.get("recipe", cfg.get("recipe"))
 
-    Displays source and target tool total flux timelines for the chosen die.
-    Points are colored by split (train: blue, val: orange, test: bright green)
-    and annotated with percentage prediction error relative to ground truth.
+    grouped: dict[tuple[str | None, str | None], list[Any]] = {}
+    for k in datasets:
+        if isinstance(k, tuple) and len(k) == 3:
+            _, mat_v, rcp_v = k
+            if mat_filter and str(mat_filter).lower() != "all" and mat_v != mat_filter:
+                continue
+            if rcp_filter and str(rcp_filter).lower() != "all" and rcp_v != rcp_filter:
+                continue
+            grouped.setdefault((mat_v, rcp_v), []).append(k)
+        else:
+            grouped.setdefault((None, None), []).append(k)
+    return grouped
 
-    Parameters
-    ----------
-    gp_bundle : dict[str, Any]
-        Dictionary from models.run_gp_flux_pipeline containing 'models',
-        'datasets', and 'config'.
-    plot_config : dict[str, Any] | None, optional
-        Plot configuration options including 'plot_die', 'figsize', 'show'.
 
-    Returns
-    -------
-    tuple[plt.Figure, tuple[plt.Axes, plt.Axes]]
-        Matplotlib figure and tuple of two axes (ax_source, ax_target).
-
-    Raises
-    ------
-    ValueError
-        If gp_bundle is missing required keys or datasets are empty.
-    """
+def _render_gp_timeline_panel(
+    ax: plt.Axes,
+    key: Any,
+    ds: dict[str, Any],
+    model_pair: tuple[Any, Any],
+    panel_cfg: dict[str, Any],
+) -> None:
+    """Render one tool panel of the GP die-flux prediction timeline."""
     import torch
     from models.gp_flux import predict_gp_die_flux
 
+    tool_name = str(key[0]) if isinstance(key, tuple) else str(key)
+    mat_v = key[1] if isinstance(key, tuple) and len(key) == 3 else None
+    rcp_v = key[2] if isinstance(key, tuple) and len(key) == 3 else None
+    grp_parts = [str(p) for p in (mat_v, rcp_v) if p is not None]
+    grp_tag = f" | {'-'.join(grp_parts)}" if grp_parts else ""
+
+    plot_die = int(panel_cfg["plot_die"])
+    ref_date = panel_cfg["ref_date"]
+    split_colors = panel_cfg["split_colors"]
+    model, likelihood = model_pair
+    die_df, scaler, target_col = ds["die_df"], ds["scaler"], ds["target_column"]
+
+    d_sub = die_df[die_df["die_idx"] == plot_die].sort_values("time_days")
+    if d_sub.empty:
+        ax.set_title(f"Tool {tool_name}{grp_tag} (Die {plot_die} - No Data)")
+        return
+
+    # Evaluate continuous posterior mean and 95% confidence band.
+    t_min, t_max = float(d_sub["time_days"].min()), float(d_sub["time_days"].max())
+    span = max(t_max - t_min, 1.0)
+    grid_t = np.linspace(t_min - 0.05 * span, t_max + 0.05 * span, 200)
+    grid_x = torch.tensor(
+        np.column_stack([grid_t, np.full_like(grid_t, plot_die)]),
+        dtype=torch.float32,
+    )
+    pred_mean, pred_lower, pred_upper = predict_gp_die_flux(
+        model, likelihood, grid_x, scaler
+    )
+    ax.plot(
+        grid_t, pred_mean, color="black", linestyle="-", linewidth=1.6,
+        label="GP Mean Prediction", zorder=2,
+    )
+    ax.fill_between(
+        grid_t, pred_lower, pred_upper, color="gray", alpha=0.25,
+        label="95% Confidence (±2σ)", zorder=1,
+    )
+
+    # Scatter observations by split and annotate percentage prediction errors.
+    pts_x = torch.tensor(
+        d_sub[["time_days", "die_idx"]].to_numpy(dtype=np.float32)
+    )
+    pts_pred, _, _ = predict_gp_die_flux(model, likelihood, pts_x, scaler)
+    for split_name, color in split_colors.items():
+        mask = (d_sub["split"] == split_name).to_numpy()
+        if np.any(mask):
+            ax.scatter(
+                d_sub["time_days"].to_numpy()[mask],
+                d_sub[target_col].to_numpy()[mask],
+                color=color, s=55, edgecolors="black", linewidth=0.8,
+                label=f"{split_name.capitalize()} Data", zorder=4,
+            )
+
+    for t_val, y_val, y_pred in zip(
+        d_sub["time_days"].to_numpy(), d_sub[target_col].to_numpy(), pts_pred
+    ):
+        pct_err = ((y_pred - y_val) / max(y_val, 1e-8)) * 100.0
+        ax.annotate(
+            f"{pct_err:+.1f}%", (t_val, y_val), textcoords="offset points",
+            xytext=(0, 7), ha="center", fontsize=7.5, fontweight="bold",
+            color="#222222", zorder=5,
+        )
+
+    ax.set_title(
+        f"Tool {tool_name}{grp_tag} (Die {plot_die})",
+        fontsize=11, fontweight="bold",
+    )
+    ax.set_xlabel(f"Elapsed Time from {ref_date} (days)", fontsize=9.5)
+    ax.set_ylabel("Total Die Flux (counts · eV)", fontsize=9.5)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(loc="best", fontsize=8.5, framealpha=0.9)
+
+
+def plot_gp_die_flux_timeline(
+    gp_bundle: dict[str, Any],
+    plot_config: dict[str, Any] | None = None,
+) -> tuple[plt.Figure, Any]:
+    """Plot GP die-flux prediction timeline panels for each (material, recipe)."""
     if "models" not in gp_bundle or "datasets" not in gp_bundle:
         raise ValueError("gp_bundle must contain 'models' and 'datasets' keys.")
 
     cfg = {**(gp_bundle.get("config", {})), **(plot_config or {})}
     plot_die = int(cfg.get("plot", {}).get("plot_die", cfg.get("plot_die", 0)))
     ref_date = cfg.get("reference_date", "2026-01-01")
+    datasets, models_dict = gp_bundle["datasets"], gp_bundle["models"]
 
-    datasets = gp_bundle["datasets"]
-    models_dict = gp_bundle["models"]
-    tools = list(datasets.keys())
-    if len(tools) < 2:
+    grouped_keys = _group_gp_bundle_keys(datasets, cfg)
+    if not grouped_keys:
+        raise ValueError("No GP die-flux datasets match the requested filter.")
+
+    n_rows = len(grouped_keys)
+    max_cols = max(len(v) for v in grouped_keys.values())
+    if n_rows == 1 and max_cols < 2 and not any(isinstance(k, tuple) for k in datasets):
         raise ValueError(
-            f"Expected at least 2 tools in gp_bundle, got {len(tools)}."
+            f"Expected at least 2 tools in gp_bundle, got {max_cols}."
         )
-
-    source_tool, target_tool = tools[0], tools[1]
-    fig, (ax_s, ax_t) = plt.subplots(
-        1, 2, figsize=cfg.get("figsize", (14, 5.5))
+    n_cols = max(2, max_cols)
+    fig, axes_grid = plt.subplots(
+        n_rows, n_cols,
+        figsize=cfg.get("figsize", (7.0 * n_cols, 5.0 * n_rows)),
+        squeeze=False,
     )
-    tool_axes = [(source_tool, ax_s), (target_tool, ax_t)]
-
-    split_colors = {
-        "train": "tab:blue",
-        "val": "tab:orange",
-        "test": "limegreen",
-        **(cfg.get("split_colors") or {}),
+    panel_cfg = {
+        "plot_die": plot_die,
+        "ref_date": ref_date,
+        "split_colors": {
+            "train": "tab:blue", "val": "tab:orange", "test": "limegreen",
+            **(cfg.get("split_colors") or {}),
+        },
     }
 
-    for tool_name, ax in tool_axes:
-        ds = datasets[tool_name]
-        model, likelihood = models_dict[tool_name]
-        die_df = ds["die_df"]
-        scaler = ds["scaler"]
-        target_col = ds["target_column"]
-
-        d_sub = die_df[die_df["die_idx"] == plot_die].sort_values("time_days")
-        if d_sub.empty:
-            ax.set_title(f"{tool_name} (Die {plot_die} - No Data)")
-            continue
-
-        # Continuous prediction grid
-        t_min = float(d_sub["time_days"].min())
-        t_max = float(d_sub["time_days"].max())
-        span = max(t_max - t_min, 1.0)
-        grid_t = np.linspace(t_min - 0.05 * span, t_max + 0.05 * span, 200)
-        grid_x = torch.tensor(
-            np.column_stack([grid_t, np.full_like(grid_t, plot_die)]),
-            dtype=torch.float32,
-        )
-
-        pred_mean, pred_lower, pred_upper = predict_gp_die_flux(
-            model, likelihood, grid_x, scaler
-        )
-
-        ax.plot(
-            grid_t,
-            pred_mean,
-            color="black",
-            linestyle="-",
-            linewidth=1.6,
-            label="GP Mean Prediction",
-            zorder=2,
-        )
-        ax.fill_between(
-            grid_t,
-            pred_lower,
-            pred_upper,
-            color="gray",
-            alpha=0.25,
-            label="95% Confidence (±2σ)",
-            zorder=1,
-        )
-
-        # Predict discrete points for percentage error annotations
-        pts_x = torch.tensor(
-            d_sub[["time_days", "die_idx"]].to_numpy(dtype=np.float32)
-        )
-        pts_pred, _, _ = predict_gp_die_flux(model, likelihood, pts_x, scaler)
-
-        # Plot scatter markers colored by split
-        for split_name, color in split_colors.items():
-            mask = (d_sub["split"] == split_name).to_numpy()
-            if np.any(mask):
-                sub_t = d_sub["time_days"].to_numpy()[mask]
-                sub_y = d_sub[target_col].to_numpy()[mask]
-                ax.scatter(
-                    sub_t,
-                    sub_y,
-                    color=color,
-                    s=55,
-                    edgecolors="black",
-                    linewidth=0.8,
-                    label=f"{split_name.capitalize()} Data",
-                    zorder=4,
-                )
-
-        # Annotate percentage error near each point
-        t_arr = d_sub["time_days"].to_numpy()
-        y_arr = d_sub[target_col].to_numpy()
-        for t_val, y_val, y_pred in zip(t_arr, y_arr, pts_pred):
-            pct_err = ((y_pred - y_val) / max(y_val, 1e-8)) * 100.0
-            ax.annotate(
-                f"{pct_err:+.1f}%",
-                (t_val, y_val),
-                textcoords="offset points",
-                xytext=(0, 7),
-                ha="center",
-                fontsize=7.5,
-                fontweight="bold",
-                color="#222222",
-                zorder=5,
+    for row_idx, keys in enumerate(grouped_keys.values()):
+        for col_idx in range(n_cols):
+            ax = axes_grid[row_idx, col_idx]
+            if col_idx >= len(keys):
+                ax.set_visible(False)
+                continue
+            key = keys[col_idx]
+            _render_gp_timeline_panel(
+                ax, key, datasets[key], models_dict[key], panel_cfg
             )
-
-        ax.set_title(
-            f"Tool {tool_name} (Die {plot_die})",
-            fontsize=11,
-            fontweight="bold",
-        )
-        ax.set_xlabel(
-            f"Elapsed Time from {ref_date} (days)",
-            fontsize=9.5,
-        )
-        ax.set_ylabel("Total Die Flux (counts · eV)", fontsize=9.5)
-        ax.grid(True, linestyle="--", alpha=0.5)
-        ax.legend(loc="best", fontsize=8.5, framealpha=0.9)
 
     fig_title = cfg.get(
         "title",
         f"Gaussian Process Die {plot_die} Total Flux Prediction Timeline",
     )
     _finish_fig(fig, cfg, fig_title)
-    return fig, (ax_s, ax_t)
+    if n_rows == 1 and n_cols == 2:
+        return fig, (axes_grid[0, 0], axes_grid[0, 1])
+    return fig, axes_grid

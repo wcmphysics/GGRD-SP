@@ -293,7 +293,7 @@ def get_default_denoise_config() -> dict[str, Any]:
         "apply_to": "both",
         "source_tool": "J4",
         "target_tool": "J5",
-        "material": "NMG",
+        "material": "all",
         "rsf_table": dict(DEFAULT_SCOFIELD_RSF),
         "snr_definition": "range",
         "confidence_z": 1.96,
@@ -581,7 +581,7 @@ def compare_denoised_atomic_percentages(
         )
 
     quant_cfg: dict[str, Any] = {
-        "material": cfg.get("material", "NMG"),
+        "material": cfg.get("material", "all"),
         "rsf_table": cfg.get("rsf_table") or dict(DEFAULT_SCOFIELD_RSF),
     }
     if isinstance(cfg.get("quantification"), dict):
@@ -603,6 +603,12 @@ def compare_denoised_atomic_percentages(
         .set_index("measurement_id")
     )
 
+    has_recipe = "recipe" in df_raw_die.columns
+    merge_keys = (
+        ["measurement_id", "material", "recipe", "die"]
+        if has_recipe
+        else ["measurement_id", "material", "die"]
+    )
     element_cols = [
         col
         for col in df_raw_die.columns
@@ -610,7 +616,7 @@ def compare_denoised_atomic_percentages(
     ]
     merged = df_raw_die.merge(
         df_den_die,
-        on=["measurement_id", "material", "die"],
+        on=merge_keys,
         suffixes=("_non_denoised", "_denoised"),
     )
 
@@ -625,25 +631,30 @@ def compare_denoised_atomic_percentages(
             else "unpaired"
         )
         for col in element_cols:
+            raw_v = row[f"{col}_non_denoised"]
+            den_v = row[f"{col}_denoised"]
+            if pd.isna(raw_v) or pd.isna(den_v):
+                continue
             region_name = col[: -len("_atomic_percentage")]
-            val_raw = float(row[f"{col}_non_denoised"])
-            val_den = float(row[f"{col}_denoised"])
+            val_raw = float(raw_v)
+            val_den = float(den_v)
             diff_val = val_den - val_raw
-            sample_records.append(
-                {
-                    "measurement_id": meas_id,
-                    "material": str(row["material"]),
-                    "tool": tool_val,
-                    "split": split_val,
-                    "die": int(row["die"]),
-                    "region": region_name,
-                    "element": region_name,
-                    "non_denoised_atomic_percentage": val_raw,
-                    "denoised_atomic_percentage": val_den,
-                    "diff_atomic_percentage": diff_val,
-                    "abs_diff_atomic_percentage": abs(diff_val),
-                }
-            )
+            rec: dict[str, Any] = {
+                "measurement_id": meas_id,
+                "material": str(row["material"]),
+                "tool": tool_val,
+                "split": split_val,
+                "die": int(row["die"]),
+                "region": region_name,
+                "element": region_name,
+                "non_denoised_atomic_percentage": val_raw,
+                "denoised_atomic_percentage": val_den,
+                "diff_atomic_percentage": diff_val,
+                "abs_diff_atomic_percentage": abs(diff_val),
+            }
+            if has_recipe:
+                rec["recipe"] = str(row["recipe"])
+            sample_records.append(rec)
 
     df_samples = pd.DataFrame(sample_records)
     if df_samples.empty:

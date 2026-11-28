@@ -34,14 +34,29 @@ def plot_gp_flux_kernel_contributions(
     config = {**gp_bundle["config"], **(plot_config or {})}
     die = config["plot"]["plot_die"]
     datasets = gp_bundle["datasets"]
-    fig, axes_array = plt.subplots(1, len(datasets), squeeze=False, figsize=(14, 5.5))
-    axes = tuple(axes_array[0])
-    for axis, (tool, dataset) in zip(axes, datasets.items()):
-        model, likelihood = gp_bundle["models"][tool]
+    n_items = len(datasets)
+    n_cols = min(2, n_items) if n_items > 0 else 1
+    n_rows = max(1, (n_items + n_cols - 1) // n_cols)
+    fig, axes_array = plt.subplots(
+        n_rows, n_cols, squeeze=False, figsize=(7.0 * n_cols, 5.0 * n_rows)
+    )
+    axes_flat = tuple(axes_array.ravel())
+    for extra_ax in axes_flat[n_items:]:
+        extra_ax.set_visible(False)
+    axes = axes_flat[:n_items]
+    for axis, (key, dataset) in zip(axes, datasets.items()):
+        model, likelihood = gp_bundle["models"][key]
+        if isinstance(key, tuple) and len(key) == 3:
+            grp_parts = [str(p) for p in (key[1], key[2]) if p is not None]
+            title_label = (
+                f"{key[0]} | {'-'.join(grp_parts)}" if grp_parts else str(key[0])
+            )
+        else:
+            title_label = str(key)
         rows = dataset["die_df"]
         rows = rows[rows["die_idx"] == die]
         if rows.empty:
-            axis.set_title(f"{tool} (Die {die} - No Data)")
+            axis.set_title(f"{title_label} (Die {die} - No Data)")
             continue
         start, end = rows["time_days"].min(), rows["time_days"].max()
         span = max(end - start, 1.0)
@@ -64,7 +79,7 @@ def plot_gp_flux_kernel_contributions(
                 axis.plot(times, contribution, label=f"{name} {index}")
             axis.plot(times, total, color="black", linewidth=2, label="Total prediction")
         axis.axhline(0, color="gray", linewidth=0.7)
-        axis.set_title(f"{tool} (Die {die})")
+        axis.set_title(f"{title_label} (Die {die})")
         axis.set_xlabel(f"Elapsed time from {config['reference_date']} (days)")
         axis.set_ylabel("Flux / contribution (counts · eV)")
         axis.grid(True, alpha=0.3)
