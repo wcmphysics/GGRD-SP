@@ -435,10 +435,43 @@ def _inject_evaluation_settings(
             _merge_subdict_defaults(metrics_rep, "quantification_config", quant)
 
 
+def _parse_element_symbol(region_name: str) -> str:
+    """Extract leading chemical element symbol from a region name."""
+    s = str(region_name).strip()
+    if len(s) >= 2 and s[0].isupper() and s[1].islower():
+        return s[:2]
+    if s and s[0].isupper():
+        return s[0]
+    return s
+
+
+def _extract_data_gen_material_elements(
+    resolved: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Derive material -> element lists from data_generation.materials."""
+    data_gen = resolved.get("data_generation")
+    if not isinstance(data_gen, dict):
+        return {}
+    raw_mats = data_gen.get("materials")
+    if not isinstance(raw_mats, dict):
+        return {}
+    parsed: dict[str, list[str]] = {}
+    for mat_name, mat_spec in raw_mats.items():
+        if isinstance(mat_spec, dict) and isinstance(mat_spec.get("regions"), list):
+            elems = sorted({_parse_element_symbol(r) for r in mat_spec["regions"]})
+            if elems:
+                parsed[str(mat_name)] = elems
+    return parsed
+
+
 def _resolve_materials_and_vocab(resolved: dict[str, Any]) -> None:
     """Populate material elements and vocabulary in film config if present."""
     if "materials" in resolved and isinstance(resolved["materials"], dict):
         materials = load_material_elements(resolved)
+    else:
+        materials = _extract_data_gen_material_elements(resolved)
+
+    if materials:
         film_sec = resolved.setdefault("film", {})
         if isinstance(film_sec, dict):
             film_sec.setdefault("material_elements", materials)
@@ -447,21 +480,60 @@ def _resolve_materials_and_vocab(resolved: dict[str, Any]) -> None:
             )
 
 
+def _active_recipes_for_material(
+    mat_recipes: dict[str, Any], material: str
+) -> list[str]:
+    """Return recipe names with positive measurement counts for material."""
+    filter_all = material.lower() == "all"
+    names: list[str] = []
+    for mat_name, rcp_map in mat_recipes.items():
+        if not filter_all and str(mat_name) != material:
+            continue
+        if not isinstance(rcp_map, dict):
+            continue
+        for rcp_name, tool_counts in rcp_map.items():
+            if isinstance(tool_counts, dict) and sum(tool_counts.values()) > 0:
+                names.append(str(rcp_name))
+    return names
+
+
+def _extract_active_recipe_regions(
+    data_gen: dict[str, Any], material: str = "all"
+) -> list[str]:
+    """Collect ordered unique regions across active configured recipes."""
+    recipes = data_gen.get("recipes")
+    if not isinstance(recipes, dict):
+        return []
+
+    mat_recipes = data_gen.get("material_recipes")
+    active_recipe_names = (
+        _active_recipes_for_material(mat_recipes, material)
+        if isinstance(mat_recipes, dict)
+        else list(recipes.keys())
+    )
+
+    ordered_regions: list[str] = []
+    seen: set[str] = set()
+    for rcp_name in active_recipe_names:
+        rcp_spec = recipes.get(rcp_name)
+        if isinstance(rcp_spec, dict):
+            for reg in rcp_spec:
+                if reg not in seen:
+                    seen.add(reg)
+                    ordered_regions.append(str(reg))
+    return ordered_regions
+
+
 def _resolve_material_and_regions(
     resolved: dict[str, Any], global_cfg: dict[str, Any]
 ) -> tuple[str, list[str]]:
-    """Determine global material and regions list for the pipeline."""
+    """Determine global material filter and active regions for pipeline."""
     data_gen = resolved.setdefault("data_generation", {})
-    material = str(
-        global_cfg.get("material", data_gen.get("material", "NMG"))
-        if isinstance(data_gen, dict)
-        else global_cfg.get("material", "NMG")
-    )
+    material = str(global_cfg.get("material", "all"))
     if isinstance(data_gen, dict):
-        data_gen.setdefault("material", material)
-        regions = data_gen.get(
-            "regions", ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
-        )
+        regions = _extract_active_recipe_regions(data_gen, material=material)
+        if not regions:
+            regions = ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
     else:
         regions = ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]
     return material, regions
@@ -520,7 +592,9 @@ def resolve_pipeline_config(
         "apply_denoise": bool(global_cfg.get("apply_denoise", False)),
         "example_region": str(global_cfg.get("example_region", "Ti2p")),
         "sample_measurement_id": str(
-            global_cfg.get("sample_measurement_id", "NMG_M_J4_00000")
+            global_cfg.get(
+                "sample_measurement_id", "TiAlC-RCP_NMG_A-M-J4-00000"
+            )
         ),
     }
     _inject_declarative_defaults(resolved, context)

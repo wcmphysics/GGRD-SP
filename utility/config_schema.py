@@ -6,6 +6,7 @@ ensuring physical consistency, type safety, and domain constraints.
 
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -16,7 +17,7 @@ import yaml
 class GlobalConfig(BaseModel):
     """Global experiment and pipeline execution parameters."""
 
-    material: str = "NMG"
+    material: str = "all"
     model_type: str = "resnet"
     use_sliding_window: bool = False
     use_film: bool = False
@@ -25,7 +26,7 @@ class GlobalConfig(BaseModel):
     source_tool: str = "J4"
     target_tool: str = "J5"
     example_region: str = "Ti2p"
-    sample_measurement_id: str = "NMG_M_J4_00000"
+    sample_measurement_id: str = "TiAlC-RCP_NMG_A-M-J4-00000"
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
@@ -55,23 +56,161 @@ class ShirleyGenerationConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class DataGenerationConfig(BaseModel):
-    """Synthetic spectral data generation parameters."""
+class MaterialGenerationSpec(BaseModel):
+    """Active spectral regions and optional physics overrides for a material."""
 
     regions: list[str] = Field(..., min_length=1)
-    region_relative_strengths: dict[str, float] = Field(default_factory=dict)
+    relative_strengths: dict[str, float] = Field(default_factory=dict)
+    region_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
+
+
+def _validate_identifier_token(
+    name: str, kind: str, *, forbid_underscore: bool = False
+) -> None:
+    """Ensure identifier tokens do not collide with ID delimiters."""
+    if not name or not name.strip():
+        raise ValueError(f"{kind} identifier must be a non-empty string, got {name!r}.")
+    if "-" in name:
+        raise ValueError(
+            f"{kind} identifier {name!r} must not contain '-'; "
+            "'-' is reserved as the measurement_id field delimiter."
+        )
+    if forbid_underscore and "_" in name:
+        raise ValueError(
+            f"{kind} identifier {name!r} must not contain '_'; "
+            "'_' is reserved for predicted tool pairs '{source}_{target}'."
+        )
+
+
+def _validate_recipe_bounds(
+    recipes: dict[str, dict[str, tuple[float, float] | list[float]]]
+) -> None:
+    """Validate recipe names, region lists, and [e_min, e_max] bounds."""
+    for recipe_name, region_map in recipes.items():
+        _validate_identifier_token(recipe_name, "Recipe")
+        if not region_map:
+            raise ValueError(
+                f"Recipe '{recipe_name}' must probe at least one spectral region."
+            )
+        for region_name, bounds in region_map.items():
+            if len(bounds) != 2:
+                raise ValueError(
+                    f"Recipe '{recipe_name}' region '{region_name}' energy range "
+                    f"must have 2 values [e_min, e_max], got {bounds!r}."
+                )
+            e_min, e_max = float(bounds[0]), float(bounds[1])
+            if not (math.isfinite(e_min) and math.isfinite(e_max)) or e_min >= e_max:
+                raise ValueError(
+                    f"Recipe '{recipe_name}' region '{region_name}' energy range "
+                    f"must satisfy finite e_min < e_max, got ({e_min}, {e_max})."
+                )
+
+
+def _validate_tool_counts(
+    mat_name: str, recipe_name: str, tool_counts: dict[str, int]
+) -> int:
+    """Validate tool names and non-negative integer counts for one group."""
+    if not tool_counts:
+        raise ValueError(
+            f"material_recipes['{mat_name}']['{recipe_name}'] must specify "
+            "at least one tool count."
+        )
+    subtotal = 0
+    for tool_name, count in tool_counts.items():
+        _validate_identifier_token(tool_name, "Tool", forbid_underscore=True)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(
+                f"Measurement count for ({mat_name!r}, {recipe_name!r}, "
+                f"{tool_name!r}) must be a non-negative integer, got {count!r}."
+            )
+        subtotal += count
+    return subtotal
+
+
+def _validate_material_recipe_schedule(
+    materials: dict[str, MaterialGenerationSpec],
+    recipes: dict[str, dict[str, tuple[float, float] | list[float]]],
+    material_recipes: dict[str, dict[str, dict[str, int]]],
+) -> None:
+    """Validate material -> recipe -> {tool: count} schedule and tools."""
+    total_measurements = 0
+    for mat_name, recipe_map in material_recipes.items():
+        if mat_name not in materials:
+            raise ValueError(
+                f"material_recipes references unknown material '{mat_name}'. "
+                f"Defined materials: {sorted(materials.keys())}."
+            )
+        if not recipe_map:
+            raise ValueError(
+                f"material_recipes['{mat_name}'] must assign at least one recipe."
+            )
+        for recipe_name, tool_counts in recipe_map.items():
+            if recipe_name not in recipes:
+                raise ValueError(
+                    f"material_recipes['{mat_name}'] references unknown recipe "
+                    f"'{recipe_name}'. Defined recipes: {sorted(recipes.keys())}."
+                )
+            total_measurements += _validate_tool_counts(
+                mat_name, recipe_name, tool_counts
+            )
+    if total_measurements <= 0:
+        raise ValueError(
+            "material_recipes must specify at least one (material, recipe, tool) "
+            "group with measurement count > 0."
+        )
+
+
+def _validate_interval_hours_range(interval_range: tuple[float, float] | list[float]) -> None:
+    """Validate interval_hours_range has 2 finite bounds with 0 <= min < max."""
+    if len(interval_range) != 2:
+        raise ValueError(
+            f"interval_hours_range must have 2 bounds, got {interval_range!r}."
+        )
+    lo, hi = float(interval_range[0]), float(interval_range[1])
+    if not (math.isfinite(lo) and math.isfinite(hi)) or lo < 0.0 or hi <= lo:
+        raise ValueError(
+            "interval_hours_range must satisfy finite 0 <= min < max, "
+            f"got ({lo}, {hi})."
+        )
+
+
+class DataGenerationConfig(BaseModel):
+    """Synthetic multi-material and recipe-driven generation parameters."""
+
+    materials: dict[str, MaterialGenerationSpec] = Field(..., min_length=1)
+    recipes: dict[str, dict[str, tuple[float, float] | list[float]]] = Field(
+        ..., min_length=1
+    )
+    material_recipes: dict[str, dict[str, dict[str, int]]] = Field(
+        ..., min_length=1
+    )
     n_points: int = Field(100, gt=1)
-    measurements_per_tool: dict[str, int] = Field(default_factory=dict)
     measurements_per_t7_code: int = Field(10, gt=0)
     interval_hours_range: tuple[float, float] | list[float] = (4.0, 24.0)
     die_variation_std: float = Field(0.03, ge=0.0)
     noise_relative_std: float = Field(0.015, ge=0.0)
+    background_relative_strength: float = Field(0.5, gt=0.0)
     seed: int | None = None
     tool_offsets: dict[str, ToolOffsetConfig] = Field(default_factory=dict)
     shirley_background: ShirleyGenerationConfig = Field(
         default_factory=ShirleyGenerationConfig
     )
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def validate_generation_structure(self) -> Self:
+        """Validate identifiers, bounds, intervals, and schedule."""
+        for mat_name in self.materials:
+            _validate_identifier_token(mat_name, "Material")
+        for tool_name in self.tool_offsets:
+            _validate_identifier_token(tool_name, "Tool", forbid_underscore=True)
+        _validate_recipe_bounds(self.recipes)
+        _validate_interval_hours_range(self.interval_hours_range)
+        _validate_material_recipe_schedule(
+            self.materials, self.recipes, self.material_recipes
+        )
+        return self
 
 
 class PairingConfig(BaseModel):
@@ -83,6 +222,7 @@ class PairingConfig(BaseModel):
     target_tool: str = "J5"
     material: str = "all"
     match_t7_code: bool = True
+    match_recipe: bool = True
     model_config = ConfigDict(extra="allow")
 
 
@@ -120,6 +260,7 @@ class SplittingConfig(BaseModel):
     source_tool: str | None = None
     target_tool: str | None = None
     direct_assignment: dict[str, list[str]] | None = None
+    code_name_level: Literal["material_recipe", "material", "recipe"] = "material_recipe"
     code_name_assignment: dict[Literal["train", "val", "test"], list[str]] | None = None
     model_config = ConfigDict(extra="allow")
 
@@ -623,7 +764,7 @@ class MetricsReportConfig(BaseModel):
 class QuantificationConfig(BaseModel):
     """Shirley background subtraction and atomic percentage calculation."""
 
-    material: str = "NMG"
+    material: str = "all"
     measurement_id: str | None = None
     rsf_table: dict[str, float] | None = None
     default_endpoint_strategy: str = "minima"
@@ -782,6 +923,7 @@ __all__ = [
     "FiLMConfig",
     "GlobalConfig",
     "GPFluxConfig",
+    "MaterialGenerationSpec",
     "MetricsReportConfig",
     "NO_SLIDING_WINDOW_MODEL_TYPES",
     "NoiseAnalysisConfig",

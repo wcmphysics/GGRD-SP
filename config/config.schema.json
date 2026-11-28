@@ -277,21 +277,59 @@
     },
     "DataGenerationConfig": {
       "additionalProperties": true,
-      "description": "Synthetic spectral data generation parameters.",
+      "description": "Synthetic multi-material and recipe-driven generation parameters.",
       "properties": {
-        "regions": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Regions",
-          "type": "array"
-        },
-        "region_relative_strengths": {
+        "materials": {
           "additionalProperties": {
-            "type": "number"
+            "$ref": "#/$defs/MaterialGenerationSpec"
           },
-          "title": "Region Relative Strengths",
+          "minProperties": 1,
+          "title": "Materials",
+          "type": "object"
+        },
+        "recipes": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "minProperties": 1,
+          "title": "Recipes",
+          "type": "object"
+        },
+        "material_recipes": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "minProperties": 1,
+          "title": "Material Recipes",
           "type": "object"
         },
         "n_points": {
@@ -299,13 +337,6 @@
           "exclusiveMinimum": 1,
           "title": "N Points",
           "type": "integer"
-        },
-        "measurements_per_tool": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "title": "Measurements Per Tool",
-          "type": "object"
         },
         "measurements_per_t7_code": {
           "default": 10,
@@ -353,6 +384,12 @@
           "title": "Noise Relative Std",
           "type": "number"
         },
+        "background_relative_strength": {
+          "default": 0.5,
+          "exclusiveMinimum": 0.0,
+          "title": "Background Relative Strength",
+          "type": "number"
+        },
         "seed": {
           "anyOf": [
             {
@@ -377,7 +414,9 @@
         }
       },
       "required": [
-        "regions"
+        "materials",
+        "recipes",
+        "material_recipes"
       ],
       "title": "DataGenerationConfig",
       "type": "object"
@@ -1144,7 +1183,7 @@
       "description": "Global experiment and pipeline execution parameters.",
       "properties": {
         "material": {
-          "default": "NMG",
+          "default": "all",
           "title": "Material",
           "type": "string"
         },
@@ -1189,12 +1228,46 @@
           "type": "string"
         },
         "sample_measurement_id": {
-          "default": "NMG_M_J4_00000",
+          "default": "TiAlC-RCP_NMG_A-M-J4-00000",
           "title": "Sample Measurement Id",
           "type": "string"
         }
       },
       "title": "GlobalConfig",
+      "type": "object"
+    },
+    "MaterialGenerationSpec": {
+      "additionalProperties": true,
+      "description": "Active spectral regions and optional physics overrides for a material.",
+      "properties": {
+        "regions": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Regions",
+          "type": "array"
+        },
+        "relative_strengths": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Relative Strengths",
+          "type": "object"
+        },
+        "region_profiles": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Region Profiles",
+          "type": "object"
+        }
+      },
+      "required": [
+        "regions"
+      ],
+      "title": "MaterialGenerationSpec",
       "type": "object"
     },
     "MetricsReportConfig": {
@@ -1449,6 +1522,11 @@
           "default": true,
           "title": "Match T7 Code",
           "type": "boolean"
+        },
+        "match_recipe": {
+          "default": true,
+          "title": "Match Recipe",
+          "type": "boolean"
         }
       },
       "title": "PairingConfig",
@@ -1472,7 +1550,7 @@
       "description": "Shirley background subtraction and atomic percentage calculation.",
       "properties": {
         "material": {
-          "default": "NMG",
+          "default": "all",
           "title": "Material",
           "type": "string"
         },
@@ -1656,6 +1734,16 @@
           ],
           "default": null,
           "title": "Direct Assignment"
+        },
+        "code_name_level": {
+          "default": "material_recipe",
+          "enum": [
+            "material_recipe",
+            "material",
+            "recipe"
+          ],
+          "title": "Code Name Level",
+          "type": "string"
         },
         "code_name_assignment": {
           "anyOf": [
