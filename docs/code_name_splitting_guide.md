@@ -1,6 +1,12 @@
 # Code-Name Splitting Method Guide
 
-GGRD-SP supports assigning groups of measurement sessions to `train`, `val`, and `test` splits using the `code_name` splitting method. The code name is extracted as the leading `_`-delimited token of each `measurement_id` (e.g., `PMGA_M_J4_00001` → `PMGA`).
+GGRD-SP supports assigning groups of measurement sessions to `train`, `val`, and `test` splits using the `code_name` splitting method. For hyphen-delimited measurement IDs (`{material}-{recipe}-M-{tool}-{seq}`, e.g., `TiAlC-RCP_NMG_A-M-J4-00000`), `code_name_level` controls which token is extracted:
+
+- `material_recipe` (default): `TiAlC-RCP_NMG_A`
+- `material`: `TiAlC`
+- `recipe`: `RCP_NMG_A`
+
+Legacy underscore-delimited IDs (e.g., `PMGA_M_J4_00001` → `PMGA`) remain supported under `code_name_level: material_recipe`.
 
 ## Configuration
 

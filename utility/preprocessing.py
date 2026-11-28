@@ -135,26 +135,79 @@ def _compute_region_mappings(
     return region_index_mapping, num_regions, unique_regions
 
 
+def _extract_film_material_elements(cfg: dict[str, Any]) -> dict[str, set[str]]:
+    """Extract material -> element set from film.material_elements."""
+    film_cfg = cfg.get("film") if isinstance(cfg.get("film"), dict) else {}
+    raw_mat_elems = film_cfg.get("material_elements")
+    if not isinstance(raw_mat_elems, dict):
+        return {}
+    return {
+        str(mat): {str(e).strip() for e in elems}
+        for mat, elems in raw_mat_elems.items()
+        if isinstance(elems, (list, tuple, set))
+    }
+
+
+def _extract_material_element_map(cfg: dict[str, Any]) -> dict[str, set[str]]:
+    """Extract material -> element mapping from pipeline configuration."""
+    from_film = _extract_film_material_elements(cfg)
+    if from_film:
+        return from_film
+    data_gen = (
+        cfg.get("data_generation")
+        if isinstance(cfg.get("data_generation"), dict)
+        else {}
+    )
+    raw_mats = data_gen.get("materials")
+    if not isinstance(raw_mats, dict):
+        return {}
+    return {
+        str(mat): {_parse_element_from_region(r) for r in spec["regions"]}
+        for mat, spec in raw_mats.items()
+        if isinstance(spec, dict) and isinstance(spec.get("regions"), list)
+    }
+
+
+def _resolve_measurement_elements(
+    group: pd.DataFrame,
+    has_material: bool,
+    mat_elem_map: dict[str, set[str]],
+) -> set[str]:
+    """Determine element set for one measurement session."""
+    mat_val = str(group["material"].iloc[0]) if has_material else ""
+    if mat_val and mat_val in mat_elem_map:
+        return mat_elem_map[mat_val]
+    return {
+        _parse_element_from_region(r)
+        for r in group["region"].dropna().unique()
+    }
+
+
 def _compute_element_mappings(
-    df_res: pd.DataFrame, unique_regions: list[str]
+    df_res: pd.DataFrame,
+    unique_regions: list[str],
+    cfg: dict[str, Any] | None = None,
 ) -> tuple[dict[str, int], int]:
-    """Establish fixed global element mapping and measurement-level element_multi_hot."""
-    unique_elements = sorted({
-        _parse_element_from_region(r) for r in unique_regions
-    })
+    """Establish global element mapping and measurement element_multi_hot."""
+    mat_elem_map = _extract_material_element_map(cfg or {})
+    elem_set = {_parse_element_from_region(r) for r in unique_regions}
+    for elems in mat_elem_map.values():
+        elem_set.update(elems)
+    unique_elements = sorted(elem_set)
     element_index_mapping = {
         elem_name: idx for idx, elem_name in enumerate(unique_elements)
     }
     num_elements = len(element_index_mapping)
 
+    has_material = "material" in df_res.columns
     meas_elements: dict[Any, list[float]] = {}
     for meas_id, group in df_res.groupby("measurement_id"):
-        m_elems = {
-            _parse_element_from_region(r)
-            for r in group["region"].dropna().unique()
-        }
-        vec = [1.0 if elem in m_elems else 0.0 for elem in unique_elements]
-        meas_elements[meas_id] = vec
+        m_elems = _resolve_measurement_elements(
+            group, has_material, mat_elem_map
+        )
+        meas_elements[meas_id] = [
+            1.0 if elem in m_elems else 0.0 for elem in unique_elements
+        ]
     df_res["element_multi_hot"] = df_res["measurement_id"].map(meas_elements)
     return element_index_mapping, num_elements
 
@@ -242,7 +295,7 @@ def preprocess(
         df_res
     )
     element_index_mapping, num_elements = _compute_element_mappings(
-        df_res, unique_regions
+        df_res, unique_regions, cfg
     )
 
     # 3. Standardize continuous metadata features if split is present

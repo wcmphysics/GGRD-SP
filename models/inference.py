@@ -267,11 +267,15 @@ def format_predicted_measurement_id(
     """Format a predicted measurement session ID uniquely and
     deterministically.
     """
+    prefix, sep, rest = source_measurement_id.rpartition("-M-")
+    if sep:
+        seq = rest.removeprefix(f"{source_tool}-")
+        return f"{prefix}-P-{source_tool}_{target_tool}-{seq}"
     pair_tag, src_prefix = f"{source_tool}{target_tool}", f"{source_tool}_"
-    mat, _, rest = source_measurement_id.rpartition("_M_")
+    mat, _, legacy_rest = source_measurement_id.rpartition("_M_")
     if mat:
-        return f"{mat}_P_{pair_tag}_{rest.removeprefix(src_prefix)}"
-    return f"P_{pair_tag}_{rest.removeprefix('M_').removeprefix(src_prefix)}"
+        return f"{mat}_P_{pair_tag}_{legacy_rest.removeprefix(src_prefix)}"
+    return f"P_{pair_tag}_{legacy_rest.removeprefix('M_').removeprefix(src_prefix)}"
 
 
 def assemble_prediction_metadata(
@@ -300,6 +304,7 @@ def assemble_prediction_metadata(
         )
 
     extra_metric_cols = [
+        "recipe",
         "t7_code",
         "relative_strength",
         "mean_intensity_single_region",

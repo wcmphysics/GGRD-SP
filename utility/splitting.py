@@ -8,9 +8,34 @@ import pandas as pd
 _VALID_SPLIT_NAMES: tuple[str, ...] = ("train", "val", "test")
 
 
-def _extract_code_name(measurement_id: str) -> str:
-    """Extract leading underscore-delimited code name from measurement_id."""
-    code = str(measurement_id).split("_", 1)[0].strip()
+def _extract_code_name(
+    measurement_id: str, level: str = "material_recipe"
+) -> str:
+    """Extract code name from hyphen-formatted or legacy underscore ID."""
+    raw = str(measurement_id).strip()
+    prefix, sep, _ = raw.rpartition("-M-")
+    if sep:
+        mat, rcp_sep, rcp = prefix.partition("-")
+        if not mat or not rcp_sep or not rcp:
+            raise ValueError(
+                f"Malformed '{{material}}-{{recipe}}' prefix in {measurement_id!r}."
+            )
+        if level == "material_recipe":
+            return prefix
+        if level == "material":
+            return mat
+        if level == "recipe":
+            return rcp
+        raise ValueError(
+            f"Unsupported code_name_level {level!r}; expected "
+            "'material_recipe', 'material', or 'recipe'."
+        )
+    if level != "material_recipe":
+        raise ValueError(
+            f"code_name_level={level!r} requires '{{material}}-{{recipe}}-M-...' "
+            f"measurement_id format, got {measurement_id!r}."
+        )
+    code = raw.split("_", 1)[0].strip()
     if not code:
         raise ValueError(
             f"Cannot extract code name from measurement_id {measurement_id!r}."
@@ -137,9 +162,10 @@ def _execute_code_name_split(
     if any(r < 0.0 for r in ratio_map.values()):
         raise ValueError(f"Split ratios must be non-negative: {ratio_map}")
 
+    code_level = str(cfg.get("code_name_level", "material_recipe"))
     grouped: dict[str, list[str]] = {}
     for session_id in sorted(str(s) for s in source_sessions):
-        code = _extract_code_name(session_id)
+        code = _extract_code_name(session_id, level=code_level)
         grouped.setdefault(code, []).append(session_id)
 
     configured_codes = set(code_to_splits.keys())

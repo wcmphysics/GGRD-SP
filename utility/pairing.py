@@ -105,6 +105,12 @@ def _validate_pairing_config(config: dict[str, Any]) -> None:
     if not isinstance(match_t7, bool):
         raise ValueError(f"match_t7_code must be a boolean, got {match_t7}")
 
+    match_recipe = config.get("match_recipe", True)
+    if not isinstance(match_recipe, bool):
+        raise ValueError(
+            f"match_recipe must be a boolean, got {match_recipe}"
+        )
+
 
 def _extract_tool_sessions(
     df_pool: pd.DataFrame,
@@ -209,6 +215,18 @@ def _match_sessions_greedy(
     return pairs
 
 
+def _split_by_column(
+    df: pd.DataFrame, col: str, enabled: bool
+) -> list[pd.DataFrame]:
+    """Partition df by unique values of col (including NaN) when enabled."""
+    if not enabled:
+        return [df]
+    pools = [df[df[col] == val] for val in df[col].dropna().unique()]
+    if df[col].isna().any():
+        pools.append(df[df[col].isna()])
+    return pools
+
+
 def _find_all_session_pairs(
     result_df: pd.DataFrame,
     source_tool: str,
@@ -217,31 +235,9 @@ def _find_all_session_pairs(
     matcher: Any,
     materials: list[str | None],
     has_t7: bool,
+    has_recipe: bool = False,
 ) -> dict[str, tuple[str, float]]:
-    """Find 1-to-1 session pairs across materials and t7 code partitions.
-
-    Parameters
-    ----------
-    result_df : pd.DataFrame
-        Metadata DataFrame containing session information.
-    source_tool : str
-        Source tool identifier.
-    target_tool : str
-        Target tool identifier.
-    threshold_hours : float
-        Maximum allowable absolute time difference between paired sessions.
-    matcher : Any
-        Callable matching function (_match_sessions_optimal or greedy).
-    materials : list[str | None]
-        List of materials to process sequentially.
-    has_t7 : bool
-        Whether to enforce identical t7_code for paired sessions.
-
-    Returns
-    -------
-    dict[str, tuple[str, float]]
-        Mapping of source_measurement_id -> (target_measurement_id, diff_hours).
-    """
+    """Find 1-to-1 pairs across material, recipe, and t7 partitions."""
     all_session_pairs: dict[str, tuple[str, float]] = {}
 
     for mat in materials:
@@ -250,34 +246,19 @@ def _find_all_session_pairs(
             if mat is not None
             else result_df
         )
+        for df_rcp in _split_by_column(df_mat, "recipe", has_recipe):
+            for df_pool in _split_by_column(df_rcp, "t7_code", has_t7):
+                src_sessions_df = _extract_tool_sessions(df_pool, source_tool)
+                tgt_sessions_df = _extract_tool_sessions(df_pool, target_tool)
+                if src_sessions_df.empty or tgt_sessions_df.empty:
+                    continue
 
-        if has_t7:
-            # Enforce that only measurements with the same t7_code pair together
-            t7_groups = list(df_mat["t7_code"].dropna().unique())
-            if df_mat["t7_code"].isna().any():
-                t7_groups.append(None)
-        else:
-            t7_groups = [None]
-
-        for t7_val in t7_groups:
-            if t7_val is not None:
-                df_pool = df_mat[df_mat["t7_code"] == t7_val]
-            elif has_t7:
-                df_pool = df_mat[df_mat["t7_code"].isna()]
-            else:
-                df_pool = df_mat
-
-            src_sessions_df = _extract_tool_sessions(df_pool, source_tool)
-            tgt_sessions_df = _extract_tool_sessions(df_pool, target_tool)
-            if src_sessions_df.empty or tgt_sessions_df.empty:
-                continue
-
-            cost_matrix, src_ids, tgt_ids = _compute_cost_matrix(
-                src_sessions_df, tgt_sessions_df
-            )
-            all_session_pairs.update(
-                matcher(src_ids, tgt_ids, cost_matrix, threshold_hours)
-            )
+                cost_matrix, src_ids, tgt_ids = _compute_cost_matrix(
+                    src_sessions_df, tgt_sessions_df
+                )
+                all_session_pairs.update(
+                    matcher(src_ids, tgt_ids, cost_matrix, threshold_hours)
+                )
 
     return all_session_pairs
 
@@ -326,6 +307,11 @@ def _assemble_paired_columns(
         if "t7_code" in result_df.columns
         else {}
     )
+    tgt_recipe_lookup: dict[str, Any] = (
+        dict(zip(tgt_spectra["measurement_id"].astype(str), tgt_spectra["recipe"]))
+        if "recipe" in result_df.columns
+        else {}
+    )
 
     # Initialize target column arrays.
     n_rows = len(result_df)
@@ -337,6 +323,7 @@ def _assemble_paired_columns(
     col_time: list[pd.Timestamp | None] = [None] * n_rows
     col_diff: list[float | None] = [None] * n_rows
     col_t7: list[str | None] = [None] * n_rows
+    col_recipe: list[str | None] = [None] * n_rows
 
     src_mask = result_df["tool"] == source_tool
     if src_mask.any() and not all_session_pairs:
@@ -364,6 +351,8 @@ def _assemble_paired_columns(
         col_diff[row_idx] = diff_h
         if "t7_code" in result_df.columns:
             col_t7[row_idx] = tgt_t7_lookup.get(tgt_meas)
+        if "recipe" in result_df.columns:
+            col_recipe[row_idx] = tgt_recipe_lookup.get(tgt_meas)
 
     # Assign populated series back to dataframe columns.
     idx = result_df.index
@@ -381,6 +370,10 @@ def _assemble_paired_columns(
     if "t7_code" in result_df.columns:
         result_df["target_t7_code"] = pd.Series(
             col_t7, index=idx, dtype="object"
+        )
+    if "recipe" in result_df.columns:
+        result_df["target_recipe"] = pd.Series(
+            col_recipe, index=idx, dtype="object"
         )
 
     return result_df
@@ -491,6 +484,9 @@ def pair_source_target_spectra(
     target_tool = cfg["target_tool"]
     threshold_hours = float(cfg["time_threshold_hours"])
 
+    has_recipe = "recipe" in result_df.columns and bool(
+        cfg.get("match_recipe", True)
+    )
     all_session_pairs = _find_all_session_pairs(
         result_df,
         source_tool,
@@ -499,6 +495,7 @@ def pair_source_target_spectra(
         matcher,
         materials,
         has_t7,
+        has_recipe=has_recipe,
     )
     return _assemble_paired_columns(
         result_df,
