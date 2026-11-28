@@ -91,7 +91,11 @@ class TestConfigLoader(unittest.TestCase):
                 "sample_measurement_id": "Meas_01",
             },
             "data_generation": {
-                "regions": ["Ti2p", "O1s"],
+                "materials": {"TiAlC": {"regions": ["Ti2p", "O1s"]}},
+                "recipes": {
+                    "RCP_A": {"Ti2p": [452.0, 470.0], "O1s": [526.0, 536.0]}
+                },
+                "material_recipes": {"TiAlC": {"RCP_A": {"ToolA": 2, "ToolB": 2}}},
             },
             "dataset": {
                 "source_tool": "CustomTool",  # Explicit override
@@ -172,7 +176,6 @@ class TestConfigLoader(unittest.TestCase):
         self.assertTrue(resolved["training"]["use_film"])
         self.assertTrue(resolved["denoise"]["apply_denoise"])
         self.assertEqual(resolved["denoise"]["material"], "PMG")
-        self.assertEqual(resolved["data_generation"]["material"], "PMG")
         self.assertEqual(resolved["pairing"]["material"], "PMG")
         self.assertEqual(resolved["quantification"]["material"], "PMG")
         self.assertEqual(resolved["training"]["train_config"]["l2_weight"], 5e-5)

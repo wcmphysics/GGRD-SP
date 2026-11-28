@@ -36,10 +36,12 @@ class TestOrchestrationPipeline(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Generate, normalize, pair, and split lightweight synthetic data."""
         pseudo_cfg = {
-            "material": "NMG",
-            "regions": ["Al2p", "Ti2p"],
+            "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+            "recipes": {
+                "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 6, "H1": 6}}},
             "n_points": 40,
-            "measurements_per_tool": {"J4": 6, "H1": 6},
             "interval_hours_range": (1.0, 4.0),
             "tool_offsets": {
                 "J4": {"shift_ev": 0.0, "scale": 1000.0},

@@ -129,10 +129,12 @@ class TestGPFluxPipeline(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Create deterministic multi-tool dataset through Stage 4 splitting."""
         gen_cfg = {
-            "material": "NMG",
-            "regions": ["Al2p", "Ti2p"],
+            "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+            "recipes": {
+                "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 6, "J5": 6}}},
             "n_points": 50,
-            "measurements_per_tool": {"J4": 6, "J5": 6},
             "measurements_per_t7_code": 3,
             "interval_hours_range": (2.0, 6.0),
             "die_variation_std": 0.02,
@@ -219,12 +221,14 @@ class TestGPFluxPipeline(unittest.TestCase):
 
         self.assertIn("models", bundle)
         self.assertIn("datasets", bundle)
-        self.assertIn("J4", bundle["models"])
-        self.assertIn("J5", bundle["models"])
+        self.assertIn(("J4", "TiAlC", "RCP_NMG_A"), bundle["models"])
+        self.assertIn(("J5", "TiAlC", "RCP_NMG_A"), bundle["models"])
 
         # Check metrics DataFrame columns
         expected_cols = [
             "tool",
+            "material",
+            "recipe",
             "die",
             "mae_train",
             "mape_train_percentage",
@@ -277,8 +281,48 @@ class TestGPFluxPipeline(unittest.TestCase):
         inverted_meta = self.df_meta.sort_values(by="tool", ascending=False)
         cfg = {"training": {"num_iterations": 5, "learning_rate": 0.05}}
         bundle, _ = run_gp_flux_pipeline(inverted_meta, cfg)
-        self.assertIn("J4", bundle["models"])
-        self.assertIn("J5", bundle["models"])
+        self.assertIn(("J4", "TiAlC", "RCP_NMG_A"), bundle["models"])
+        self.assertIn(("J5", "TiAlC", "RCP_NMG_A"), bundle["models"])
+
+    def test_multi_material_recipe_separate_gp_models(self) -> None:
+        """Verify separate GP models are trained per (tool, material, recipe)."""
+        gen_cfg = {
+            "materials": {
+                "TiAlC": {"regions": ["Ti2p", "O1s"]},
+                "HfO2": {"regions": ["Hf4f", "O1s"]},
+            },
+            "recipes": {
+                "RCP_A": {"Ti2p": (452.0, 470.0), "O1s": (526.0, 536.0)},
+                "RCP_B": {"Hf4f": (13.0, 23.0), "O1s": (526.0, 536.0)},
+            },
+            "material_recipes": {
+                "TiAlC": {"RCP_A": {"J4": 4, "J5": 4}},
+                "HfO2": {"RCP_B": {"J4": 4, "J5": 4}},
+            },
+            "n_die": 2,
+            "n_points": 30,
+            "interval_hours_range": (2.0, 5.0),
+            "seed": 7,
+        }
+        i_arr, e_arr, meta = generate_pseudo_measurements(gen_cfg)
+        meta = calculate_flux_and_intensity(i_arr, e_arr, meta)
+        meta = pair_source_target_spectra(
+            meta,
+            {"source_tool": "J4", "target_tool": "J5", "material": "all"},
+        )
+        meta, _, _ = split_measurement_sessions(
+            meta,
+            {"source_tool": "J4", "target_tool": "J5", "seed": 7},
+        )
+        bundle, df_m = run_gp_flux_pipeline(
+            meta, {"training": {"num_iterations": 5, "learning_rate": 0.05}}
+        )
+        self.assertEqual(len(bundle["models"]), 4)
+        self.assertIn(("J4", "TiAlC", "RCP_A"), bundle["models"])
+        self.assertIn(("J5", "HfO2", "RCP_B"), bundle["models"])
+        self.assertEqual(set(df_m["material"].unique()), {"TiAlC", "HfO2"})
+        fig, _ = plot_gp_die_flux_timeline(bundle, {"plot": {"plot_die": 0}})
+        self.assertIsNotNone(fig)
 
 
 if __name__ == "__main__":

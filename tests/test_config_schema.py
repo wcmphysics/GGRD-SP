@@ -11,6 +11,7 @@ import yaml
 
 from utility.config_loader import load_config
 from utility.config_schema import (
+    DataGenerationConfig,
     DenoiseSavgolConfig,
     GlobalConfig,
     PipelineConfig,
@@ -264,6 +265,70 @@ class TestConfigSchema(unittest.TestCase):
             )
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    def test_data_generation_schema_validation(self) -> None:
+        """Verify DataGenerationConfig validates identifiers, bounds, and counts."""
+        valid = DataGenerationConfig(
+            materials={"TiAlC": {"regions": ["Ti2p", "O1s"]}},
+            recipes={"RCP_NMG_A": {"Ti2p": [452.0, 470.0], "O1s": [526.0, 536.0]}},
+            material_recipes={"TiAlC": {"RCP_NMG_A": {"J4": 2, "J5": 3}}},
+        )
+        self.assertEqual(valid.background_relative_strength, 0.5)
+
+        invalid_cases = [
+            (
+                "hyphen in material",
+                dict(
+                    materials={"Ti-AlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP_A": {"Ti2p": [452.0, 470.0]}},
+                    material_recipes={"Ti-AlC": {"RCP_A": {"J4": 1}}},
+                ),
+            ),
+            (
+                "hyphen in recipe",
+                dict(
+                    materials={"TiAlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP-A": {"Ti2p": [452.0, 470.0]}},
+                    material_recipes={"TiAlC": {"RCP-A": {"J4": 1}}},
+                ),
+            ),
+            (
+                "underscore in tool",
+                dict(
+                    materials={"TiAlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP_A": {"Ti2p": [452.0, 470.0]}},
+                    material_recipes={"TiAlC": {"RCP_A": {"J_4": 1}}},
+                ),
+            ),
+            (
+                "inverted energy bounds",
+                dict(
+                    materials={"TiAlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP_A": {"Ti2p": [470.0, 452.0]}},
+                    material_recipes={"TiAlC": {"RCP_A": {"J4": 1}}},
+                ),
+            ),
+            (
+                "unknown recipe in schedule",
+                dict(
+                    materials={"TiAlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP_A": {"Ti2p": [452.0, 470.0]}},
+                    material_recipes={"TiAlC": {"RCP_MISSING": {"J4": 1}}},
+                ),
+            ),
+            (
+                "all zero counts",
+                dict(
+                    materials={"TiAlC": {"regions": ["Ti2p"]}},
+                    recipes={"RCP_A": {"Ti2p": [452.0, 470.0]}},
+                    material_recipes={"TiAlC": {"RCP_A": {"J4": 0, "J5": 0}}},
+                ),
+            ),
+        ]
+        for label, kwargs in invalid_cases:
+            with self.subTest(case=label):
+                with self.assertRaises(ValidationError):
+                    DataGenerationConfig(**kwargs)
 
 
 if __name__ == "__main__":

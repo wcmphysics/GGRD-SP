@@ -37,10 +37,12 @@ class TestModelPerformanceObservation(unittest.TestCase):
         """Set up synthetic dataset, pairing, and minimal trained baseline model."""
         cls.ary_intensity, cls.ary_energy, cls.meta_df = generate_pseudo_measurements(
             {
-                "material": "NMG",
-                "regions": ["Al2p", "Ti2p"],
+                "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+                "recipes": {
+                    "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+                },
+                "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 6, "H1": 6}}},
                 "n_points": 50,
-                "measurements_per_tool": {"J4": 6, "H1": 6},
                 "interval_hours_range": (1.0, 4.0),
                 "seed": 42,
             }

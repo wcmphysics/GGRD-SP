@@ -139,7 +139,19 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Generate pseudo-measurement data for quantification tests."""
         config = {
-            "measurements_per_tool": {"J4": 2, "J5": 2},
+            "materials": {
+                "TiAlC": {"regions": ["Al2p", "Ti2p", "O1s", "C1s", "Cl2p"]}
+            },
+            "recipes": {
+                "RCP_NMG_A": {
+                    "Al2p": (70.0, 78.0),
+                    "Ti2p": (452.0, 470.0),
+                    "O1s": (526.0, 536.0),
+                    "C1s": (280.0, 292.0),
+                    "Cl2p": (196.0, 206.0),
+                }
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 2, "J5": 2}}},
             "n_die": 3,
             "n_points": 60,
             "seed": 42,
@@ -148,7 +160,7 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
 
     def test_calculate_atomic_percentages_normalization_and_overrides(self) -> None:
         """Verify atomic percentages sum to 100%, respect custom RSF, and handle zero area."""
-        meas_id = "NMG_M_J4_00000"
+        meas_id = "TiAlC-RCP_NMG_A-M-J4-00000"
         df_per_die, df_summary = calculate_atomic_percentages(
             self.ary_ene,
             self.ary_int,
@@ -201,14 +213,14 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
         with self.assertRaises(KeyError):
             calculate_atomic_percentages(
                 self.ary_ene, self.ary_int, self.meta_df,
-                config={"rsf_table": {"Al2p": 0.537}, "measurement_id": "NMG_M_J4_00000"}
+                config={"rsf_table": {"Al2p": 0.537}, "measurement_id": "TiAlC-RCP_NMG_A-M-J4-00000"}
             )
 
         # Normalization mode warning via config
         with self.assertWarns(UserWarning):
             calculate_atomic_percentages(
                 self.ary_ene, self.ary_int, self.meta_df,
-                config={"measurement_id": "NMG_M_J4_00000",
+                config={"measurement_id": "TiAlC-RCP_NMG_A-M-J4-00000",
                         "normalization_mode": "by_regional_max_intensity_of_source"}
             )
 
@@ -218,7 +230,7 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
         with self.assertWarns(UserWarning):
             calculate_atomic_percentages(
                 self.ary_ene, self.ary_int, meta_with_attrs,
-                config={"measurement_id": "NMG_M_J4_00000"}
+                config={"measurement_id": "TiAlC-RCP_NMG_A-M-J4-00000"}
             )
 
         # load_rsf_table and _LazyScofieldRSF checks
@@ -238,14 +250,32 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
 
     def test_split_statistics_and_side_by_side_reporting(self) -> None:
         """Verify split-level statistical aggregation and side-by-side formatting."""
+        from models.inference import format_predicted_measurement_id
+
         meta_orig = self.meta_df.copy()
-        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00000", "target_measurement_id"] = "NMG_M_J5_00000"
-        meta_orig.loc[meta_orig["measurement_id"] == "NMG_M_J4_00001", "target_measurement_id"] = "NMG_M_J5_00001"
+        meta_orig.loc[
+            meta_orig["measurement_id"] == "TiAlC-RCP_NMG_A-M-J4-00000",
+            "target_measurement_id",
+        ] = "TiAlC-RCP_NMG_A-M-J5-00000"
+        meta_orig.loc[
+            meta_orig["measurement_id"] == "TiAlC-RCP_NMG_A-M-J4-00001",
+            "target_measurement_id",
+        ] = "TiAlC-RCP_NMG_A-M-J5-00001"
 
         meta_pred = meta_orig[meta_orig["tool"] == "J4"].copy()
         meta_pred["source_measurement_id"] = meta_pred["measurement_id"]
-        meta_pred["measurement_id"] = meta_pred["measurement_id"].str.replace("_M_J4_", "_P_J4J5_")
-        meta_pred["split"] = np.where(meta_pred["source_measurement_id"] == "NMG_M_J4_00000", "train", "test")
+        meta_pred["measurement_id"] = meta_pred["measurement_id"].map(
+            lambda m: format_predicted_measurement_id(str(m), "J4", "J5")
+        )
+        self.assertEqual(
+            meta_pred["measurement_id"].iloc[0],
+            "TiAlC-RCP_NMG_A-P-J4_J5-00000",
+        )
+        meta_pred["split"] = np.where(
+            meta_pred["source_measurement_id"] == "TiAlC-RCP_NMG_A-M-J4-00000",
+            "train",
+            "test",
+        )
         meta_pred["spectrum_index"] = np.arange(len(meta_pred))
 
         ary_pred = self.ary_int[:len(meta_pred)] * 1.05
@@ -256,6 +286,7 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
         )
         self.assertFalse(df_samples.empty)
         self.assertIn("mae", df_summary.columns)
+        self.assertIn("recipe", df_summary.columns)
 
         # Formatted string mode
         df_side = format_side_by_side_atomic_percentages(df_summary, config={"splits": ["train", "test"]})
@@ -268,6 +299,43 @@ class TestAtomicPercentageQuantification(unittest.TestCase):
         )
         self.assertIn("mae_train", df_side_num.columns)
         self.assertIsInstance(df_side_num["mae_train"].iloc[0], (float, np.floating))
+
+    def test_multi_material_recipe_quantification_skips_unprobed(self) -> None:
+        """Verify quantification groups by (material, recipe) and skips unprobed regions."""
+        cfg = {
+            "materials": {
+                "TiAlC": {"regions": ["Al2p", "Ti2p", "O1s"]},
+                "HfO2": {"regions": ["Hf4f", "O1s"]},
+            },
+            "recipes": {
+                "RCP_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0), "O1s": (526.0, 536.0)},
+                "RCP_B": {"Hf4f": (13.0, 23.0), "O1s": (526.0, 536.0)},
+            },
+            "material_recipes": {
+                "TiAlC": {"RCP_A": {"J4": 1}},
+                "HfO2": {"RCP_B": {"J4": 1}},
+            },
+            "n_die": 1,
+            "n_points": 50,
+            "seed": 42,
+        }
+        ary_i, ary_e, meta = generate_pseudo_measurements(cfg)
+        df_die, _ = calculate_atomic_percentages(ary_e, ary_i, meta)
+        tialc_row = df_die[df_die["material"] == "TiAlC"].iloc[0]
+        hfo2_row = df_die[df_die["material"] == "HfO2"].iloc[0]
+        # Unprobed regions must be NaN, while probed regions sum to 100%
+        self.assertTrue(pd.isna(tialc_row["Hf4f_atomic_percentage"]))
+        self.assertTrue(pd.isna(hfo2_row["Al2p_atomic_percentage"]))
+        self.assertAlmostEqual(
+            float(tialc_row[["Al2p_atomic_percentage", "Ti2p_atomic_percentage", "O1s_atomic_percentage"]].sum()),
+            100.0,
+            places=2,
+        )
+        self.assertAlmostEqual(
+            float(hfo2_row[["Hf4f_atomic_percentage", "O1s_atomic_percentage"]].sum()),
+            100.0,
+            places=2,
+        )
 
     def test_compute_die_total_flux(self) -> None:
         """Verify compute_die_total_flux integration across regions."""
@@ -292,7 +360,11 @@ class TestQuantificationVisualization(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Generate test spectral and atomic percentage sample tables."""
         config = {
-            "measurements_per_tool": {"J4": 1, "J5": 1},
+            "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+            "recipes": {
+                "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 1, "J5": 1}}},
             "n_die": 1,
             "n_points": 40,
             "seed": 42,

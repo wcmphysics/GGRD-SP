@@ -25,11 +25,13 @@ class TestFluxAndIntensityVisualization(unittest.TestCase):
         """Generate synthetic spectra dataset with paired tools."""
         cls.ary_intensity, cls.ary_energy, cls.meta_df = generate_pseudo_measurements(
             {
-                "material": "NMG",
-                "regions": ["Al2p", "Ti2p"],
+                "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+                "recipes": {
+                    "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+                },
+                "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 4, "J5": 4}}},
                 "n_die": 9,
                 "n_points": 50,
-                "measurements_per_tool": {"J4": 4, "J5": 4},
                 "interval_hours_range": (1.0, 4.0),
                 "seed": 42,
             }

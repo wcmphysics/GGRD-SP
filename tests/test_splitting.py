@@ -333,6 +333,72 @@ class TestCodeNameSplitting(unittest.TestCase):
                 },
             )
 
+    def test_hyphen_id_code_name_levels(self) -> None:
+        """Verify material_recipe, material, and recipe code_name_level parsing."""
+        records: list[dict[str, object]] = []
+        groups = [("TiAlC", "RCP_NMG_A", 3), ("TiAlC", "RCP_PMG_A", 2), ("TiN", "RCP_PMG_A", 2)]
+        for mat, rcp, count in groups:
+            for i in range(count):
+                src_id = f"{mat}-{rcp}-M-J4-{i:05d}"
+                tgt_id = f"{mat}-{rcp}-M-J5-{i:05d}"
+                records.append(
+                    {
+                        "spectrum_index": len(records),
+                        "measurement_id": src_id,
+                        "tool": "J4",
+                        "die": 0,
+                        "region": "Ti2p",
+                        "target_measurement_id": tgt_id,
+                        "target_tool": "J5",
+                    }
+                )
+        df_h = pd.DataFrame(records)
+
+        # Level: material_recipe (default)
+        _, _, splits_mr = split_measurement_sessions(
+            df_h,
+            {
+                "method": "code_name",
+                "code_name_level": "material_recipe",
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "code_name_assignment": {
+                    "train": ["TiAlC-RCP_NMG_A", "TiAlC-RCP_PMG_A"],
+                    "test": ["TiN-RCP_PMG_A"],
+                },
+            },
+        )
+        self.assertEqual(len(splits_mr["train"]), 5)
+        self.assertEqual(len(splits_mr["test"]), 2)
+
+        # Level: material
+        _, _, splits_m = split_measurement_sessions(
+            df_h,
+            {
+                "method": "code_name",
+                "code_name_level": "material",
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "code_name_assignment": {"train": ["TiAlC"], "test": ["TiN"]},
+            },
+        )
+        self.assertEqual(len(splits_m["train"]), 5)
+        self.assertEqual(len(splits_m["test"]), 2)
+
+        # Level: recipe
+        _, _, splits_r = split_measurement_sessions(
+            df_h,
+            {
+                "method": "code_name",
+                "code_name_level": "recipe",
+                "source_tool": "J4",
+                "target_tool": "J5",
+                "code_name_assignment": {"train": ["RCP_NMG_A"], "test": ["RCP_PMG_A"]},
+            },
+        )
+        self.assertEqual(len(splits_r["train"]), 3)
+        self.assertEqual(len(splits_r["test"]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

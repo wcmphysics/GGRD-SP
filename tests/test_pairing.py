@@ -18,7 +18,15 @@ class TestPairing(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Generate realistic pseudo-measurement dataset for pairing tests."""
         config = {
-            "measurements_per_tool": {"J4": 6, "J5": 6},
+            "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p", "O1s"]}},
+            "recipes": {
+                "RCP_NMG_A": {
+                    "Al2p": (70.0, 78.0),
+                    "Ti2p": (452.0, 470.0),
+                    "O1s": (526.0, 536.0),
+                }
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 6, "J5": 6}}},
             "n_die": 3,
             "n_points": 50,
             "seed": 42,
@@ -116,6 +124,19 @@ class TestPairing(unittest.TestCase):
         self.assertEqual(src_row["target_measurement_id"], "M3")
         self.assertEqual(src_row["target_t7_code"], "T1")
 
+    def test_recipe_isolation(self) -> None:
+        """Verify pairing isolates cross-recipe sessions for the same material."""
+        t0 = datetime(2026, 1, 1, 10, 0, 0)
+        df_rcp = pd.DataFrame([
+            {"spectrum_index": 0, "material": "TiAlC", "recipe": "RCP_A", "tool": "J4", "measurement_id": "M1", "time": t0, "die": 0, "region": "Ti2p"},
+            {"spectrum_index": 1, "material": "TiAlC", "recipe": "RCP_B", "tool": "J5", "measurement_id": "M2", "time": t0 + timedelta(hours=1), "die": 0, "region": "Ti2p"},
+            {"spectrum_index": 2, "material": "TiAlC", "recipe": "RCP_A", "tool": "J5", "measurement_id": "M3", "time": t0 + timedelta(hours=4), "die": 0, "region": "Ti2p"},
+        ])
+        paired = pair_source_target_spectra(df_rcp, config={**self.pairing_cfg, "time_threshold_hours": 10.0})
+        src_row = paired[paired["measurement_id"] == "M1"].iloc[0]
+        self.assertEqual(src_row["target_measurement_id"], "M3")
+        self.assertEqual(src_row["target_recipe"], "RCP_A")
+
     def test_defensive_error_handling(self) -> None:
         """Table-driven test for invalid pairing parameters and missing columns."""
         error_cases = [
@@ -140,7 +161,11 @@ class TestPairingVisualization(unittest.TestCase):
     def setUpClass(cls) -> None:
         """Generate paired dataset for timeline visualization."""
         config = {
-            "measurements_per_tool": {"J4": 3, "J5": 3},
+            "materials": {"TiAlC": {"regions": ["Al2p", "Ti2p"]}},
+            "recipes": {
+                "RCP_NMG_A": {"Al2p": (70.0, 78.0), "Ti2p": (452.0, 470.0)}
+            },
+            "material_recipes": {"TiAlC": {"RCP_NMG_A": {"J4": 3, "J5": 3}}},
             "n_die": 2,
             "n_points": 30,
             "seed": 42,
